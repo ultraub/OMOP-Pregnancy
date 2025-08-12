@@ -1,0 +1,59 @@
+# OMOP Pregnancy Package Environment Variables Template
+# Copy this file to .Renv and fill in your values
+# DO NOT commit .Renv to version control
+
+# Database Connection Settings
+DB_SERVER="your_server_address"
+DB_PORT=1433
+DB_NAME="your_database_name"
+DB_USER="your_username"
+DB_PASSWORD="your_password"
+DB_DBMS="sql server"  # Options: "sql server", "postgresql", "oracle", "redshift"
+CDM_SCHEMA="dbo"
+
+# Java Configuration (for DatabaseConnector)
+# Update path based on your system
+# macOS with Homebrew: /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+# Linux: /usr/lib/jvm/java-17-openjdk
+# Windows: C:/Program Files/Java/jdk-17
+JAVA_HOME="/path/to/java/home"
+DATABASECONNECTOR_JAR_FOLDER="inst/jdbc"
+
+# Optional: Alternative Database Configurations
+# Uncomment and modify for different environments
+
+# PostgreSQL Example
+# DB_SERVER_PG="localhost"
+# DB_PORT_PG=5432
+# DB_NAME_PG="omop_cdm"
+# DB_USER_PG="postgres"
+# DB_PASSWORD_PG="your_password"
+# DB_DBMS_PG="postgresql"
+# CDM_SCHEMA_PG="cdm"
+
+# Oracle Example
+# DB_SERVER_ORACLE="localhost:1521/XE"
+# DB_USER_ORACLE="system"
+# DB_PASSWORD_ORACLE="your_password"
+# DB_DBMS_ORACLE="oracle"
+# CDM_SCHEMA_ORACLE="CDM"
+
+# All of Us Configuration (if applicable)
+# AOU_DATASET="your_dataset_name"
+# AOU_PROJECT="your_project_id"
+# AOU_CDR="your_cdr_version"
+
+# Package Configuration
+CONFIG_FILE="inst/config/config.yml"
+LOG_LEVEL="INFO"  # Options: "DEBUG", "INFO", "WARN", "ERROR"
+TEMP_TABLE_PREFIX="omop_preg_"
+
+# Performance Settings
+MAX_ROWS_PER_BATCH=50000
+PARALLEL_THREADS=4
+MEMORY_LIMIT_GB=8
+
+# Development/Testing Flags
+TEST_MODE=FALSE
+USE_SAMPLE_DATA=FALSE
+VERBOSE_LOGGING=FALSE

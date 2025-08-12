@@ -30,8 +30,10 @@ run_hipps_outcomes_only.R
 
 # Database credentials (if any)
 .env
+.Renv
 config.yml
 credentials.yml
+!.Renv.example
 
 # Documentation builds
 docs/
