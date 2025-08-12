@@ -34,7 +34,8 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
       visit_date = observation_date,
       value_as_number
     ) %>%
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE)
+    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   
   measurement_df <- measurement_tbl %>%
     select(
@@ -43,7 +44,8 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
       visit_date = measurement_date,
       value_as_number
     ) %>%
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE)
+    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   
   procedure_df <- procedure_occurrence_tbl %>%
     select(
@@ -51,7 +53,9 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
       concept_id = procedure_concept_id,
       visit_date = procedure_date
     ) %>%
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE)
+    mutate(value_as_number = NA_real_) %>%  # Add missing column for union
+    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   
   # filter condition table
   condition_df <- condition_occurrence_tbl %>%
@@ -60,7 +64,9 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
       concept_id = condition_concept_id,
       visit_date = condition_start_date
     ) %>%
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE)
+    mutate(value_as_number = NA_real_) %>%  # Add missing column for union
+    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   
   # combine tables
   all_dfs <- list(measurement_df, procedure_df, observation_df, condition_df)
@@ -140,7 +146,7 @@ final_visits <- function(initial_pregnant_cohort_df, Matcho_outcome_limits, cate
     slice_min(order_by = concept_id, n = 1, with_ties = FALSE) %>%
     ungroup() %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     # Create a new column called "days" that calculates the number of days between each visit for each person.
     mutate(prev_date = lag(visit_date)) %>%
     mutate(days = sql("DATEDIFF(day, prev_date, visit_date)")) %>%
@@ -189,7 +195,7 @@ add_stillbirth <- function(final_stillbirth_visits_df, final_livebirth_visits_df
   final_temp_df <- union_all(final_stillbirth_visits_df, final_livebirth_visits_df) %>%
     select(-any_of(c("gest_value", "value_as_number"))) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(
       # get previous category if available
       previous_category = lag(category),
@@ -254,7 +260,7 @@ add_ectopic <- function(add_stillbirth_df, Matcho_outcome_limits, final_ectopic_
   # get difference in days with subsequent visit
   final_temp_df <- union_all(add_stillbirth_df, select(final_ectopic_visits_df, -any_of(c("gest_value", "value_as_number")))) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(
       # get previous category if available
       previous_category = lag(category),
@@ -332,7 +338,7 @@ add_abortion <- function(add_ectopic_df, Matcho_outcome_limits, final_abortion_v
   final_temp_df <- union_all(add_ectopic_df, select(final_abortion_visits_df, -any_of(c("gest_value", "value_as_number")))) %>%
     mutate(temp_category = ifelse(category == "SA", "AB", category)) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(
       # get previous category if available
       previous_category = lag(temp_category),
@@ -412,7 +418,7 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
   final_temp_df <- union_all(add_abortion_df, select(final_delivery_visits_df, -any_of(c("gest_value", "value_as_number")))) %>%
     mutate(temp_category = ifelse(category == "SA", "AB", category)) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(
       # get previous category if available
       previous_category = lag(temp_category),
@@ -614,7 +620,7 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
     # add column for gestation period in days
     mutate(gest_day = gest_week * 7) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(
       # get previous gestation week
       prev_week = lag(gest_week, 1),
@@ -868,7 +874,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   ) %>%
     select(-all_of("episode")) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(episode = row_number()) %>%
     ungroup() %>%
     # recalculate since I overwrote
@@ -990,7 +996,7 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28) {
     ) %>%
     # redo column for episode
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(episode = row_number()) %>%
     ungroup()
   
@@ -1011,7 +1017,7 @@ remove_overlaps <- function(clean_episodes_df) {
   
   df <- df %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     # get previous date
     mutate(
       prev_date = lag(visit_date),
@@ -1045,7 +1051,7 @@ remove_overlaps <- function(clean_episodes_df) {
   final_df <- df %>%
     filter(!(gest_id %in% gest_id_list & category == "PREG")) %>%
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     # recalculate
     # get previous date
     mutate(
@@ -1082,7 +1088,7 @@ remove_overlaps <- function(clean_episodes_df) {
     ) %>%
     # redo column for episode
     group_by(person_id) %>%
-    dbplyr::window_order(visit_date) %>%
+    arrange(visit_date, .by_group = TRUE) %>%
     mutate(
       episode = row_number(),
       # check that there are no more overlapping episodes
