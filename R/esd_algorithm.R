@@ -156,7 +156,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   
   preg_related_concepts_local <- preg_related_concepts %>%
     left_join(algo2_timing_concepts_df, by = "domain_concept_id") %>%
-    collect(page_size = 20000) %>%
+    collect() %>%
     mutate(domain_value = str_replace(value_col, "\\|text_result_val:", "")) %>%
     mutate(domain_value = str_replace(domain_value, "\\|mapped_text_result_val:", "")) %>%
     mutate(domain_value = str_replace(domain_value, "Gestation period, ", "")) %>%

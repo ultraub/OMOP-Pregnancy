@@ -24,7 +24,10 @@ NULL
 input_GT_concepts <- function(condition_occurrence_tbl, procedure_occurrence_tbl,
                               observation_tbl, measurement_tbl, visit_occurrence_tbl, PPS_concepts) {
   rename_cols <- function(top_concepts, df, start_date_col, id_col) {
-    top_concepts_df <- rename(df, "domain_concept_start_date" = start_date_col, "domain_concept_id" = id_col) %>%
+    # Fixed: Use !! and := for programmatic renaming to avoid tidyselect warnings
+    top_concepts_df <- df %>%
+      rename("domain_concept_start_date" = !!start_date_col, 
+             "domain_concept_id" = !!id_col) %>%
       inner_join(top_concepts, by = "domain_concept_id", copy = TRUE) %>%
       select(person_id, domain_concept_start_date, domain_concept_id) %>%
       distinct()
@@ -215,15 +218,21 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
                       config$algorithm$hip$max_age, 56)
   }
   
+  # Fixed: SQL Server has issues with inline select in joins
+  # Create the person subset first
+  person_subset <- person_tbl %>%
+    select(person_id, gender_concept_id, year_of_birth, day_of_birth, month_of_birth)
+  
   patients_with_preg_concepts <- filter(input_GT_concepts_df, !is.na(domain_concept_start_date)) %>%
     left_join(PPS_concepts, by = join_by(domain_concept_id), copy = TRUE) %>%
-    inner_join(select(person_tbl, person_id, gender_concept_id, year_of_birth, day_of_birth, month_of_birth),
-      by = "person_id"
-    ) %>%
+    inner_join(person_subset, by = "person_id") %>%
     mutate(
       day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
-      month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
-      date_of_birth = sql("TRY_CAST(CAST(year_of_birth AS VARCHAR) + '-' + CAST(month_of_birth AS VARCHAR) + '-' + CAST(day_of_birth AS VARCHAR) AS DATE)"),
+      month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
+    ) %>%
+    mutate(
+      # Fixed: Simplified date construction for SQL Server
+      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)"),
       date_diff = sql("DATEDIFF(day, date_of_birth, domain_concept_start_date)"),
       age = date_diff / 365
     ) %>%
@@ -247,7 +256,9 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   # record date: list of matching months, save this to a new dictionary with record dates as the keys. Where no match occurs, put NA
   #   person_dates_dict <- split(person_dates_df$list_col, person_dates_df$person_id)
   
-  person_dates_df <- collect(patients_with_preg_concepts, page_size = 50000) %>%
+  # Fixed: removed page_size parameter - not supported in dbplyr::collect()
+  # The database will handle pagination automatically
+  person_dates_df <- collect(patients_with_preg_concepts) %>%
     group_by(person_id) %>%
     arrange(domain_concept_start_date)
   
