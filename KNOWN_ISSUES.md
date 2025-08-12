@@ -1,26 +1,87 @@
 # Known Issues and Solutions
 
-## Current Issues
+## Resolved Issues
 
-### 1. n_distinct() with Multiple Arguments in dbplyr
+### 1. n_distinct() with Multiple Arguments in dbplyr ✅
 **Error**: `Error in n_distinct(person_id, visit_date) : unused argument (visit_date)`
 
 **Cause**: 
 - dbplyr's SQL translation doesn't support `n_distinct()` with multiple columns
 - SQL Server doesn't have a direct equivalent to `COUNT(DISTINCT col1, col2)`
 
-**Solution**:
+**Solution Applied**:
 ```r
 # Instead of:
 n_distinct(person_id, visit_date)
 
 # Use:
 n() # after group_by(person_id, visit_date) and summarize
-# Or:
-count(distinct(paste(person_id, visit_date)))
 ```
 
-**Fix Required**: Update line 171 in `run_hipps_outcomes_only.R`
+**Status**: FIXED in run_hipps_outcomes_only.R line 173
+
+### 2. collect() page_size Parameter ✅
+**Error**: `Arguments in ... must be used. Problematic argument: page_size = 50000`
+
+**Cause**:
+- dbplyr::collect() doesn't support page_size parameter
+- This was legacy code from bigrquery
+
+**Solution Applied**:
+```r
+# Removed page_size:
+collect(patients_with_preg_concepts)  # Instead of collect(..., page_size = 50000)
+```
+
+**Status**: FIXED in pps_algorithm.R and esd_algorithm.R
+
+### 3. tidyselect External Vector Warnings ✅
+**Warning**: `Using an external vector in selections was deprecated in tidyselect 1.1.0`
+
+**Cause**:
+- rename() with string variables requires special handling
+
+**Solution Applied**:
+```r
+# Use !! for programmatic renaming:
+rename("new_name" = !!old_name_var)
+```
+
+**Status**: FIXED in pps_algorithm.R line 29-30
+
+### 4. SQL Server Date Construction ✅
+**Error**: `Incorrect syntax near ','` 
+
+**Cause**:
+- Complex TRY_CAST with string concatenation failed in SQL Server
+- Date construction from parts needs specific SQL Server function
+
+**Solution Applied**:
+```r
+# Instead of complex TRY_CAST:
+date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
+```
+
+**Status**: FIXED in pps_algorithm.R line 235
+
+### 5. SQL Server Inline SELECT in JOIN ✅
+**Error**: `Incorrect syntax near ')'`
+
+**Cause**:
+- SQL Server has issues with inline select() in join operations
+- dbplyr generates invalid SQL for complex nested operations
+
+**Solution Applied**:
+```r
+# Create subset first:
+person_subset <- person_tbl %>% select(columns)
+# Then join:
+inner_join(person_subset, by = "person_id")
+```
+
+**Status**: FIXED in pps_algorithm.R line 223-228
+
+## Current Issues Under Investigation
 
 ### 2. Missing Gestational Age Data
 **Issue**: Tufts database has no gestational age measurements

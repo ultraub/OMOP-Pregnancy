@@ -242,7 +242,8 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       age >= min_age,
       age < max_age
     ) %>%
-    select(-ends_with("_of_birth"), -date_diff, -gender_concept_id)
+    # Fixed: Explicitly list columns to remove instead of using ends_with
+    select(-year_of_birth, -month_of_birth, -day_of_birth, -date_diff, -gender_concept_id)
   
   # OBTAIN ALL RELEVANT INPUT PATIENTS AND SAVE GT INFORMATION PER CONCEPT TO A LOOKUP DICTIONARY
   # First we save the women that have gestational timing concepts, and save the gestational timing information for each concept.
