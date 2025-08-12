@@ -1,0 +1,227 @@
+# OMOP CDM Concept Configuration for Pregnancy Algorithm
+# These concept IDs should be validated against your OMOP CDM instance
+# Standard concepts from OMOP vocabulary v5.0+
+
+# Gender/Sex Concepts
+gender_concepts:
+  male_concept_id: 8507  # Standard OMOP concept for Male
+  female_concept_id: 8532  # Standard OMOP concept for Female
+  # All of Us specific concepts (may need mapping)
+  allofus_male: 45880669
+  allofus_female: 45878463
+  allofus_intersex: 46273637
+  allofus_prefer_not_answer: 1177221
+  allofus_skip: 903096
+  allofus_none: 4124462
+
+# Gestational Age Concepts
+gestational_age_concepts:
+  # Standard OMOP concepts for gestational age
+  gestational_age: 3012266  # Gestational age
+  gestational_age_estimated: 3002209  # Gestational age Estimated
+  gestational_age_in_weeks: 3048230  # Gestational age in weeks
+  gestational_age_at_birth: 3013762  # Gestational age at birth
+  
+  # Additional gestational concepts
+  observation_concepts:
+    - 3011536  # Estimated date of delivery
+    - 3026070  # Date of last menstrual period
+    - 3024261  # Pregnancy test
+    - 4260747  # Gestational age at delivery
+    - 40758410  # Gestational age at scan
+    - 3002549  # Expected date of delivery
+    - 43054890  # Gestational age by scan
+    - 46234792  # Gestational age at event
+    - 4266763  # Gestational age at birth
+    - 40485048  # Clinical gestational age
+    - 3048230  # Gestational age in weeks
+    - 3002209  # Gestational age Estimated
+    - 3012266  # Gestational age
+    
+  measurement_concepts:
+    - 3036844  # Gestational age measurement
+    - 3048230  # Gestational age in weeks
+    - 3001105  # Estimated delivery date
+    - 3002209  # Gestational age Estimated
+    - 3050433  # Gestational age at procedure
+    - 3012266  # Gestational age
+
+# Pregnancy Dating Concepts
+pregnancy_dating:
+  estimated_delivery_date_concepts:
+    - 1175623  # Expected date of delivery
+    - 3001105  # Estimated delivery date
+    - 3011536  # Estimated date of delivery
+    - 3024261  # Pregnancy test positive date
+    - 3024973  # Pregnancy duration
+    - 3026070  # Date of last menstrual period
+    - 3036322  # Pregnancy start date
+    - 3038318  # Expected delivery date from scan
+    - 3038608  # Expected delivery date from LMP
+    - 4059478  # Pregnancy confirmed date
+    - 4128833  # Estimated date of confinement
+    - 40490322  # Due date
+    - 40760182  # Calculated delivery date
+    - 40760183  # Revised delivery date
+    - 42537958  # Final estimated delivery date
+    
+  estimated_conception_date_concepts:
+    - 3002314  # Date of conception
+    - 3043737  # Conception date estimated
+    - 4058439  # Calculated conception date
+    - 4072438  # Conception date from LMP
+    - 4089559  # Conception date from scan
+    - 44817092  # Estimated fertilization date
+    
+  length_of_gestation_at_birth_concepts:
+    - 4260747  # Gestational age at delivery
+    - 43054890  # Gestational age by scan
+    - 46234792  # Gestational age at event
+    - 4266763  # Gestational age at birth
+    - 40485048  # Clinical gestational age
+
+# Pregnancy Condition Concepts (Found in Tufts and other OMOP CDMs)
+pregnancy_conditions:
+  # General pregnancy concepts found in Tufts database
+  general_pregnancy:
+    - 444094   # Finding related to pregnancy (7062 persons in Tufts)
+    - 4299535  # Pregnancy (standard OMOP)
+    - 4013024  # Normal pregnancy
+    - 433260   # Complication of pregnancy
+  
+  # Trimester-specific concepts found in Tufts
+  trimester_specific:
+    - 4239938  # First trimester pregnancy (790 persons in Tufts)
+    - 4244438  # Second trimester pregnancy (1837 persons in Tufts)
+    - 4218813  # Third trimester pregnancy (814 persons in Tufts)
+  
+  # High-risk and complications found in Tufts
+  complications:
+    - 4188598  # High risk pregnancy (1698 persons in Tufts)
+    - 43530950 # Complication occurring during pregnancy (1513 persons in Tufts)
+    - 435875   # Complication of pregnancy, childbirth and/or the puerperium (1393 persons in Tufts)
+    - 4154836  # Pregnancy with abortive outcome
+    - 198099   # Antepartum hemorrhage
+    - 4145743  # Pre-eclampsia
+  
+  # Labor and delivery related found in Tufts
+  labor_delivery:
+    - 444114   # Maternal AND/OR fetal condition affecting labor AND/OR delivery (675 persons in Tufts)
+    - 4092289  # Delivery normal
+    - 4081422  # Delivery by cesarean section
+  
+  # Postpartum concepts found in Tufts
+  postpartum:
+    - 4041280  # Postpartum finding (1163 persons in Tufts)
+    
+  # Termination concepts found in Tufts
+  termination:
+    - 436747   # Legal termination of pregnancy without complication (700 persons in Tufts)
+    - 4067106  # Spontaneous abortion
+    - 4088927  # Ectopic pregnancy
+
+# Pregnancy Outcome Concepts (Standard OMOP + Tufts findings)
+pregnancy_outcomes:
+  live_birth:
+    concept_ids: [4092289, 4013886, 4012732]  # Standard live birth concepts
+    abbreviation: "LB"
+    
+  stillbirth:
+    concept_ids: [4079978, 4013503, 435559, 433111]  # Standard stillbirth concepts
+    abbreviation: "SB"
+    
+  spontaneous_abortion:
+    concept_ids: [4067106, 432303, 4066746]  # Standard miscarriage/spontaneous abortion
+    abbreviation: "SA"
+    
+  induced_abortion:
+    concept_ids: [4128331, 4053936, 4236484, 436747]  # Standard induced abortion + Tufts termination
+    abbreviation: "AB"
+    
+  ectopic_pregnancy:
+    concept_ids: [433260, 4098004, 198874, 4088927]  # Standard ectopic pregnancy concepts
+    abbreviation: "ECT"
+    
+  delivery:
+    concept_ids: [4081422, 4136974, 40485567, 4092289]  # Standard delivery concepts
+    abbreviation: "DELIV"
+    
+  pregnancy_ongoing:
+    concept_ids: [4088975, 4299535, 444094, 4239938, 4244438, 4218813]  # Ongoing pregnancy + trimester concepts
+    abbreviation: "PREG"
+    
+  postpartum:
+    concept_ids: [4041280]  # Postpartum finding from Tufts
+    abbreviation: "PP"
+
+# Database-Specific Settings
+database_settings:
+  # Batch sizes for different database systems
+  batch_sizes:
+    postgresql: 50000
+    sql_server: 25000
+    oracle: 10000
+    redshift: 50000
+    snowflake: 50000
+    spark: 100000
+    duckdb: 50000
+    allofus: 50000
+    default: 10000
+    
+  # Page sizes for data collection
+  page_sizes:
+    large_query: 50000
+    medium_query: 20000
+    small_query: 10000
+    
+  # Date difference functions by database
+  date_diff_functions:
+    postgresql: "DATE_PART('day', {date1} - {date2})"
+    sql_server: "DATEDIFF(day, {date2}, {date1})"
+    oracle: "({date1} - {date2})"
+    redshift: "DATEDIFF(day, {date2}, {date1})"
+    snowflake: "DATEDIFF('day', {date2}, {date1})"
+    spark: "DATEDIFF({date1}, {date2})"
+    duckdb: "DATE_DIFF('day', {date2}, {date1})"
+    
+  # Date arithmetic by database
+  date_add_days:
+    postgresql: "{date} + INTERVAL '{days} days'"
+    sql_server: "DATEADD(day, {days}, {date})"
+    oracle: "{date} + {days}"
+    redshift: "DATEADD(day, {days}, {date})"
+    snowflake: "DATEADD('day', {days}, {date})"
+    spark: "DATE_ADD({date}, {days})"
+    duckdb: "{date} + INTERVAL {days} DAY"
+
+# Algorithm Parameters
+algorithm_parameters:
+  # Age limits for pregnancy
+  min_age: 15
+  max_age: 56
+  
+  # Episode duration limits (in days)
+  min_episode_duration: 30
+  max_episode_duration: 365  # ~12 months
+  
+  # Buffer days for various calculations
+  overlap_buffer_days: 14
+  merge_buffer_days: 7
+  lookback_window_days: 14
+  lookahead_months: 11
+  
+  # Gestational age limits (in weeks)
+  min_gestational_weeks: 0
+  max_gestational_weeks: 44
+  
+  # Precision thresholds (in days)
+  high_precision_days: 7
+  medium_precision_days: 30
+  
+  # Quality thresholds
+  min_concepts_for_episode: 2
+  min_overlapping_percent: 50
+  
+  # Invalid values to filter
+  invalid_gestational_value: 9999999
+  invalid_date_placeholder: "2999-01-01"

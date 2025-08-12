@@ -1,0 +1,43 @@
+# R files
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Output files
+*.log
+*.rds
+*.csv
+output/
+results/
+
+# Temporary files
+*~
+*.swp
+*.bak
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test outputs
+test_output*.log
+outcome_episodes_results.rds
+run_hipps_outcomes_only.R
+
+# Database credentials (if any)
+.env
+config.yml
+credentials.yml
+
+# Documentation builds
+docs/
+_site/
+_bookdown_files/
+
+# Package build artifacts
+*.tar.gz
+*.zip

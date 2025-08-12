@@ -1,0 +1,317 @@
+---
+title: "Getting Started with OMOPPregnancy"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with OMOPPregnancy}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+```{r setup}
+library(OMOPPregnancy)
+library(DatabaseConnector)
+library(dplyr)
+```
+
+## Introduction
+
+The OMOPPregnancy package implements the HIPPS (Hierarchy and rule-based pregnancy episode Inference integrated with Pregnancy Progression Signatures) algorithm for identifying pregnancy episodes in OMOP CDM databases. This vignette demonstrates how to use the package with your OMOP CDM database.
+
+## Prerequisites
+
+Before using the package, ensure you have:
+
+1. Access to an OMOP CDM v5.3+ database
+2. Required R packages installed
+3. Database connection credentials
+4. Sufficient permissions to create temporary tables
+
+## Basic Usage
+
+### Step 1: Create Database Connection
+
+For a PostgreSQL database:
+
+```{r}
+connectionDetails <- createConnectionDetails(
+  dbms = "postgresql",
+  server = "localhost/mydb",
+  user = "username",
+  password = "password",
+  port = 5432
+)
+```
+
+For Microsoft SQL Server:
+
+```{r}
+connectionDetails <- createConnectionDetails(
+  dbms = "sql server",
+  server = "myserver.database.windows.net",
+  user = "username",
+  password = "password",
+  port = 1433
+)
+```
+
+For BigQuery (Google Cloud):
+
+```{r}
+connectionDetails <- createConnectionDetails(
+  dbms = "bigquery",
+  connectionString = "jdbc:bigquery://https://www.googleapis.com/bigquery/v2:443",
+  user = "service-account@project.iam.gserviceaccount.com",
+  password = "path/to/keyfile.json"
+)
+```
+
+### Step 2: Run the HIPPS Algorithm
+
+Basic execution with default settings:
+
+```{r}
+results <- run_hipps(
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = "cdm_schema",
+  outputFolder = "output/"
+)
+```
+
+With custom configuration:
+
+```{r}
+# Load custom configuration
+config <- load_config(mode = "generic")
+
+# Modify settings
+config$algorithm$hip$min_age <- 18  # Change minimum age
+config$algorithm$hip$max_age <- 50  # Change maximum age
+
+# Run with custom config
+results <- run_hipps(
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = "cdm_schema",
+  resultsDatabaseSchema = "scratch_schema",
+  outputFolder = "output/",
+  config = config
+)
+```
+
+### Step 3: Examine Results
+
+View summary statistics:
+
+```{r}
+# Number of episodes identified
+results$summary$n_episodes
+
+# Number of unique persons with pregnancies
+results$summary$n_persons
+
+# Distribution by outcome type
+results$summary$episodes_by_outcome
+```
+
+Access the full episode data:
+
+```{r}
+# Get local copy of episodes
+episodes <- collect(results$episodes)
+
+# View first few episodes
+head(episodes)
+
+# Summarize by year
+episodes %>%
+  mutate(year = lubridate::year(episode_start_date)) %>%
+  group_by(year, category) %>%
+  summarise(n = n()) %>%
+  print()
+```
+
+## Using with All of Us
+
+If you're working within the All of Us Research Workbench:
+
+```{r}
+# Use All of Us mode
+results <- run_hipps(
+  mode = "allofus",
+  cdmDatabaseSchema = "aou_cdm",
+  outputFolder = "output/"
+)
+```
+
+## Comparing Across Sites
+
+To compare results between different OMOP CDM databases:
+
+```{r}
+# Run on Site A
+site_a_results <- run_hipps(
+  connectionDetails = site_a_connection,
+  cdmDatabaseSchema = "cdm",
+  outputFolder = "output/site_a/"
+)
+
+# Run on Site B
+site_b_results <- run_hipps(
+  connectionDetails = site_b_connection,
+  cdmDatabaseSchema = "cdm",
+  outputFolder = "output/site_b/"
+)
+
+# Compare results
+comparison <- compare_results(
+  reference = site_a_results,
+  comparison = site_b_results,
+  stratify_by = c("age_group", "year", "outcome_type")
+)
+
+# Generate comparison report
+generate_report(
+  comparison,
+  output_file = "comparison_report.html"
+)
+```
+
+## Configuration Options
+
+### Algorithm Parameters
+
+Customize the algorithm behavior:
+
+```{r}
+config <- list(
+  algorithm = list(
+    hip = list(
+      min_age = 15,        # Minimum age for inclusion
+      max_age = 55,        # Maximum age for inclusion
+      outcome_hierarchy = c("LB", "SB", "ECT", "AB", "SA", "DELIV")
+    ),
+    pps = list(
+      min_records = 2,     # Minimum records for PPS episode
+      max_gap_months = 10  # Maximum gap between concepts
+    )
+  )
+)
+```
+
+### Database Settings
+
+Optimize for your database platform:
+
+```{r}
+config$database <- list(
+  batch_size = 10000,      # Records per batch
+  use_temp_tables = TRUE,  # Use temporary tables
+  parallel = FALSE         # Enable parallel processing
+)
+```
+
+## Troubleshooting
+
+### Connection Issues
+
+If you encounter connection problems:
+
+```{r}
+# Test connection
+con <- create_connection(connectionDetails, cdmDatabaseSchema = "cdm")
+validate_connection(con, "cdm")
+```
+
+### Memory Issues
+
+For large databases, use batching:
+
+```{r}
+config$database$batch_size <- 5000  # Smaller batch size
+config$output$save_intermediate <- TRUE  # Save intermediate results
+```
+
+### Missing Concepts
+
+Check concept availability:
+
+```{r}
+# Load concept sets
+concepts <- load_concept_sets()
+
+# Check if your database has required concepts
+con <- create_connection(connectionDetails)
+concept_tbl <- get_cdm_table(con, "concept", "cdm")
+
+available_concepts <- concept_tbl %>%
+  filter(concept_id %in% !!concepts$HIP_concepts$concept_id) %>%
+  count() %>%
+  pull(n)
+
+message(paste("Found", available_concepts, "of", 
+              nrow(concepts$HIP_concepts), "HIP concepts"))
+```
+
+## Advanced Usage
+
+### Custom Concept Sets
+
+Use your own concept sets:
+
+```{r}
+# Load custom concepts
+my_concepts <- read.csv("my_hip_concepts.csv")
+
+# Save to package format
+saveRDS(my_concepts, "custom_concepts/HIP_concepts.rds")
+
+# Run with custom concepts
+results <- run_hipps(
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = "cdm",
+  conceptDir = "custom_concepts/",
+  outputFolder = "output/"
+)
+```
+
+### Parallel Processing
+
+For large datasets, enable parallel processing:
+
+```{r}
+# Enable parallel execution
+config$database$parallel <- TRUE
+
+# Set number of cores
+options(mc.cores = 4)
+
+# Run with parallel processing
+results <- run_hipps(
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = "cdm",
+  config = config,
+  outputFolder = "output/"
+)
+```
+
+## Output Files
+
+The package generates several output files:
+
+- `pregnancy_episodes.rds`: R data file with all episodes
+- `pregnancy_episodes.csv`: CSV file for sharing
+- `summary_statistics.txt`: Summary of results
+- `execution_log.txt`: Detailed execution log
+
+## Next Steps
+
+- See the [Algorithm Reference](../docs/ALGORITHM_REFERENCE.md) for detailed algorithm documentation
+- See the [Comparison Guide](../docs/COMPARISON_GUIDE.md) for multi-site studies
+- Report issues at [GitHub Issues](https://github.com/yourusername/OMOPPregnancy/issues)

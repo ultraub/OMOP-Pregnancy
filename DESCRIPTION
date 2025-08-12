@@ -1,0 +1,45 @@
+Package: OMOPPregnancy
+Type: Package
+Title: Pregnancy Episode Identification in OMOP CDM Using HIPPS Algorithm
+Version: 0.1.0
+Date: 2025-01-12
+Authors@R: c(
+    person("Your", "Name", email = "your.email@example.com", role = c("aut", "cre")),
+    person("Louisa H", "Smith", role = "ctb", comment = "Original All of Us implementation"),
+    person("Sara E", "Jones", role = "ctb", comment = "Original HIPPS algorithm")
+    )
+Description: Implements the HIPPS (Hierarchy and rule-based pregnancy episode 
+    Inference integrated with Pregnancy Progression Signatures) algorithm for 
+    identifying pregnancy episodes in OMOP CDM databases. This package enables 
+    cross-site comparison studies and benchmarking of pregnancy identification 
+    across different OMOP CDM implementations, including All of Us and other 
+    healthcare databases.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Depends: 
+    R (>= 4.0.0)
+Imports:
+    DBI (>= 1.1.0),
+    dplyr (>= 1.0.0),
+    tidyr,
+    readr,
+    lubridate,
+    rlang,
+    tibble,
+    purrr,
+    here,
+    readxl,
+    DatabaseConnector (>= 5.0.0),
+    SqlRender (>= 1.6.0)
+Suggests:
+    CDMConnector,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    covr,
+    Eunomia
+RoxygenNote: 7.2.3
+VignetteBuilder: knitr
+URL: https://github.com/yourusername/OMOPPregnancy
+BugReports: https://github.com/yourusername/OMOPPregnancy/issues
