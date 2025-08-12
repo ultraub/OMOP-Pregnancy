@@ -100,7 +100,8 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
     mutate(
       day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
-      date_of_birth = sql("TRY_CAST(CAST(year_of_birth AS VARCHAR) + '-' + CAST(month_of_birth AS VARCHAR) + '-' + CAST(day_of_birth AS VARCHAR) AS DATE)")
+      # Fixed: Use DATEFROMPARTS for SQL Server instead of TRY_CAST
+      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
     ) %>%
     select(person_id, date_of_birth)
   

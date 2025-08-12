@@ -22,14 +22,16 @@ Depends:
 Imports:
     DBI (>= 1.1.0),
     dplyr (>= 1.0.0),
-    tidyr,
-    readr,
-    lubridate,
-    rlang,
-    tibble,
-    purrr,
-    here,
-    readxl,
+    dbplyr (>= 2.0.0),
+    tidyr (>= 1.0.0),
+    readr (>= 2.0.0),
+    lubridate (>= 1.7.0),
+    rlang (>= 0.4.0),
+    tibble (>= 3.0.0),
+    purrr (>= 0.3.0),
+    here (>= 1.0.0),
+    readxl (>= 1.3.0),
+    yaml (>= 2.2.0),
     DatabaseConnector (>= 5.0.0),
     SqlRender (>= 1.6.0)
 Suggests:
@@ -41,5 +43,5 @@ Suggests:
     Eunomia
 RoxygenNote: 7.2.3
 VignetteBuilder: knitr
-URL: https://github.com/yourusername/OMOPPregnancy
-BugReports: https://github.com/yourusername/OMOPPregnancy/issues
+URL: https://github.com/ultraub/OMOP-Pregnancy
+BugReports: https://github.com/ultraub/OMOP-Pregnancy/issues
