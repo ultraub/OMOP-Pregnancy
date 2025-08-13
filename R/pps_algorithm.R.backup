@@ -10,17 +10,6 @@
 #' @import purrr
 NULL
 
-# Source the SQL functions for cross-platform compatibility
-# Note: In package context, this would be handled by NAMESPACE imports
-if (!exists("sql_date_diff")) {
-  source(system.file("R", "sql_functions.R", package = "OMOPPregnancy", mustWork = FALSE))
-  if (!exists("sql_date_diff")) {
-    # Fallback for development
-    source_file <- file.path(dirname(getwd()), "R", "sql_functions.R")
-    if (file.exists(source_file)) source(source_file)
-  }
-}
-
 #' Input gestational timing concepts from OMOP CDM tables
 #'
 #' @param condition_occurrence_tbl Condition occurrence table
@@ -207,15 +196,10 @@ assign_episodes <- function(personlist, ...) {
 #' @param PPS_concepts PPS concepts table
 #' @param person_tbl Person table
 #' @param config Configuration list (optional)
-#' @param connection Database connection (optional, for dialect detection)
 #'
 #' @return Data frame with PPS episodes
 #' @export
-get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, config = NULL, connection = NULL) {
-  # Extract connection if not provided
-  if (is.null(connection) && inherits(person_tbl, c("tbl_lazy", "tbl_sql"))) {
-    connection <- person_tbl$src$con
-  }
+get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, config = NULL) {
   
   # Get configuration parameters or use defaults
   if (is.null(config)) {
@@ -256,11 +240,11 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
     ) %>%
     mutate(
       # Fixed: Simplified date construction for SQL Server
-      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
+      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
     ) %>%
     mutate(
       # Separate mutate for date_diff to ensure date_of_birth is available
-      date_diff = sql_date_diff("domain_concept_start_date", "date_of_birth", "day", connection),
+      date_diff = sql("DATEDIFF(day, date_of_birth, domain_concept_start_date)"),
       age = date_diff / 365
     ) %>%
     # women of reproductive age

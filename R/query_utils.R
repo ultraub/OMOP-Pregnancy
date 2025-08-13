@@ -8,6 +8,9 @@
 #' @import DBI
 NULL
 
+# Source the SQL functions module for cross-platform support
+# This provides SqlRender-based wrappers for date and string operations
+
 #' Create a temporary table from a data frame
 #'
 #' This function replaces aou_create_temp_table() for generic OMOP CDM databases
@@ -291,48 +294,46 @@ drop_temp_table <- function(connection,
 #' Helper function to handle date differences across platforms
 #'
 #' Provides consistent date difference calculation across database platforms
+#' using SqlRender for proper translation to target dialects.
 #'
 #' @param date1 First date column
 #' @param date2 Second date column
 #' @param units Units for difference ("day", "month", "year")
+#' @param connection Optional database connection for dialect detection
 #'
 #' @return SQL expression for date difference
 #' @export
-date_diff_sql <- function(date1, date2, units = "day") {
-  # This returns a SQL expression that can be used in dplyr mutate
-  # The actual SQL will be platform-specific when rendered
-  
-  if (units == "day") {
-    # Most platforms support date subtraction
-    return(dbplyr::sql(paste0("DATEDIFF(day, ", date2, ", ", date1, ")")))
-  } else if (units == "month") {
-    return(dbplyr::sql(paste0("DATEDIFF(month, ", date2, ", ", date1, ")")))
-  } else if (units == "year") {
-    return(dbplyr::sql(paste0("DATEDIFF(year, ", date2, ", ", date1, ")")))
-  }
+date_diff_sql <- function(date1, date2, units = "day", connection = NULL) {
+  # Use the SqlRender-based wrapper for cross-platform compatibility
+  return(sql_date_diff(date1, date2, units, connection))
 }
 
 #' Wrapper for date_diff function used in original code
 #'
-#' Maintains compatibility with original algorithm code
+#' Maintains compatibility with original algorithm code while providing
+#' cross-platform support through SqlRender.
 #'
 #' @param date1 First date
 #' @param date2 Second date
 #' @param unit SQL unit expression
+#' @param connection Optional database connection for dialect detection
 #'
 #' @return Date difference expression
 #' @export
-date_diff <- function(date1, date2, unit) {
-  # For SQL Server, directly use DATEDIFF function
-  # This will be passed through to the database
+date_diff <- function(date1, date2, unit, connection = NULL) {
+  # Parse the unit string to determine the time unit
   unit_str <- as.character(unit)
+  
   if (grepl("day", unit_str, ignore.case = TRUE)) {
-    return(dbplyr::sql(paste0("DATEDIFF(day, ", date2, ", ", date1, ")")))
+    units <- "day"
   } else if (grepl("month", unit_str, ignore.case = TRUE)) {
-    return(dbplyr::sql(paste0("DATEDIFF(month, ", date2, ", ", date1, ")")))
+    units <- "month"
   } else if (grepl("year", unit_str, ignore.case = TRUE)) {
-    return(dbplyr::sql(paste0("DATEDIFF(year, ", date2, ", ", date1, ")")))
+    units <- "year"
   } else {
-    return(dbplyr::sql(paste0("DATEDIFF(day, ", date2, ", ", date1, ")")))
+    units <- "day"  # default
   }
+  
+  # Use the SqlRender-based wrapper for cross-platform compatibility
+  return(sql_date_diff(date1, date2, units, connection))
 }

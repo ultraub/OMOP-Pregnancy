@@ -19,6 +19,11 @@ library(purrr)
 library(tidyr)
 library(lubridate)
 
+# Source the SQL functions for cross-platform compatibility
+if (file.exists("R/sql_functions.R")) {
+  source("R/sql_functions.R")
+}
+
 # Source the package functions
 source('R/config.R')
 source('R/connection.R')
@@ -140,8 +145,8 @@ step4_original <- step3 %>%
   mutate(
     day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
     month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
-    date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)"),
-    date_diff = sql("DATEDIFF(day, date_of_birth, domain_concept_start_date)"),
+    date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection),
+    date_diff = sql_date_diff("domain_concept_start_date", "date_of_birth", "day", connection),
     age = date_diff / 365
   )
 tryCatch({
@@ -161,10 +166,10 @@ step4_separated <- step3 %>%
     month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
   ) %>%
   mutate(
-    date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
+    date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
   ) %>%
   mutate(
-    date_diff = sql("DATEDIFF(day, date_of_birth, domain_concept_start_date)"),
+    date_diff = sql_date_diff("domain_concept_start_date", "date_of_birth", "day", connection),
     age = date_diff / 365
   )
 tryCatch({
