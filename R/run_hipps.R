@@ -127,7 +127,8 @@ browser()
     HIP_concepts = HIP_concepts,
     Matcho_outcome_limits = Matcho_outcome_limits,
     Matcho_term_durations = Matcho_term_durations,
-    config = config
+    config = config,
+    connection = con
   )
   
   # Run PPS algorithm
@@ -140,7 +141,8 @@ browser()
     visit_occurrence_tbl = visit_occurrence_tbl,
     PPS_concepts = PPS_concepts,
     person_tbl = person_tbl,
-    config = config
+    config = config,
+    connection = con
   )
   
   # Merge episodes
@@ -232,7 +234,8 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
                             HIP_concepts,
                             Matcho_outcome_limits,
                             Matcho_term_durations,
-                            config) {
+                            config,
+                            connection = NULL) {
   
   # Get initial cohort
   initial_pregnant_cohort_df <- initial_pregnant_cohort(
@@ -241,7 +244,9 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
     observation_tbl,
     condition_occurrence_tbl,
     person_tbl,
-    HIP_concepts
+    HIP_concepts,
+    config = config,
+    connection = connection
   ) %>%
     compute_table()
   
@@ -395,7 +400,8 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
                             visit_occurrence_tbl,
                             PPS_concepts,
                             person_tbl,
-                            config) {
+                            config,
+                            connection = NULL) {
   
   # Get input GT concepts
   input_GT_concepts_df <- input_GT_concepts(
@@ -411,7 +417,9 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
   get_PPS_episodes_df <- get_PPS_episodes(
     input_GT_concepts_df,
     PPS_concepts,
-    person_tbl
+    person_tbl,
+    config = config,
+    connection = connection
   )
   
   # Get episode date ranges
