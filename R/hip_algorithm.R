@@ -10,9 +10,8 @@
 #' @import purrr
 NULL
 
-# SQL functions are now loaded through package NAMESPACE
-# The sql_date_diff, sql_date_from_parts, sql_date_add, and sql_concat
-# functions are exported from sql_functions.R and available when the package is loaded
+# Note: SQL functions must be called with sql() directly in dplyr pipelines
+# to ensure the SQL is properly generated rather than passed as function names
 
 #' Get initial pregnant cohort
 #' 
@@ -118,7 +117,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
       day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
       # Use SqlRender wrapper for cross-platform compatibility
-      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth")
+      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
     ) %>%
     select(person_id, date_of_birth)
   
@@ -126,7 +125,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
   union_df <- union_df %>%
     inner_join(person_df, by = "person_id") %>%
     mutate(
-      date_diff = sql_date_diff("visit_date", "date_of_birth", "day"),
+      date_diff = sql("DATEDIFF(day, date_of_birth, visit_date)"),
       age = date_diff / 365
     ) %>%
     filter(age >= min_age, age < max_age)
@@ -164,7 +163,7 @@ final_visits <- function(initial_pregnant_cohort_df, Matcho_outcome_limits, cate
     arrange(visit_date, .by_group = TRUE) %>%
     # Create a new column called "days" that calculates the number of days between each visit for each person.
     mutate(prev_date = lag(visit_date)) %>%
-    mutate(days = sql_date_diff("visit_date", "prev_date", "day")) %>%
+    mutate(days = sql("DATEDIFF(day, prev_date, visit_date)")) %>%
     ungroup()
   
   temp_df <- df
@@ -220,11 +219,11 @@ add_stillbirth <- function(final_stillbirth_visits_df, final_livebirth_visits_df
       previous_category = lag(category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_date_diff("visit_date", "prev_date", "day"),
+    mutate(after_days = sql("DATEDIFF(day, prev_date, visit_date)"),
       next_category = lead(category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_date_diff("next_date", "visit_date", "day")
+    mutate(before_days = sql("DATEDIFF(day, visit_date, next_date)")
     ) %>%
     filter(category == "SB") %>%
     filter(
@@ -289,11 +288,11 @@ add_ectopic <- function(add_stillbirth_df, Matcho_outcome_limits, final_ectopic_
       previous_category = lag(category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_date_diff("visit_date", "prev_date", "day"),
+    mutate(after_days = sql("DATEDIFF(day, prev_date, visit_date)"),
       next_category = lead(category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_date_diff("next_date", "visit_date", "day")
+    mutate(before_days = sql("DATEDIFF(day, visit_date, next_date)")
     ) %>%
     # filter to ectopic visits
     filter(category == "ECT") %>%
@@ -371,11 +370,11 @@ add_abortion <- function(add_ectopic_df, Matcho_outcome_limits, final_abortion_v
       previous_category = lag(temp_category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_date_diff("visit_date", "prev_date", "day"),
+    mutate(after_days = sql("DATEDIFF(day, prev_date, visit_date)"),
       next_category = lead(temp_category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_date_diff("next_date", "visit_date", "day")
+    mutate(before_days = sql("DATEDIFF(day, visit_date, next_date)")
     ) %>%
     filter(temp_category == "AB") %>%
     filter(
@@ -455,11 +454,11 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
       previous_category = lag(temp_category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_date_diff("visit_date", "prev_date", "day"),
+    mutate(after_days = sql("DATEDIFF(day, prev_date, visit_date)"),
       next_category = lead(temp_category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_date_diff("next_date", "visit_date", "day")
+    mutate(before_days = sql("DATEDIFF(day, visit_date, next_date)")
     )
   
   # have the deliveries and all othe others
@@ -531,9 +530,9 @@ calculate_start <- function(add_delivery_df, Matcho_term_durations, connection =
     # based only on the outcome, when did pregnancy start
     # calculate latest start start date
     mutate(
-      min_start_date = sql_date_add("visit_date", "-CAST(min_term AS INT)", "day"),
+      min_start_date = sql("DATEADD(day, -CAST(min_term AS INT), visit_date)"),
       # calculate earliest start date
-      max_start_date = sql_date_add("visit_date", "-CAST(max_term AS INT)", "day")
+      max_start_date = sql("DATEADD(day, -CAST(max_term AS INT), visit_date)")
     )
   
   return(term_df)
@@ -670,7 +669,7 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       # calculate number of days between gestation weeks with buffer
       day_diff = week_diff * 7 + buffer_days,
       # get difference in days between visit date and previous date
-      date_diff = sql_date_diff("visit_date", "prev_date", "day"),
+      date_diff = sql("DATEDIFF(day, prev_date, visit_date)"),
       # check if any negative or zero number in week_diff column corresponds to a new pregnancy episode
       # assume it does if the difference in actual dates is larger than the minimum
       # change to 1 (arbitrary positive number) if not;
@@ -831,23 +830,23 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   # add unique id for each outcome visit
   calculate_start_df <- calculate_start_df %>%
     # visit date is the first outcome date for the hierarchically chosen outcome
-    mutate(visit_id = sql_concat(person_id, visit_date, connection = connection))
+    mutate(visit_id = sql("CONCAT(person_id, visit_date)"))
   
   # add unique id for each gestation visit
   get_min_max_gestation_df <- get_min_max_gestation_df %>%
     # max gest date is the first occurrence of the maximum gestational week
     mutate(
-      gest_id = sql_concat(person_id, max_gest_date, connection = connection),
+      gest_id = sql("CONCAT(person_id, max_gest_date)"),
       # add column for gestation period in days for largest gestation week on record
       max_gest_day = (max_gest_week * 7),
       # add column for gestation period in days for smallest gestation week on record
       min_gest_day = (min_gest_week * 7),
       # get date of estimated start date based on max gestation week on record
       # max_gest_date is the first occurrence of the maximum gestational week
-      max_gest_start_date = sql_date_add("max_gest_date", "-CAST(max_gest_day AS INT)", "day"),
+      max_gest_start_date = sql("DATEADD(day, -CAST(max_gest_day AS INT), max_gest_date)"),
       # get date of estimated start date based on min gestation week on record
       # min_gest_date is the first occurence of the min gestational week
-      min_gest_start_date = sql_date_add("min_gest_date", "-CAST(min_gest_day AS INT)", "day"),
+      min_gest_start_date = sql("DATEADD(day, -CAST(min_gest_day AS INT), min_gest_date)"),
       # which one is earlier
       max_gest_start_date_further = if_else(
         max_gest_start_date > min_gest_start_date,
@@ -861,7 +860,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       # so max_gest_start_date will always be earlier
       max_gest_start_date = max_gest_start_date_further,
       # get difference in days between estimated start dates
-      gest_start_date_diff = sql_date_diff("max_gest_start_date", "min_gest_start_date", "day")
+      gest_start_date_diff = sql("DATEDIFF(day, min_gest_start_date, max_gest_start_date)")
     )
   
   # join both tables to find overlaps
@@ -878,12 +877,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       # add -- these are changed anyway so if there are multiple similar overlaps, choose
       # the one with the better term duration
       # visit date should be the first visit date at which there's an outcome
-      gest_at_outcome = sql_date_diff("visit_date", "max_gest_start_date", "day"),
+      gest_at_outcome = sql("DATEDIFF(day, max_gest_start_date, visit_date)"),
       # we want it to be under the max
       is_under_max = ifelse(gest_at_outcome <= max_term, 1, 0),
       # and over the min, ie both = 1
       is_over_min = ifelse(gest_at_outcome >= min_term, 1, 0),
-      days_diff = sql_date_diff("visit_date", "max_gest_date", "day"),
+      days_diff = sql("DATEDIFF(day, max_gest_date, visit_date)"),
       days_diff = if_else(is_over_min == 1 | is_under_max == 1 | days_diff < -buffer_days, 10000, days_diff)
     ) %>%
     group_by(visit_id) %>%
@@ -921,7 +920,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     mutate(episode = row_number()) %>%
     ungroup() %>%
     # recalculate since I overwrote
-    mutate(days_diff = sql_date_diff("visit_date", "max_gest_date", "day")) %>%
+    mutate(days_diff = sql("DATEDIFF(day, max_gest_date, visit_date)")) %>%
     compute_table()
   
   counts <- count(all_df,
@@ -1037,9 +1036,9 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
     ###### add columns for quality check ######
     # get new gestational age at visit date
     mutate(
-      gest_at_outcome = sql_date_diff("visit_date", "max_gest_start_date", "day"),
-      min_gest_date_diff = sql_date_diff("min_gest_date_2", "min_gest_date", "day"),
-      date_diff_max_end = sql_date_diff("max_gest_date", "end_gest_date", "day")
+      gest_at_outcome = sql("DATEDIFF(day, max_gest_start_date, visit_date)"),
+      min_gest_date_diff = sql("DATEDIFF(day, min_gest_date, min_gest_date_2)"),
+      date_diff_max_end = sql("DATEDIFF(day, end_gest_date, max_gest_date)")
     ) %>%
     # redo column for episode
     group_by(person_id) %>%
@@ -1081,8 +1080,8 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
       # get difference in days between start date and previous visit date
       # us gestation-based date if available
       prev_date_diff = ifelse(!is.na(max_gest_start_date),
-        sql_date_diff("max_gest_start_date", "prev_date", "day"),
-        sql_date_diff("max_start_date", "prev_date", "day")
+        sql("DATEDIFF(day, prev_date, max_gest_start_date)"),
+        sql("DATEDIFF(day, prev_date, max_start_date)")
       ),
       # if the difference in days is negative, indicate overlap of episodes
       has_overlap = ifelse(prev_date_diff < 0, 1, 0)
@@ -1116,8 +1115,8 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
       # get difference in days between start date and previous visit date
       # us gestation-based date if available
       prev_date_diff = ifelse(!is.na(max_gest_start_date),
-        sql_date_diff("max_gest_start_date", "prev_date", "day"),
-        sql_date_diff("max_start_date", "prev_date", "day")
+        sql("DATEDIFF(day, prev_date, max_gest_start_date)"),
+        sql("DATEDIFF(day, prev_date, max_start_date)")
       ),
       # if the difference in days is negative, indicate overlap of episodes
       has_overlap = ifelse(prev_date_diff < 0, 1, 0),
@@ -1149,8 +1148,8 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     ungroup() %>%
     mutate(
       prev_date_diff = ifelse(!is.na(estimated_start_date),
-        sql_date_diff("estimated_start_date", "prev_date", "day"),
-        sql_date_diff("estimated_start_date", "prev_date", "day")
+        sql("DATEDIFF(day, prev_date, estimated_start_date)"),
+        sql("DATEDIFF(day, prev_date, estimated_start_date)")
       ),
       # checked, there are no remaining
       has_overlap = ifelse(prev_date_diff < 0, 1, 0)
@@ -1237,7 +1236,7 @@ final_episodes_with_length <- function(final_episodes_df, gestation_visits_df, c
   # get episode length if there is a gestation record date, otherwise impute 1
   final_df <- merged %>%
     mutate(episode_length = if_else(!is.na(gest_date),
-      sql_date_diff("visit_date", "gest_date", "day"), 1
+      sql("DATEDIFF(day, gest_date, visit_date)"), 1
     ))
   
   # if an episode length is 0, change to 1
