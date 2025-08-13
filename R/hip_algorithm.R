@@ -10,16 +10,9 @@
 #' @import purrr
 NULL
 
-# Source the SQL functions for cross-platform compatibility
-# Note: In package context, this would be handled by NAMESPACE imports
-if (!exists("sql_date_diff")) {
-  source(system.file("R", "sql_functions.R", package = "OMOPPregnancy", mustWork = FALSE))
-  if (!exists("sql_date_diff")) {
-    # Fallback for development
-    source_file <- file.path(dirname(getwd()), "R", "sql_functions.R")
-    if (file.exists(source_file)) source(source_file)
-  }
-}
+# SQL functions are now loaded through package NAMESPACE
+# The sql_date_diff, sql_date_from_parts, sql_date_add, and sql_concat
+# functions are exported from sql_functions.R and available when the package is loaded
 
 #' Get initial pregnant cohort
 #' 

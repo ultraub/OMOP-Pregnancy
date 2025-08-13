@@ -17,11 +17,24 @@ export(validate_connection)
 export(get_cdm_version)
 export(get_cdm_table)
 
+# Environment and configuration
+export(load_env)
+export(get_connection_from_env)
+
 # Query utilities
 export(create_temp_table)
 export(compute_table)
 export(date_diff)
 export(date_add)
+export(date_diff_sql)
+export(execute_query)
+export(drop_temp_table)
+
+# SQL functions for cross-platform support
+export(sql_date_diff)
+export(sql_date_from_parts)
+export(sql_date_add)
+export(sql_concat)
 
 # HIP Algorithm functions
 export(initial_pregnant_cohort)
@@ -77,6 +90,10 @@ import(readr)
 import(readxl)
 import(yaml)
 import(stringr)
+import(SqlRender)
+import(dbplyr)
+import(DatabaseConnector)
+import(DBI)
 importFrom(stats,median)
 importFrom(stats,quantile)
 importFrom(utils,head)
