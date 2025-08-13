@@ -249,11 +249,11 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
     ) %>%
     mutate(
       # Fixed: Simplified date construction for SQL Server
-      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
+      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth")
     ) %>%
     mutate(
       # Separate mutate for date_diff to ensure date_of_birth is available
-      date_diff = sql_date_diff("domain_concept_start_date", "date_of_birth", "day", connection),
+      date_diff = sql_date_diff("domain_concept_start_date", "date_of_birth", "day"),
       age = date_diff / 365
     ) %>%
     # women of reproductive age
