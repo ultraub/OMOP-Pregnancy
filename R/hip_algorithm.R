@@ -583,6 +583,32 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
   # Combine tables
   all_gest_df <- union_all(gest_df, other_gest_df)
   
+  # Check if result is empty and ensure column structure is preserved
+  result_count <- all_gest_df %>%
+    count() %>%
+    collect() %>%
+    pull(n)
+  
+  if (result_count == 0) {
+    # Return empty result with preserved column structure
+    # Ensure visit_date is included for downstream functions
+    empty_result <- initial_pregnant_cohort_df %>%
+      head(0) %>%
+      mutate(gest_value = integer())
+    
+    # Make sure key columns are present
+    if (!"visit_date" %in% colnames(empty_result)) {
+      empty_result <- empty_result %>%
+        mutate(visit_date = as.Date(character()))
+    }
+    if (!"person_id" %in% colnames(empty_result)) {
+      empty_result <- empty_result %>%
+        mutate(person_id = integer())
+    }
+    
+    return(empty_result)
+  }
+  
   return(all_gest_df)
 }
 
@@ -613,14 +639,44 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
     # Return empty data frame with expected columns if no gestation visits
     # Create an empty result with all required columns
     # Ensure we have all the columns that get_min_max_gestation expects
-    empty_result <- gestation_visits_df %>%
-      head(0) %>%  # Get structure with no rows
-      mutate(
+    
+    # Check if we're working with a database table
+    if (inherits(gestation_visits_df, c("tbl_lazy", "tbl_sql"))) {
+      # For database tables, create proper empty structure
+      empty_result <- gestation_visits_df %>%
+        head(0)
+      
+      # Add required columns if they don't exist
+      if (!"gest_week" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(gest_week = as.integer(NA))
+      }
+      if (!"episode" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(episode = as.integer(NA))
+      }
+      if (!"visit_date" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(visit_date = sql("CAST(NULL AS DATE)"))
+      }
+      if (!"person_id" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(person_id = as.integer(NA))
+      }
+      
+      # Select only the columns we need
+      empty_result <- empty_result %>%
+        select(any_of(c("person_id", "visit_date", "gest_week", "episode")))
+    } else {
+      # For local data frames
+      empty_result <- data.frame(
+        person_id = integer(),
+        visit_date = as.Date(character()),
         gest_week = integer(),
-        episode = integer(),
-        visit_date = as.Date(character())
-      ) %>%
-      select(person_id, visit_date, gest_week, episode)
+        episode = integer()
+      )
+    }
+    
     return(empty_result)
   }
   
