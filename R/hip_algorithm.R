@@ -32,46 +32,95 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
                                     connection = NULL) {
   # Get concepts specific for pregnancy from domain tables.
   
-  observation_df <- observation_tbl %>%
-    select(
-      person_id,
-      concept_id = observation_concept_id,
-      visit_date = observation_date,
-      value_as_number
-    ) %>%
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
-    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+  # Check if HIP_concepts is a lazy query (temp table reference) or local data frame
+  is_lazy_query <- inherits(HIP_concepts, "tbl_lazy") || inherits(HIP_concepts, "tbl_sql")
   
-  measurement_df <- measurement_tbl %>%
-    select(
-      person_id,
-      concept_id = measurement_concept_id,
-      visit_date = measurement_date,
-      value_as_number
-    ) %>%
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
-    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
-  
-  procedure_df <- procedure_occurrence_tbl %>%
-    select(
-      person_id,
-      concept_id = procedure_concept_id,
-      visit_date = procedure_date
-    ) %>%
-    mutate(value_as_number = NA_real_) %>%  # Add missing column for union
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
-    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
-  
-  # filter condition table
-  condition_df <- condition_occurrence_tbl %>%
-    select(
-      person_id,
-      concept_id = condition_concept_id,
-      visit_date = condition_start_date
-    ) %>%
-    mutate(value_as_number = NA_real_) %>%  # Add missing column for union
-    inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
-    select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+  # Use appropriate join strategy based on HIP_concepts type
+  if (is_lazy_query) {
+    # HIP_concepts is already in the database as a temp table, no copy needed
+    observation_df <- observation_tbl %>%
+      select(
+        person_id,
+        concept_id = observation_concept_id,
+        visit_date = observation_date,
+        value_as_number
+      ) %>%
+      inner_join(HIP_concepts, by = "concept_id") %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+    
+    measurement_df <- measurement_tbl %>%
+      select(
+        person_id,
+        concept_id = measurement_concept_id,
+        visit_date = measurement_date,
+        value_as_number
+      ) %>%
+      inner_join(HIP_concepts, by = "concept_id") %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+    
+    procedure_df <- procedure_occurrence_tbl %>%
+      select(
+        person_id,
+        concept_id = procedure_concept_id,
+        visit_date = procedure_date
+      ) %>%
+      mutate(value_as_number = NA_real_) %>%  # Add missing column for union
+      inner_join(HIP_concepts, by = "concept_id") %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+    
+    # filter condition table
+    condition_df <- condition_occurrence_tbl %>%
+      select(
+        person_id,
+        concept_id = condition_concept_id,
+        visit_date = condition_start_date
+      ) %>%
+      mutate(value_as_number = NA_real_) %>%  # Add missing column for union
+      inner_join(HIP_concepts, by = "concept_id") %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+  } else {
+    # HIP_concepts is a local data frame, use copy = TRUE
+    observation_df <- observation_tbl %>%
+      select(
+        person_id,
+        concept_id = observation_concept_id,
+        visit_date = observation_date,
+        value_as_number
+      ) %>%
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+    
+    measurement_df <- measurement_tbl %>%
+      select(
+        person_id,
+        concept_id = measurement_concept_id,
+        visit_date = measurement_date,
+        value_as_number
+      ) %>%
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+    
+    procedure_df <- procedure_occurrence_tbl %>%
+      select(
+        person_id,
+        concept_id = procedure_concept_id,
+        visit_date = procedure_date
+      ) %>%
+      mutate(value_as_number = NA_real_) %>%  # Add missing column for union
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+    
+    # filter condition table
+    condition_df <- condition_occurrence_tbl %>%
+      select(
+        person_id,
+        concept_id = condition_concept_id,
+        visit_date = condition_start_date
+      ) %>%
+      mutate(value_as_number = NA_real_) %>%  # Add missing column for union
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
+  }
   
   # combine tables
   all_dfs <- list(measurement_df, procedure_df, observation_df, condition_df)
