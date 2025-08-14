@@ -612,12 +612,15 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   if (visit_count == 0) {
     # Return empty data frame with expected columns if no gestation visits
     # Create an empty result with all required columns
+    # Ensure we have all the columns that get_min_max_gestation expects
     empty_result <- gestation_visits_df %>%
       head(0) %>%  # Get structure with no rows
       mutate(
         gest_week = integer(),
-        episode = integer()
-      )
+        episode = integer(),
+        visit_date = as.Date(character())
+      ) %>%
+      select(person_id, visit_date, gest_week, episode)
     return(empty_result)
   }
   
@@ -726,20 +729,43 @@ get_min_max_gestation <- function(gestation_episodes_df) {
     pull(n)
   
   if (episode_count == 0) {
-    # Return empty data frame with expected columns if no gestation episodes
-    return(data.frame(
-      person_id = numeric(),
-      episode = numeric(),
-      first_gest_week = numeric(),
-      end_gest_date = as.Date(character()),
-      end_gest_week = numeric(),
-      min_gest_week = numeric(),
-      min_gest_date = as.Date(character()),
-      gest_week = numeric(),
-      min_gest_date_2 = as.Date(character()),
-      max_gest_week = numeric(),
-      max_gest_date = as.Date(character())
-    ))
+    # Return empty database table with expected columns if no gestation episodes
+    # Check if we're working with a database table
+    if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
+      # Return an empty database table with the right structure
+      empty_result <- gestation_episodes_df %>%
+        head(0) %>%
+        mutate(
+          first_gest_week = numeric(),
+          end_gest_date = as.Date(character()),
+          end_gest_week = numeric(),
+          min_gest_week = numeric(),
+          min_gest_date = as.Date(character()),
+          gest_week = numeric(),
+          min_gest_date_2 = as.Date(character()),
+          max_gest_week = numeric(),
+          max_gest_date = as.Date(character())
+        ) %>%
+        select(person_id, episode, first_gest_week, end_gest_date, end_gest_week,
+               min_gest_week, min_gest_date, gest_week, min_gest_date_2,
+               max_gest_week, max_gest_date)
+      return(empty_result)
+    } else {
+      # Return a local data frame
+      return(data.frame(
+        person_id = numeric(),
+        episode = numeric(),
+        first_gest_week = numeric(),
+        end_gest_date = as.Date(character()),
+        end_gest_week = numeric(),
+        min_gest_week = numeric(),
+        min_gest_date = as.Date(character()),
+        gest_week = numeric(),
+        min_gest_date_2 = as.Date(character()),
+        max_gest_week = numeric(),
+        max_gest_date = as.Date(character())
+      ))
+    }
   }
   
   ############ First Visit Date ############
