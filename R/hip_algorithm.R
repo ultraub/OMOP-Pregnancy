@@ -32,13 +32,12 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
                                     connection = NULL) {
   # Get concepts specific for pregnancy from domain tables.
   
-  # Check if HIP_concepts is a lazy query (temp table reference) or local data frame
+  # Determine if HIP_concepts is already in database or needs to be copied
   is_lazy_query <- inherits(HIP_concepts, "tbl_lazy") || inherits(HIP_concepts, "tbl_sql")
   
-  # Use appropriate join strategy based on HIP_concepts type
   if (is_lazy_query) {
-    # HIP_concepts is already in the database as a temp table, no copy needed
-    # BUT we still need suffix parameter for dbplyr
+    # HIP_concepts is in database, perform joins directly
+    # suffix parameter required for handling column name conflicts
     observation_df <- observation_tbl %>%
       select(
         person_id,
@@ -80,7 +79,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
       inner_join(HIP_concepts, by = "concept_id", suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   } else {
-    # HIP_concepts is a local data frame, use copy = TRUE
+    # HIP_concepts is local, copy to database for join
     observation_df <- observation_tbl %>%
       select(
         person_id,
@@ -173,7 +172,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
   
   # keep only person_ids of women of reproductive age at some visit
   union_df <- union_df %>%
-    inner_join(person_df, by = "person_id") %>%
+    inner_join(person_df, by = "person_id", suffix = c(".x", ".y")) %>%
     mutate(
       date_diff = sql("DATEDIFF(day, date_of_birth, visit_date)"),
       age = date_diff / 365
@@ -952,10 +951,10 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # join first and end tables (all already computed)
   all_df <- new_first_df %>%
-    inner_join(new_end_df, by = c("person_id", "episode")) %>%
-    inner_join(new_min_df, by = c("person_id", "episode")) %>%
-    inner_join(second_min_df, by = c("person_id", "episode")) %>%
-    inner_join(new_max_df, by = c("person_id", "episode"))
+    inner_join(new_end_df, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
+    inner_join(new_min_df, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
+    inner_join(second_min_df, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
+    inner_join(new_max_df, by = c("person_id", "episode"), suffix = c(".x", ".y"))
   
   return(all_df)
 }
@@ -1015,7 +1014,8 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     by = join_by(person_id, overlaps(
       max_start_date, visit_date,
       max_gest_start_date, max_gest_date
-    ))
+    )),
+    suffix = c(".x", ".y")
   ) %>%
     # Check for any gestation-based episodes that overlap with more than one outcome-based
     # episode and keep only those episodes where the gestation-based end date is closest to the
@@ -1042,11 +1042,11 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   # only outcome-based episodes
   just_outcome_df <- calculate_start_df %>%
-    anti_join(select(both_df, visit_id), by = "visit_id")
+    anti_join(select(both_df, visit_id), by = "visit_id", suffix = c(".x", ".y"))
   
   # only gestation-based episodes
   just_gestation_df <- get_min_max_gestation_df %>%
-    anti_join(select(both_df, gest_id), by = "gest_id") %>%
+    anti_join(select(both_df, gest_id), by = "gest_id", suffix = c(".x", ".y")) %>%
     mutate(
       category = "PREG",
       # visit date becomes
@@ -1366,7 +1366,8 @@ final_episodes_with_length <- function(final_episodes_df, gestation_visits_df, c
       by = join_by(
         person_id,
         between(gest_date, estimated_start_date, visit_date)
-      )
+      ),
+      suffix = c(".x", ".y")
     ) %>%
     group_by(person_id, episode) %>%
     slice_min(gest_date, n = 1) %>%

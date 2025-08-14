@@ -1,7 +1,4 @@
-#' Utility functions for handling lazy queries and database operations
-#'
-#' These functions provide consistent handling of lazy queries vs local data frames
-#' throughout the OMOPPregnancy package, especially for RStudio environments.
+#' Utility functions for database query handling
 #'
 #' @name lazy_query_utils
 #' @import dplyr
@@ -17,10 +14,7 @@ is_lazy_query <- function(obj) {
   inherits(obj, c("tbl_lazy", "tbl_sql", "tbl_dbi"))
 }
 
-#' Smart join that handles both lazy queries and local data frames
-#'
-#' This function automatically detects whether the right table is a lazy query
-#' or local data frame and uses the appropriate join strategy.
+#' Smart join for database and local data
 #'
 #' @param left_tbl Left table (usually a database table)
 #' @param right_tbl Right table (could be lazy query or local data frame)
@@ -30,10 +24,8 @@ is_lazy_query <- function(obj) {
 #' @return Joined table
 #' @export
 smart_join <- function(left_tbl, right_tbl, by = NULL, type = "inner", suffix = c(".x", ".y")) {
-  # Check if right table is lazy or local
   is_right_lazy <- is_lazy_query(right_tbl)
   
-  # Select appropriate join function
   join_fn <- switch(type,
     "inner" = inner_join,
     "left" = left_join,
@@ -44,22 +36,16 @@ smart_join <- function(left_tbl, right_tbl, by = NULL, type = "inner", suffix = 
     inner_join  # default
   )
   
-  # Perform join with appropriate parameters
   if (is_right_lazy) {
-    # Both tables are in database, no copy needed
     result <- join_fn(left_tbl, right_tbl, by = by, suffix = suffix)
   } else {
-    # Right table is local, need copy = TRUE
     result <- join_fn(left_tbl, right_tbl, by = by, copy = TRUE, suffix = suffix)
   }
   
   return(result)
 }
 
-#' Create or get a temp table with consistent behavior
-#'
-#' This function ensures consistent temp table creation across different
-#' database platforms and connection types.
+#' Create or get a temp table
 #'
 #' @param connection Database connection
 #' @param data Data frame or lazy query to store
@@ -67,19 +53,13 @@ smart_join <- function(left_tbl, right_tbl, by = NULL, type = "inner", suffix = 
 #' @return Lazy reference to the temp table
 #' @export
 create_or_get_temp_table <- function(connection, data, name = NULL) {
-  # If data is already a lazy query, just return it
   if (is_lazy_query(data)) {
     return(data)
   }
-  
-  # Otherwise create temp table from local data
   return(create_temp_table(connection, data, name))
 }
 
-#' Safely collect data with row limit
-#'
-#' Collects data from a lazy query with an optional row limit to prevent
-#' memory issues in RStudio.
+#' Collect data with row limit
 #'
 #' @param lazy_tbl Lazy table reference
 #' @param n Maximum number of rows to collect (default 10000)
@@ -87,7 +67,6 @@ create_or_get_temp_table <- function(connection, data, name = NULL) {
 #' @return Local data frame
 #' @export
 safe_collect <- function(lazy_tbl, n = 10000, warn = TRUE) {
-  # Get row count if possible
   row_count <- tryCatch({
     lazy_tbl %>% 
       summarise(n = n()) %>% 
@@ -99,7 +78,6 @@ safe_collect <- function(lazy_tbl, n = 10000, warn = TRUE) {
     warning(paste("Table has", row_count, "rows. Collecting only first", n, "rows."))
   }
   
-  # Collect with limit
   result <- lazy_tbl %>%
     head(n) %>%
     collect()
@@ -107,10 +85,7 @@ safe_collect <- function(lazy_tbl, n = 10000, warn = TRUE) {
   return(result)
 }
 
-#' Preview a lazy query in RStudio
-#'
-#' Shows a preview of a lazy query without collecting all data.
-#' Useful for debugging in RStudio.
+#' Preview lazy query
 #'
 #' @param lazy_tbl Lazy table reference
 #' @param n Number of rows to preview (default 10)

@@ -62,7 +62,8 @@ outcomes_per_episode <- function(PPS_episodes_df, get_PPS_episodes_df, initial_p
     select(person_id, person_episode_number, max_pregnancy_date)
   
   pregnant_dates <- left_join(pregnant_dates, tmp_preg_episode_concept_GA,
-    by = c("person_id", "person_episode_number")
+    by = c("person_id", "person_episode_number"),
+    suffix = c(".x", ".y")
   ) %>%
     mutate(
       # if there's no next episode impute a distant time
@@ -88,7 +89,8 @@ outcomes_per_episode <- function(PPS_episodes_df, get_PPS_episodes_df, initial_p
         visit_date, episode_max_date_minus_lookback_window,
         episode_max_date_plus_lookahead_window
       )),
-      relationship = "many-to-many"
+      relationship = "many-to-many",
+      suffix = c(".x", ".y")
     )
   
   preg_related_concepts_lst <- preg_related_concepts %>%
@@ -157,7 +159,7 @@ add_outcomes <- function(outcomes_per_episode_df, PPS_episodes_df) {
     )
   
   df <- PPS_episodes_df %>%
-    left_join(out_df, by = c("person_id", "person_episode_number", "episode_min_date", "n_GT_concepts"))
+    left_join(out_df, by = c("person_id", "person_episode_number", "episode_min_date", "n_GT_concepts"), suffix = c(".x", ".y"))
   
   return(df)
 }
@@ -203,7 +205,7 @@ final_merged_episodes <- function(HIP_episodes_local_df, PPS_episodes_with_outco
         pregnancy_start, pregnancy_end,
         episode_min_date, episode_max_date_plus_two_months
       )
-    )) %>%
+    ), suffix = c(".x", ".y")) %>%
     mutate(
       merged_episode_start = pmin(first_gest_date, episode_min_date, pregnancy_end),
       merged_episode_end = pmax(episode_max_date, pregnancy_end),

@@ -103,7 +103,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
       inner_join(person_id_list, by = join_by(
         person_id, domain_concept_start_date >= start_date,
         domain_concept_start_date <= recorded_episode_end
-      )) %>%
+      ), suffix = c(".x", ".y")) %>%
       select(person_id, domain_concept_start_date,
         domain_concept_id = concept_id, domain_concept_name = concept_name,
         start_date, recorded_episode_end, value_col, episode_number
@@ -117,19 +117,19 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     create_temp_table()
   
   c_o <- concepts_to_search %>%
-    inner_join(condition_occurrence_tbl, by = c("concept_id" = "condition_concept_id")) %>%
+    inner_join(condition_occurrence_tbl, by = c("concept_id" = "condition_concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = concept_name) %>%
     get_preg_related_concepts(person_id_list, "condition_start_date")
   o_df <- concepts_to_search %>%
-    inner_join(observation_tbl, by = c("concept_id" = "observation_concept_id")) %>%
+    inner_join(observation_tbl, by = c("concept_id" = "observation_concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = value_as_string) %>%
     get_preg_related_concepts(person_id_list, "observation_date")
   m_df <- concepts_to_search %>%
-    inner_join(measurement_tbl, by = c("concept_id" = "measurement_concept_id")) %>%
+    inner_join(measurement_tbl, by = c("concept_id" = "measurement_concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = value_as_number) %>%
     get_preg_related_concepts(person_id_list, "measurement_date")
   p_df <- concepts_to_search %>%
-    inner_join(procedure_occurrence_tbl, by = c("concept_id" = "procedure_concept_id")) %>%
+    inner_join(procedure_occurrence_tbl, by = c("concept_id" = "procedure_concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = concept_name) %>%
     get_preg_related_concepts(person_id_list, "procedure_date")
   
@@ -155,7 +155,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   }
   
   preg_related_concepts_local <- preg_related_concepts %>%
-    left_join(algo2_timing_concepts_df, by = "domain_concept_id") %>%
+    left_join(algo2_timing_concepts_df, by = "domain_concept_id", suffix = c(".x", ".y")) %>%
     collect() %>%
     mutate(domain_value = str_replace(value_col, "\\|text_result_val:", "")) %>%
     mutate(domain_value = str_replace(domain_value, "\\|mapped_text_result_val:", "")) %>%
@@ -319,11 +319,11 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
   # Merge timing information with episode details
   merged <- final_merged_episode_detailed_df %>%
     left_join(episodes_with_gestational_timing_info_df,
-              by = c("person_id", "episode_number"))
+              by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
   
   # Add term duration information
   merged_with_terms <- merged %>%
-    left_join(Matcho_term_durations, by = c("final_category" = "category"))
+    left_join(Matcho_term_durations, by = c("final_category" = "category"), suffix = c(".x", ".y"))
   
   # Calculate final estimated start dates considering all information
   final_episodes <- merged_with_terms %>%

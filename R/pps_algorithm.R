@@ -28,12 +28,11 @@ NULL
 input_GT_concepts <- function(condition_occurrence_tbl, procedure_occurrence_tbl,
                               observation_tbl, measurement_tbl, visit_occurrence_tbl, PPS_concepts) {
   rename_cols <- function(top_concepts, df, start_date_col, id_col) {
-    # Fixed: Use !! and := for programmatic renaming to avoid tidyselect warnings
-    # Also fixed: Handle lazy query objects properly WITH suffix parameter
+    # Use !! for programmatic renaming with column names as strings
     is_lazy <- inherits(top_concepts, c("tbl_lazy", "tbl_sql"))
     
     if (is_lazy) {
-      # top_concepts is already in database, no copy needed but suffix required
+      # Concepts already in database - join directly
       top_concepts_df <- df %>%
         rename("domain_concept_start_date" = !!start_date_col, 
                "domain_concept_id" = !!id_col) %>%
@@ -41,7 +40,7 @@ input_GT_concepts <- function(condition_occurrence_tbl, procedure_occurrence_tbl
         select(person_id, domain_concept_start_date, domain_concept_id) %>%
         distinct()
     } else {
-      # top_concepts is local data frame, use copy = TRUE
+      # Local concepts - copy to database for join
       top_concepts_df <- df %>%
         rename("domain_concept_start_date" = !!start_date_col, 
                "domain_concept_id" = !!id_col) %>%
@@ -241,8 +240,7 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
                       config$algorithm$hip$max_age, 56)
   }
   
-  # Fixed: SQL Server has issues with numeric table aliases in complex joins
-  # Materialize the intermediate result to avoid problematic aliasing
+  # Materialize intermediate result to avoid aliasing issues
   person_subset <- person_tbl %>%
     select(person_id, gender_concept_id, year_of_birth, day_of_birth, month_of_birth)
   
@@ -256,13 +254,12 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   }
   
   patients_with_preg_concepts <- patients_with_concepts %>%
-    inner_join(person_subset, by = "person_id") %>%
+    inner_join(person_subset, by = "person_id", suffix = c(".x", ".y")) %>%
     mutate(
       day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
     ) %>%
     mutate(
-      # Fixed: Simplified date construction for SQL Server
       date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth")
     ) %>%
     mutate(
@@ -276,7 +273,6 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       age >= min_age,
       age < max_age
     ) %>%
-    # Fixed: Explicitly list columns to remove instead of using ends_with
     select(-year_of_birth, -month_of_birth, -day_of_birth, -date_diff, -gender_concept_id)
   
   # OBTAIN ALL RELEVANT INPUT PATIENTS AND SAVE GT INFORMATION PER CONCEPT TO A LOOKUP DICTIONARY
@@ -291,7 +287,6 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   # record date: list of matching months, save this to a new dictionary with record dates as the keys. Where no match occurs, put NA
   #   person_dates_dict <- split(person_dates_df$list_col, person_dates_df$person_id)
   
-  # Fixed: removed page_size parameter - not supported in dbplyr::collect()
   # The database will handle pagination automatically
   person_dates_df <- collect(patients_with_preg_concepts) %>%
     group_by(person_id) %>%
