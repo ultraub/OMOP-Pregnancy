@@ -828,9 +828,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify first visit for each pregnancy episode
   # and get max gestation week at first visit date
+  # Use window functions for SQL compatibility
   new_first_df <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    filter(visit_date == min(visit_date, na.rm = TRUE)) %>%
+    mutate(min_visit_date = min(visit_date, na.rm = TRUE)) %>%
+    ungroup() %>%
+    filter(visit_date == min_visit_date) %>%
+    group_by(person_id, episode) %>%
     summarise(first_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
   
@@ -839,9 +843,10 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   # identify minimum gestation week for each pregnancy episode
   temp_min_df <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    filter(gest_week == min(gest_week, na.rm = TRUE)) %>%
-    mutate(min_gest_week = gest_week) %>%
+    mutate(min_gest_week_val = min(gest_week, na.rm = TRUE)) %>%
     ungroup() %>%
+    filter(gest_week == min_gest_week_val) %>%
+    mutate(min_gest_week = gest_week) %>%
     compute_table()
   
   # get range of time when that gestational week was recorded
@@ -863,7 +868,9 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   # keep in mind this could be a month after pregnancy actually ended...
   temp_end_df <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    filter(visit_date == max(visit_date, na.rm = TRUE)) %>%
+    mutate(max_visit_date = max(visit_date, na.rm = TRUE)) %>%
+    ungroup() %>%
+    filter(visit_date == max_visit_date) %>%
     mutate(end_gest_date = visit_date)
   
   # get max gestation week at end visit date
@@ -877,9 +884,10 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   # identify max gestation week for each pregnancy episode
   temp_max_df <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    filter(gest_week == max(gest_week, na.rm = TRUE)) %>%
-    mutate(max_gest_week = gest_week) %>%
+    mutate(max_gest_week_val = max(gest_week, na.rm = TRUE)) %>%
     ungroup() %>%
+    filter(gest_week == max_gest_week_val) %>%
+    mutate(max_gest_week = gest_week) %>%
     compute_table()
   
   # get first occurrence of max gestation week
