@@ -941,14 +941,20 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify first visit for each pregnancy episode
   # and get max gestation week at first visit date
-  # First get min visit date per episode
-  min_visits <- gestation_episodes_df %>%
+  # First ensure we have a clean temp table to work with
+  # This avoids any lingering window function issues
+  gestation_temp <- gestation_episodes_df %>%
+    select(person_id, episode, visit_date, gest_week) %>%
+    compute_table()
+  
+  # Now get min visit date per episode from the temp table
+  min_visits <- gestation_temp %>%
     group_by(person_id, episode) %>%
     summarise(min_visit_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
   
   # Then join back to get gest_week at that date
-  new_first_df <- gestation_episodes_df %>%
+  new_first_df <- gestation_temp %>%
     inner_join(min_visits, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(visit_date == min_visit_date) %>%
     group_by(person_id, episode) %>%
@@ -959,13 +965,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify minimum gestation week for each pregnancy episode
   # First get min gest_week per episode
-  min_weeks <- gestation_episodes_df %>%
+  min_weeks <- gestation_temp %>%
     group_by(person_id, episode) %>%
     summarise(min_gest_week = min(gest_week, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
   
   # Then join back to get all records with that min week
-  temp_min_df <- gestation_episodes_df %>%
+  temp_min_df <- gestation_temp %>%
     inner_join(min_weeks, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(gest_week == min_gest_week) %>%
     compute_table()
@@ -989,13 +995,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   # identify end visit for each pregnancy episode
   # keep in mind this could be a month after pregnancy actually ended...
   # First get max visit date per episode
-  max_visits <- gestation_episodes_df %>%
+  max_visits <- gestation_temp %>%
     group_by(person_id, episode) %>%
     summarise(max_visit_date = max(visit_date, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
   
   # Then join back to get records at that date
-  temp_end_df <- gestation_episodes_df %>%
+  temp_end_df <- gestation_temp %>%
     inner_join(max_visits, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(visit_date == max_visit_date) %>%
     mutate(end_gest_date = visit_date)
@@ -1010,13 +1016,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify max gestation week for each pregnancy episode
   # First get max gest_week per episode
-  max_weeks <- gestation_episodes_df %>%
+  max_weeks <- gestation_temp %>%
     group_by(person_id, episode) %>%
     summarise(max_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
   
   # Then join back to get all records with that max week
-  temp_max_df <- gestation_episodes_df %>%
+  temp_max_df <- gestation_temp %>%
     inner_join(max_weeks, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(gest_week == max_gest_week) %>%
     compute_table()
