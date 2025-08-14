@@ -1075,7 +1075,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   # add unique id for each outcome visit
   calculate_start_df <- calculate_start_df %>%
     # visit date is the first outcome date for the hierarchically chosen outcome
-    mutate(visit_id = sql("CONCAT(person_id, visit_date)"))
+    mutate(visit_id = sql("CONCAT(CAST(person_id AS VARCHAR), CAST(visit_date AS VARCHAR))"))
   
   # add unique id for each gestation visit
   # FIXED: Split complex mutate into multiple steps to avoid column reassignment issues
