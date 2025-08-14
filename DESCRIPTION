@@ -4,7 +4,7 @@ Title: Pregnancy Episode Identification in OMOP CDM Using HIPPS Algorithm
 Version: 0.1.0
 Date: 2025-01-12
 Authors@R: c(
-    person("Your", "Name", email = "your.email@example.com", role = c("aut", "cre")),
+    person("Package", "Maintainer", email = "maintainer@example.com", role = c("aut", "cre")),
     person("Louisa H", "Smith", role = "ctb", comment = "Original All of Us implementation"),
     person("Sara E", "Jones", role = "ctb", comment = "Original HIPPS algorithm")
     )
@@ -43,6 +43,5 @@ Suggests:
     covr,
     Eunomia
 RoxygenNote: 7.2.3
-VignetteBuilder: knitr
 URL: https://github.com/ultraub/OMOP-Pregnancy
 BugReports: https://github.com/ultraub/OMOP-Pregnancy/issues
