@@ -1,5 +1,6 @@
 # Package exports
 export(run_hipps)
+export(sql_join_suffix.DatabaseConnectorJdbcConnection)
 export(load_config)
 export(validate_config)
 export(load_concept_sets)
