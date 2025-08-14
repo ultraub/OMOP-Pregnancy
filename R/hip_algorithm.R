@@ -941,15 +941,15 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify first visit for each pregnancy episode
   # and get max gestation week at first visit date
-  # First compute to avoid window function issues with DatabaseConnector
-  temp_episodes <- gestation_episodes_df %>%
+  # First get min visit date per episode
+  min_visits <- gestation_episodes_df %>%
+    group_by(person_id, episode) %>%
+    summarise(min_visit_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
   
-  # Use window functions for SQL compatibility
-  new_first_df <- temp_episodes %>%
-    group_by(person_id, episode) %>%
-    mutate(min_visit_date = min(visit_date, na.rm = TRUE)) %>%
-    ungroup() %>%
+  # Then join back to get gest_week at that date
+  new_first_df <- gestation_episodes_df %>%
+    inner_join(min_visits, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(visit_date == min_visit_date) %>%
     group_by(person_id, episode) %>%
     summarise(first_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
@@ -958,17 +958,22 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   ############ Min Gestation Week ############
   
   # identify minimum gestation week for each pregnancy episode
-  temp_min_df <- temp_episodes %>%
+  # First get min gest_week per episode
+  min_weeks <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    mutate(min_gest_week_val = min(gest_week, na.rm = TRUE)) %>%
-    ungroup() %>%
-    filter(gest_week == min_gest_week_val) %>%
-    mutate(min_gest_week = gest_week) %>%
+    summarise(min_gest_week = min(gest_week, na.rm = TRUE), .groups = "drop") %>%
+    compute_table()
+  
+  # Then join back to get all records with that min week
+  temp_min_df <- gestation_episodes_df %>%
+    inner_join(min_weeks, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
+    filter(gest_week == min_gest_week) %>%
     compute_table()
   
   # get range of time when that gestational week was recorded
   # get first occurrence of min gestation week
   new_min_df <- temp_min_df %>%
+    mutate(min_gest_week = gest_week) %>%
     group_by(person_id, episode, min_gest_week) %>%
     summarize(min_gest_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
     compute_table()
@@ -983,10 +988,15 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify end visit for each pregnancy episode
   # keep in mind this could be a month after pregnancy actually ended...
-  temp_end_df <- temp_episodes %>%
+  # First get max visit date per episode
+  max_visits <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    mutate(max_visit_date = max(visit_date, na.rm = TRUE)) %>%
-    ungroup() %>%
+    summarise(max_visit_date = max(visit_date, na.rm = TRUE), .groups = "drop") %>%
+    compute_table()
+  
+  # Then join back to get records at that date
+  temp_end_df <- gestation_episodes_df %>%
+    inner_join(max_visits, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(visit_date == max_visit_date) %>%
     mutate(end_gest_date = visit_date)
   
@@ -999,12 +1009,16 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   ############ Max Gestation Week ############
   
   # identify max gestation week for each pregnancy episode
-  temp_max_df <- temp_episodes %>%
+  # First get max gest_week per episode
+  max_weeks <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
-    mutate(max_gest_week_val = max(gest_week, na.rm = TRUE)) %>%
-    ungroup() %>%
-    filter(gest_week == max_gest_week_val) %>%
-    mutate(max_gest_week = gest_week) %>%
+    summarise(max_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
+    compute_table()
+  
+  # Then join back to get all records with that max week
+  temp_max_df <- gestation_episodes_df %>%
+    inner_join(max_weeks, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
+    filter(gest_week == max_gest_week) %>%
     compute_table()
   
   # get first occurrence of max gestation week
