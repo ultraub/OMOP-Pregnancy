@@ -1404,7 +1404,7 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
         # if there's an overlap and a retry period from the earlier episodes
         # and the last episode was not preg (or else would be in gest_id_list)
         # start date = last visit date + retry period
-        has_overlap == 1 & !is.na(prev_retry) ~ prev_date + as.integer(prev_retry),
+        has_overlap == 1 & !is.na(prev_retry) ~ sql("DATEADD(day, CAST(prev_retry AS INT), prev_date)"),
         is.na(max_gest_start_date) ~ max_start_date,
         TRUE ~ max_gest_start_date
       )
