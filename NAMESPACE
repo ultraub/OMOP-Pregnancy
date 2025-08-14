@@ -2,6 +2,16 @@
 export(run_hipps)
 export(sql_join_suffix.DatabaseConnectorJdbcConnection)
 export(load_config)
+
+# Lazy query utilities
+export(is_lazy_query)
+export(smart_join)
+export(create_or_get_temp_table)
+export(safe_collect)
+export(preview_lazy)
+export(ensure_in_database)
+export(get_connection_from_lazy)
+export(cleanup_temp_tables)
 export(validate_config)
 export(load_concept_sets)
 export(configure_algorithm)

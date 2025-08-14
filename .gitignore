@@ -43,3 +43,9 @@ _bookdown_files/
 # Package build artifacts
 *.tar.gz
 *.zip
+
+.env
+.Renviron
+*.log
+*.rds
+errorReport*.txt

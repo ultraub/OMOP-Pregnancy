@@ -29,12 +29,26 @@ input_GT_concepts <- function(condition_occurrence_tbl, procedure_occurrence_tbl
                               observation_tbl, measurement_tbl, visit_occurrence_tbl, PPS_concepts) {
   rename_cols <- function(top_concepts, df, start_date_col, id_col) {
     # Fixed: Use !! and := for programmatic renaming to avoid tidyselect warnings
-    top_concepts_df <- df %>%
-      rename("domain_concept_start_date" = !!start_date_col, 
-             "domain_concept_id" = !!id_col) %>%
-      inner_join(top_concepts, by = "domain_concept_id", copy = TRUE) %>%
-      select(person_id, domain_concept_start_date, domain_concept_id) %>%
-      distinct()
+    # Also fixed: Handle lazy query objects properly
+    is_lazy <- inherits(top_concepts, c("tbl_lazy", "tbl_sql"))
+    
+    if (is_lazy) {
+      # top_concepts is already in database, no copy needed
+      top_concepts_df <- df %>%
+        rename("domain_concept_start_date" = !!start_date_col, 
+               "domain_concept_id" = !!id_col) %>%
+        inner_join(top_concepts, by = "domain_concept_id") %>%
+        select(person_id, domain_concept_start_date, domain_concept_id) %>%
+        distinct()
+    } else {
+      # top_concepts is local data frame, use copy = TRUE
+      top_concepts_df <- df %>%
+        rename("domain_concept_start_date" = !!start_date_col, 
+               "domain_concept_id" = !!id_col) %>%
+        inner_join(top_concepts, by = "domain_concept_id", copy = TRUE) %>%
+        select(person_id, domain_concept_start_date, domain_concept_id) %>%
+        distinct()
+    }
     return(top_concepts_df)
   }
   
