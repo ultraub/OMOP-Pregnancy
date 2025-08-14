@@ -1082,7 +1082,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   get_min_max_gestation_df <- get_min_max_gestation_df %>%
     # First mutate: Create basic columns and initial date calculations
     mutate(
-      gest_id = sql("CONCAT(person_id, max_gest_date)"),
+      gest_id = sql("CONCAT(CAST(person_id AS VARCHAR), CAST(max_gest_date AS VARCHAR))"),
       # add column for gestation period in days for largest gestation week on record
       max_gest_day = (max_gest_week * 7),
       # add column for gestation period in days for smallest gestation week on record
@@ -1370,13 +1370,15 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     filter(has_overlap == 1 & prev_category == "PREG")
   
   # get list of gest_ids to remove
-  gest_id_list <- overlap_df %>%
+  # Use anti_join instead of %in% to avoid issues with scientific notation
+  gest_ids_to_remove <- overlap_df %>%
     distinct(prev_gest_id) %>%
-    pull()
+    rename(gest_id = prev_gest_id) %>%
+    mutate(category = "PREG")
   
-  # remove episodes that overlap
+  # remove episodes that overlap using anti_join
   final_df <- df %>%
-    filter(!(gest_id %in% gest_id_list & category == "PREG")) %>%
+    anti_join(gest_ids_to_remove, by = c("gest_id", "category")) %>%
     group_by(person_id) %>%
     arrange(visit_date, .by_group = TRUE) %>%
     # recalculate
@@ -1407,7 +1409,7 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
         TRUE ~ max_gest_start_date
       ),
       # get estimated gestational age in days at outcome_visit_date using estimated_start_date
-      gest_at_outcome = date_diff(visit_date, estimated_start_date, sql("day")),
+      gest_at_outcome = sql("DATEDIFF(day, estimated_start_date, visit_date)"),
       # add column to check if gest_at_outcome is less than or equal to max_term, 1 indicates yes
       is_under_max = ifelse(gest_at_outcome <= max_term, 1, 0),
       # add column to check if gest_at_outcome is greater than or equal to min_term, 1 indicates yes
