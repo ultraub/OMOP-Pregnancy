@@ -1407,7 +1407,10 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
         has_overlap == 1 & !is.na(prev_retry) ~ prev_date + as.integer(prev_retry),
         is.na(max_gest_start_date) ~ max_start_date,
         TRUE ~ max_gest_start_date
-      ),
+      )
+    ) %>%
+    # CRITICAL: Separate mutate to avoid column alias issues in SQL Server
+    mutate(
       # get estimated gestational age in days at outcome_visit_date using estimated_start_date
       gest_at_outcome = sql("DATEDIFF(day, estimated_start_date, visit_date)"),
       # add column to check if gest_at_outcome is less than or equal to max_term, 1 indicates yes
@@ -1426,9 +1429,12 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     ) %>%
     ungroup() %>%
     mutate(
-      prev_date_diff = ifelse(!is.na(estimated_start_date),
-        sql("DATEDIFF(day, prev_date, estimated_start_date)"),
-        sql("DATEDIFF(day, prev_date, estimated_start_date)")
+      # Recalculate prev_date_diff using the estimated_start_date
+      # If estimated_start_date is NULL, use max_start_date as fallback
+      prev_date_diff = case_when(
+        !is.na(estimated_start_date) ~ sql("DATEDIFF(day, prev_date, estimated_start_date)"),
+        !is.na(max_start_date) ~ sql("DATEDIFF(day, prev_date, max_start_date)"),
+        TRUE ~ NA_real_
       ),
       # checked, there are no remaining
       has_overlap = ifelse(prev_date_diff < 0, 1, 0)
