@@ -29,15 +29,15 @@ input_GT_concepts <- function(condition_occurrence_tbl, procedure_occurrence_tbl
                               observation_tbl, measurement_tbl, visit_occurrence_tbl, PPS_concepts) {
   rename_cols <- function(top_concepts, df, start_date_col, id_col) {
     # Fixed: Use !! and := for programmatic renaming to avoid tidyselect warnings
-    # Also fixed: Handle lazy query objects properly
+    # Also fixed: Handle lazy query objects properly WITH suffix parameter
     is_lazy <- inherits(top_concepts, c("tbl_lazy", "tbl_sql"))
     
     if (is_lazy) {
-      # top_concepts is already in database, no copy needed
+      # top_concepts is already in database, no copy needed but suffix required
       top_concepts_df <- df %>%
         rename("domain_concept_start_date" = !!start_date_col, 
                "domain_concept_id" = !!id_col) %>%
-        inner_join(top_concepts, by = "domain_concept_id") %>%
+        inner_join(top_concepts, by = "domain_concept_id", suffix = c(".x", ".y")) %>%
         select(person_id, domain_concept_start_date, domain_concept_id) %>%
         distinct()
     } else {
@@ -45,7 +45,7 @@ input_GT_concepts <- function(condition_occurrence_tbl, procedure_occurrence_tbl
       top_concepts_df <- df %>%
         rename("domain_concept_start_date" = !!start_date_col, 
                "domain_concept_id" = !!id_col) %>%
-        inner_join(top_concepts, by = "domain_concept_id", copy = TRUE) %>%
+        inner_join(top_concepts, by = "domain_concept_id", copy = TRUE, suffix = c(".x", ".y")) %>%
         select(person_id, domain_concept_start_date, domain_concept_id) %>%
         distinct()
     }
@@ -248,7 +248,7 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   
   # First, filter and join with PPS concepts, then compute to temp table
   patients_with_concepts <- filter(input_GT_concepts_df, !is.na(domain_concept_start_date)) %>%
-    left_join(PPS_concepts, by = "domain_concept_id", copy = TRUE)
+    left_join(PPS_concepts, by = "domain_concept_id", copy = TRUE, suffix = c(".x", ".y"))
   
   # Check if we're in a database context and compute if needed
   if (inherits(patients_with_concepts, "tbl_sql")) {

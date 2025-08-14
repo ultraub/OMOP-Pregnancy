@@ -38,6 +38,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
   # Use appropriate join strategy based on HIP_concepts type
   if (is_lazy_query) {
     # HIP_concepts is already in the database as a temp table, no copy needed
+    # BUT we still need suffix parameter for dbplyr
     observation_df <- observation_tbl %>%
       select(
         person_id,
@@ -45,7 +46,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = observation_date,
         value_as_number
       ) %>%
-      inner_join(HIP_concepts, by = "concept_id") %>%
+      inner_join(HIP_concepts, by = "concept_id", suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
     
     measurement_df <- measurement_tbl %>%
@@ -55,7 +56,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = measurement_date,
         value_as_number
       ) %>%
-      inner_join(HIP_concepts, by = "concept_id") %>%
+      inner_join(HIP_concepts, by = "concept_id", suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
     
     procedure_df <- procedure_occurrence_tbl %>%
@@ -65,7 +66,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = procedure_date
       ) %>%
       mutate(value_as_number = NA_real_) %>%  # Add missing column for union
-      inner_join(HIP_concepts, by = "concept_id") %>%
+      inner_join(HIP_concepts, by = "concept_id", suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
     
     # filter condition table
@@ -76,7 +77,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = condition_start_date
       ) %>%
       mutate(value_as_number = NA_real_) %>%  # Add missing column for union
-      inner_join(HIP_concepts, by = "concept_id") %>%
+      inner_join(HIP_concepts, by = "concept_id", suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   } else {
     # HIP_concepts is a local data frame, use copy = TRUE
@@ -87,7 +88,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = observation_date,
         value_as_number
       ) %>%
-      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE, suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
     
     measurement_df <- measurement_tbl %>%
@@ -97,7 +98,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = measurement_date,
         value_as_number
       ) %>%
-      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE, suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
     
     procedure_df <- procedure_occurrence_tbl %>%
@@ -107,7 +108,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = procedure_date
       ) %>%
       mutate(value_as_number = NA_real_) %>%  # Add missing column for union
-      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE, suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
     
     # filter condition table
@@ -118,7 +119,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
         visit_date = condition_start_date
       ) %>%
       mutate(value_as_number = NA_real_) %>%  # Add missing column for union
-      inner_join(HIP_concepts, by = "concept_id", copy = TRUE) %>%
+      inner_join(HIP_concepts, by = "concept_id", copy = TRUE, suffix = c(".x", ".y")) %>%
       select(person_id, concept_id, visit_date, value_as_number, concept_name, category, gest_value)
   }
   
@@ -575,7 +576,7 @@ calculate_start <- function(add_delivery_df, Matcho_term_durations, connection =
   
   # join tables
   term_df <- add_delivery_df %>%
-    left_join(Matcho_term_durations, by = "category", copy = TRUE) %>%
+    left_join(Matcho_term_durations, by = "category", copy = TRUE, suffix = c(".x", ".y")) %>%
     # based only on the outcome, when did pregnancy start
     # calculate latest start start date
     mutate(
