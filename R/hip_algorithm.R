@@ -1143,11 +1143,11 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   # only outcome-based episodes
   just_outcome_df <- calculate_start_df %>%
-    anti_join(select(both_df, visit_id), by = "visit_id", suffix = c(".x", ".y"))
+    anti_join(select(both_df, visit_id), by = "visit_id")
   
   # only gestation-based episodes
   just_gestation_df <- get_min_max_gestation_df %>%
-    anti_join(select(both_df, gest_id), by = "gest_id", suffix = c(".x", ".y")) %>%
+    anti_join(select(both_df, gest_id), by = "gest_id") %>%
     mutate(
       category = "PREG",
       # visit date becomes
