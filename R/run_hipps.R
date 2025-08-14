@@ -56,8 +56,7 @@ run_hipps <- function(connectionDetails = NULL,
                      conceptDir = NULL,
                      saveIntermediateResults = TRUE) {
 
-browser()
-  
+
   # Start timing
   start_time <- Sys.time()
   

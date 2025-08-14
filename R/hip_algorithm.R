@@ -611,7 +611,14 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   
   if (visit_count == 0) {
     # Return empty data frame with expected columns if no gestation visits
-    return(gestation_visits_df)
+    # Create an empty result with all required columns
+    empty_result <- gestation_visits_df %>%
+      head(0) %>%  # Get structure with no rows
+      mutate(
+        gest_week = integer(),
+        episode = integer()
+      )
+    return(empty_result)
   }
   
   # Define pregnancy episode per patient by gestational records.
