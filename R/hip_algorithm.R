@@ -658,6 +658,19 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
     return(empty_result)
   }
   
+  # Debug: Check columns being returned
+  return_cols <- colnames(all_gest_df)
+  cat("[DEBUG] gestation_visits: Returning columns:", paste(return_cols, collapse=", "), "\n")
+  
+  # Verify visit_date is present
+  if (!"visit_date" %in% return_cols) {
+    cat("[WARNING] gestation_visits: visit_date column is missing!\n")
+  }
+  
+  # Check row count
+  row_count <- all_gest_df %>% count() %>% collect() %>% pull(n)
+  cat("[DEBUG] gestation_visits: Returning", row_count, "rows\n")
+  
   return(all_gest_df)
 }
 
@@ -678,13 +691,25 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   # minimum number of days to be new distinct episode
   # number of days to use as a buffer
   
+  # Debug: Log input structure
+  cat("\n[DEBUG] gestation_episodes: Starting with", 
+      ifelse(inherits(gestation_visits_df, c("tbl_lazy", "tbl_sql")), "database", "local"),
+      "data frame\n")
+  
+  # Check columns in input
+  input_cols <- colnames(gestation_visits_df)
+  cat("[DEBUG] gestation_episodes: Input columns:", paste(input_cols, collapse=", "), "\n")
+  
   # Check if there are any gestation visits
   visit_count <- gestation_visits_df %>%
     count() %>%
     collect() %>%
     pull(n)
   
+  cat("[DEBUG] gestation_episodes: Found", visit_count, "gestation visits\n")
+  
   if (visit_count == 0) {
+    cat("[DEBUG] gestation_episodes: No visits found, returning empty result with required columns\n")
     # Return empty data frame with expected columns if no gestation visits
     # Create an empty result with all required columns
     # Ensure we have all the columns that get_min_max_gestation expects
@@ -808,7 +833,27 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
     ) %>%
     ungroup()
   
-  return(df)
+  # Debug: Check final columns before returning
+  final_cols <- colnames(df)
+  cat("[DEBUG] gestation_episodes: Final columns before selection:", paste(final_cols, collapse=", "), "\n")
+  
+  # Select only the required columns for get_min_max_gestation
+  # Make sure we have the essential columns
+  result <- df %>%
+    select(person_id, visit_date, gest_week, episode)
+  
+  # Debug: Verify we have the required columns
+  result_cols <- colnames(result)
+  cat("[DEBUG] gestation_episodes: Returning columns:", paste(result_cols, collapse=", "), "\n")
+  
+  # Check if result has any rows
+  result_count <- result %>%
+    count() %>%
+    collect() %>%
+    pull(n)
+  cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
+  
+  return(result)
 }
 
 #' Get min and max gestational ages
@@ -827,11 +872,30 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   # For minimum gestational age in weeks, the first and last occurrence and
   # their dates were obtained.
   
+  # Debug: Log input structure
+  cat("\n[DEBUG] get_min_max_gestation: Starting with", 
+      ifelse(inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql")), "database", "local"),
+      "data frame\n")
+  
+  # Check columns in input
+  input_cols <- colnames(gestation_episodes_df)
+  cat("[DEBUG] get_min_max_gestation: Input columns:", paste(input_cols, collapse=", "), "\n")
+  
+  # Check for required columns
+  required_cols <- c("person_id", "episode", "visit_date", "gest_week")
+  missing_cols <- setdiff(required_cols, input_cols)
+  if (length(missing_cols) > 0) {
+    cat("[ERROR] get_min_max_gestation: Missing required columns:", paste(missing_cols, collapse=", "), "\n")
+    cat("[ERROR] get_min_max_gestation: Available columns are:", paste(input_cols, collapse=", "), "\n")
+  }
+  
   # Check if there are any gestation episodes
   episode_count <- gestation_episodes_df %>%
     count() %>%
     collect() %>%
     pull(n)
+  
+  cat("[DEBUG] get_min_max_gestation: Found", episode_count, "gestation episodes\n")
   
   if (episode_count == 0) {
     # Return empty database table with expected columns if no gestation episodes
