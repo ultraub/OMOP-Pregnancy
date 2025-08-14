@@ -941,8 +941,12 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify first visit for each pregnancy episode
   # and get max gestation week at first visit date
+  # First compute to avoid window function issues with DatabaseConnector
+  temp_episodes <- gestation_episodes_df %>%
+    compute_table()
+  
   # Use window functions for SQL compatibility
-  new_first_df <- gestation_episodes_df %>%
+  new_first_df <- temp_episodes %>%
     group_by(person_id, episode) %>%
     mutate(min_visit_date = min(visit_date, na.rm = TRUE)) %>%
     ungroup() %>%
@@ -954,7 +958,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   ############ Min Gestation Week ############
   
   # identify minimum gestation week for each pregnancy episode
-  temp_min_df <- gestation_episodes_df %>%
+  temp_min_df <- temp_episodes %>%
     group_by(person_id, episode) %>%
     mutate(min_gest_week_val = min(gest_week, na.rm = TRUE)) %>%
     ungroup() %>%
@@ -979,7 +983,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   
   # identify end visit for each pregnancy episode
   # keep in mind this could be a month after pregnancy actually ended...
-  temp_end_df <- gestation_episodes_df %>%
+  temp_end_df <- temp_episodes %>%
     group_by(person_id, episode) %>%
     mutate(max_visit_date = max(visit_date, na.rm = TRUE)) %>%
     ungroup() %>%
@@ -995,7 +999,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   ############ Max Gestation Week ############
   
   # identify max gestation week for each pregnancy episode
-  temp_max_df <- gestation_episodes_df %>%
+  temp_max_df <- temp_episodes %>%
     group_by(person_id, episode) %>%
     mutate(max_gest_week_val = max(gest_week, na.rm = TRUE)) %>%
     ungroup() %>%
