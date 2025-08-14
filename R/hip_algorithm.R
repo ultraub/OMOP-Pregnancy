@@ -1088,10 +1088,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       min_gest_day = (min_gest_week * 7),
       # get date of estimated start date based on max gestation week on record
       # max_gest_date is the first occurrence of the maximum gestational week
-      max_gest_start_date = sql("DATEADD(day, -CAST(max_gest_day AS INT), max_gest_date)"),
+      # FIX: Can't reference column alias in same SELECT - use calculation directly
+      max_gest_start_date = sql("DATEADD(day, -CAST((max_gest_week * 7) AS INT), max_gest_date)"),
       # get date of estimated start date based on min gestation week on record
       # min_gest_date is the first occurence of the min gestational week
-      min_gest_start_date = sql("DATEADD(day, -CAST(min_gest_day AS INT), min_gest_date)"),
+      # FIX: Can't reference column alias in same SELECT - use calculation directly
+      min_gest_start_date = sql("DATEADD(day, -CAST((min_gest_week * 7) AS INT), min_gest_date)"),
       # which one is earlier
       max_gest_start_date_further = if_else(
         max_gest_start_date > min_gest_start_date,
