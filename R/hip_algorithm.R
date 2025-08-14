@@ -1078,8 +1078,9 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     mutate(visit_id = sql("CONCAT(person_id, visit_date)"))
   
   # add unique id for each gestation visit
+  # FIXED: Split complex mutate into multiple steps to avoid column reassignment issues
   get_min_max_gestation_df <- get_min_max_gestation_df %>%
-    # max gest date is the first occurrence of the maximum gestational week
+    # First mutate: Create basic columns and initial date calculations
     mutate(
       gest_id = sql("CONCAT(person_id, max_gest_date)"),
       # add column for gestation period in days for largest gestation week on record
@@ -1088,24 +1089,28 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       min_gest_day = (min_gest_week * 7),
       # get date of estimated start date based on max gestation week on record
       # max_gest_date is the first occurrence of the maximum gestational week
-      # FIX: Can't reference column alias in same SELECT - use calculation directly
-      max_gest_start_date = sql("DATEADD(day, -CAST((max_gest_week * 7) AS INT), max_gest_date)"),
+      max_gest_start_date_initial = sql("DATEADD(day, -CAST((max_gest_week * 7) AS INT), max_gest_date)"),
       # get date of estimated start date based on min gestation week on record
       # min_gest_date is the first occurence of the min gestational week
-      # FIX: Can't reference column alias in same SELECT - use calculation directly
-      min_gest_start_date = sql("DATEADD(day, -CAST((min_gest_week * 7) AS INT), min_gest_date)"),
-      # which one is earlier
-      max_gest_start_date_further = if_else(
-        max_gest_start_date > min_gest_start_date,
-        min_gest_start_date, max_gest_start_date
+      min_gest_start_date_initial = sql("DATEADD(day, -CAST((min_gest_week * 7) AS INT), min_gest_date)")
+    ) %>%
+    # Second mutate: Determine which date is earlier/later
+    mutate(
+      # which one is earlier (will become max_gest_start_date)
+      max_gest_start_date = if_else(
+        max_gest_start_date_initial > min_gest_start_date_initial,
+        min_gest_start_date_initial, max_gest_start_date_initial
       ),
-      # and which one is later
+      # which one is later (will become min_gest_start_date)
       min_gest_start_date = if_else(
-        max_gest_start_date > min_gest_start_date,
-        max_gest_start_date, min_gest_start_date
-      ),
-      # so max_gest_start_date will always be earlier
-      max_gest_start_date = max_gest_start_date_further,
+        max_gest_start_date_initial > min_gest_start_date_initial,
+        max_gest_start_date_initial, min_gest_start_date_initial
+      )
+    ) %>%
+    # Third mutate: Calculate the difference and create final structure
+    mutate(
+      # Store the earlier date for later reference
+      max_gest_start_date_further = max_gest_start_date,
       # get difference in days between estimated start dates
       gest_start_date_diff = sql("DATEDIFF(day, min_gest_start_date, max_gest_start_date)")
     )
@@ -1177,16 +1182,24 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   ) %>%
     collect()
   
+  # Helper function to safely get count for a specific combination
+  get_count <- function(df, gest_val, outcome_val) {
+    result <- df %>% 
+      filter(gestation_based == gest_val, outcome_based == outcome_val) %>% 
+      pull(n)
+    if (length(result) == 0) 0L else as.integer(result)
+  }
+  
   cat("Total number of outcome-based episodes:",
     tally(calculate_start_df) %>% pull(n) %>% as.integer(),
     "Total number of gestation-based episodes:",
     tally(get_min_max_gestation_df) %>% pull(n) %>% as.integer(),
     "Total number of only outcome-based episodes after merging:",
-    counts %>% filter(!gestation_based, outcome_based) %>% pull(n) %>% as.integer(),
+    get_count(counts, FALSE, TRUE),
     "Total number of only gestation-based episodes after merging:",
-    counts %>% filter(gestation_based, !outcome_based) %>% pull(n) %>% as.integer(),
+    get_count(counts, TRUE, FALSE),
     "Total number of episodes with both after merging:",
-    counts %>% filter(gestation_based, outcome_based) %>% pull(n) %>% as.integer(),
+    get_count(counts, TRUE, TRUE),
     sep = "\n"
   )
   return(all_df)
@@ -1203,6 +1216,14 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
   if (is.null(connection) && inherits(add_gestation_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- add_gestation_df$src$con
   }
+  
+  # FIXED: Collect and re-upload to avoid window function issues
+  # This function uses row_number() which can cause issues with DatabaseConnector
+  if (inherits(add_gestation_df, c("tbl_lazy", "tbl_sql"))) {
+    temp_data <- add_gestation_df %>% collect()
+    add_gestation_df <- create_temp_table(temp_data, connection = connection)
+  }
+  
   # Clean up episodes by removing duplicate episodes and reclassifying outcome-based episodes
   # as gestation-based episodes if the outcome containing gestational info does not fall within
   # the term durations defined by Matcho et al.
@@ -1308,6 +1329,14 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
   if (is.null(connection) && inherits(clean_episodes_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- clean_episodes_df$src$con
   }
+  
+  # FIXED: Collect and re-upload to avoid window function issues
+  # This function uses lag() which can cause issues with DatabaseConnector
+  if (inherits(clean_episodes_df, c("tbl_lazy", "tbl_sql"))) {
+    temp_data <- clean_episodes_df %>% collect()
+    clean_episodes_df <- create_temp_table(temp_data, connection = connection)
+  }
+  
   # Identify episodes that overlap and keep only the latter episode if the previous episode is PREG.
   # If the latter episode doesn't have gestational info, redefine the start date to be the
   # previous episode end date plus the retry period.
