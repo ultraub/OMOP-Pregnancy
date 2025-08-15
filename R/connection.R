@@ -32,6 +32,31 @@ NULL
 #' )
 #' con <- create_connection(connectionDetails)
 #'
+#' # For Databricks/Spark using JDBC
+#' connectionDetails <- createConnectionDetails(
+#'   dbms = "spark",
+#'   connectionString = "jdbc:databricks://[workspace].cloud.databricks.com:443/default;
+#'                       transportMode=http;ssl=1;AuthMech=3;
+#'                       httpPath=/sql/1.0/warehouses/[warehouse_id]",
+#'   user = "token",
+#'   password = "[personal_access_token]"
+#' )
+#' con <- create_connection(connectionDetails,
+#'                         cdmDatabaseSchema = "omop_cdm",
+#'                         resultsDatabaseSchema = "omop_results")
+#'
+#' # For Databricks using ODBC
+#' connectionDetails <- createConnectionDetails(
+#'   dbms = "spark",
+#'   server = "[workspace].cloud.databricks.com",
+#'   port = 443,
+#'   extraSettings = "HTTPPath=/sql/1.0/warehouses/[warehouse_id];
+#'                    SSL=1;ThriftTransport=2;AuthMech=3",
+#'   user = "token",
+#'   password = "[personal_access_token]"
+#' )
+#' con <- create_connection(connectionDetails)
+#'
 #' # For All of Us (when running in that environment)
 #' con <- create_connection(mode = "allofus")
 #' }

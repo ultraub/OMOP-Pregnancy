@@ -104,6 +104,27 @@ create_temp_table <- function(connection,
       DBI::dbWriteTable(connection, table_name, data, temporary = TRUE)
       return(dplyr::tbl(connection, table_name))
       
+    } else if (dbms == "spark" || dbms == "databricks") {
+      # Spark/Databricks: Use managed tables with unique prefix
+      # Spark doesn't support true temp tables, so we create regular tables
+      # with a unique prefix to avoid conflicts
+      temp_table_name <- paste0("temp_", Sys.getpid(), "_", gsub("-", "_", table_name))
+      
+      # Drop table if it exists
+      tryCatch({
+        DBI::dbExecute(connection, paste0("DROP TABLE IF EXISTS ", temp_table_name))
+      }, error = function(e) {
+        # Ignore errors if table doesn't exist
+      })
+      
+      # Insert data using DatabaseConnector for better compatibility
+      DatabaseConnector::insertTable(connection = connection,
+                                    tableName = temp_table_name,
+                                    data = data,
+                                    tempTable = FALSE,  # Spark doesn't support temp tables
+                                    dropTableIfExists = TRUE)
+      return(dplyr::tbl(connection, temp_table_name))
+      
     } else {
       # Default fallback
       DatabaseConnector::insertTable(connection = connection,

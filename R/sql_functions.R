@@ -51,6 +51,19 @@ sql_date_diff <- function(date1, date2, unit = "day", connection = NULL) {
                     "years" = "year",
                     "day")  # default
   
+  # Special handling for Spark/Databricks
+  if (dbms == "spark" || dbms == "databricks") {
+    # Spark uses different DATEDIFF syntax: DATEDIFF(date1, date2) returns days
+    if (sql_unit == "month") {
+      return(dbplyr::sql(sprintf("CAST(MONTHS_BETWEEN(%s, %s) AS INT)", date1, date2)))
+    } else if (sql_unit == "year") {
+      return(dbplyr::sql(sprintf("(YEAR(%s) - YEAR(%s))", date1, date2)))
+    } else {
+      # Default to days - Spark's DATEDIFF returns days by default
+      return(dbplyr::sql(sprintf("DATEDIFF(%s, %s)", date1, date2)))
+    }
+  }
+  
   # Create the SQL Server version (source for SqlRender)
   sql_server_sql <- sprintf("DATEDIFF(%s, %s, %s)", sql_unit, date2, date1)
   
@@ -116,6 +129,10 @@ sql_date_from_parts <- function(year, month, day, connection = NULL) {
     # Snowflake: Use DATE_FROM_PARTS
     result_sql <- sprintf("DATE_FROM_PARTS(%s, %s, %s)", year, month, day)
     
+  } else if (dbms == "spark" || dbms == "databricks") {
+    # Spark/Databricks: Use MAKE_DATE function (Spark 3.0+)
+    result_sql <- sprintf("MAKE_DATE(%s, %s, %s)", year, month, day)
+    
   } else {
     # Generic fallback using string concatenation
     result_sql <- sprintf("CAST(CONCAT(%s, '-', LPAD(CAST(%s AS VARCHAR), 2, '0'), '-', LPAD(CAST(%s AS VARCHAR), 2, '0')) AS DATE)",
@@ -167,6 +184,19 @@ sql_date_add <- function(date, days, unit = "day", connection = NULL) {
                     "year" = "year",
                     "years" = "year",
                     "day")  # default
+  
+  # Special handling for Spark/Databricks
+  if (dbms == "spark" || dbms == "databricks") {
+    # Spark has DATE_ADD for days and ADD_MONTHS for months
+    if (sql_unit == "month") {
+      return(dbplyr::sql(sprintf("ADD_MONTHS(%s, %s)", date, days)))
+    } else if (sql_unit == "year") {
+      return(dbplyr::sql(sprintf("ADD_MONTHS(%s, %s * 12)", date, days)))
+    } else {
+      # Default to days
+      return(dbplyr::sql(sprintf("DATE_ADD(%s, %s)", date, days)))
+    }
+  }
   
   # Create the SQL Server version (source for SqlRender)
   sql_server_sql <- sprintf("DATEADD(%s, %s, %s)", sql_unit, days, date)
@@ -230,6 +260,10 @@ sql_concat <- function(..., connection = NULL) {
     
   } else if (dbms == "snowflake") {
     # Snowflake: Use CONCAT function or ||
+    result_sql <- sprintf("CONCAT(%s)", paste(args, collapse = ", "))
+    
+  } else if (dbms == "spark" || dbms == "databricks") {
+    # Spark/Databricks: Use CONCAT function
     result_sql <- sprintf("CONCAT(%s)", paste(args, collapse = ", "))
     
   } else {
