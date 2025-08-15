@@ -127,7 +127,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
       rename_with(~ "domain_concept_start_date", all_of(df_date_col))
     
     df_renamed %>%
-      inner_join(person_id_list, by = "person_id", suffix = c(".x", ".y")) %>%
+      inner_join(person_id_list, by = "person_id", copy = TRUE, suffix = c(".x", ".y")) %>%
       filter(
         domain_concept_start_date >= start_date,
         domain_concept_start_date <= recorded_episode_end
@@ -209,6 +209,9 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   connection <- NULL
   if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- final_merged_episode_detailed_df$src$con
+  } else if (inherits(condition_occurrence_tbl, c("tbl_lazy", "tbl_sql"))) {
+    # Try to get connection from domain tables if not available from merged df
+    connection <- condition_occurrence_tbl$src$con
   }
   
   # Prepare the person_id_list dataframe
@@ -216,11 +219,13 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     select(person_id, start_date, recorded_episode_end = end_date, episode_number = episode_num) %>%
     filter(!is.na(start_date))
   
-  # Create temp table with proper parameter order
+  # Create temp table with proper parameter order if we have a connection
+  # Otherwise, the copy = TRUE in inner_join will handle it
   if (!is.null(connection)) {
     person_id_list <- create_temp_table(connection, person_id_list_df)
   } else {
     # If no connection available, just use the dataframe as-is
+    # The copy = TRUE parameter in inner_join will handle uploading it
     person_id_list <- person_id_list_df
   }
   
