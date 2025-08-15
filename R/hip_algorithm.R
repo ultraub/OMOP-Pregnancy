@@ -207,6 +207,10 @@ final_visits <- function(initial_pregnant_cohort_df, Matcho_outcome_limits, cate
   if (is.null(connection) && inherits(initial_pregnant_cohort_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- initial_pregnant_cohort_df$src$con
   }
+  
+  # Pre-compute SQL expressions outside the pipeline
+  days_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
+  
   df <- initial_pregnant_cohort_df %>%
     filter(category %in% categories) %>%
     # only keep one obs per person-date -- they're all in the same category
@@ -220,7 +224,7 @@ final_visits <- function(initial_pregnant_cohort_df, Matcho_outcome_limits, cate
     arrange(visit_date, .by_group = TRUE) %>%
     # Create a new column called "days" that calculates the number of days between each visit for each person.
     mutate(prev_date = lag(visit_date)) %>%
-    mutate(days = sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)) %>%
+    mutate(days = !!days_sql) %>%
     ungroup()
   
   temp_df <- df
@@ -254,6 +258,11 @@ add_stillbirth <- function(final_stillbirth_visits_df, final_livebirth_visits_df
   if (is.null(connection) && inherits(final_stillbirth_visits_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- final_stillbirth_visits_df$src$con
   }
+  
+  # Pre-compute SQL expressions outside the pipeline
+  after_days_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
+  before_days_sql <- sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
+  
   # Add stillbirth visits to livebirth visits table.
   
   # get minimum days between outcomes
@@ -276,11 +285,11 @@ add_stillbirth <- function(final_stillbirth_visits_df, final_livebirth_visits_df
       previous_category = lag(category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_translate("DATEDIFF(day, prev_date, visit_date)", connection),
+    mutate(after_days = !!after_days_sql,
       next_category = lead(category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
+    mutate(before_days = !!before_days_sql
     ) %>%
     filter(category == "SB") %>%
     filter(
@@ -322,6 +331,10 @@ add_ectopic <- function(add_stillbirth_df, Matcho_outcome_limits, final_ectopic_
   if (is.null(connection) && inherits(add_stillbirth_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- add_stillbirth_df$src$con
   }
+  
+  # Pre-compute SQL expressions outside the pipeline
+  after_days_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
+  before_days_sql <- sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
   # get minimum days between outcomes
   # minimum number of days that ECT can follow LB and SB; LB and SB have the same days
   before_min <- Matcho_outcome_limits %>%
@@ -345,11 +358,11 @@ add_ectopic <- function(add_stillbirth_df, Matcho_outcome_limits, final_ectopic_
       previous_category = lag(category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_translate("DATEDIFF(day, prev_date, visit_date)", connection),
+    mutate(after_days = !!after_days_sql,
       next_category = lead(category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
+    mutate(before_days = !!before_days_sql
     ) %>%
     # filter to ectopic visits
     filter(category == "ECT") %>%
@@ -393,6 +406,10 @@ add_abortion <- function(add_ectopic_df, Matcho_outcome_limits, final_abortion_v
   if (is.null(connection) && inherits(add_ectopic_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- add_ectopic_df$src$con
   }
+  
+  # Pre-compute SQL expressions outside the pipeline
+  after_days_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
+  before_days_sql <- sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
   # Add abortion visits - SA and AB are treated the same.
   
   # get minimum days between outcomes
@@ -427,11 +444,11 @@ add_abortion <- function(add_ectopic_df, Matcho_outcome_limits, final_abortion_v
       previous_category = lag(temp_category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_translate("DATEDIFF(day, prev_date, visit_date)", connection),
+    mutate(after_days = !!after_days_sql,
       next_category = lead(temp_category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
+    mutate(before_days = !!before_days_sql
     ) %>%
     filter(temp_category == "AB") %>%
     filter(
@@ -476,6 +493,10 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
   if (is.null(connection) && inherits(add_abortion_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- add_abortion_df$src$con
   }
+  
+  # Pre-compute SQL expressions outside the pipeline
+  after_days_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
+  before_days_sql <- sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
   #  Add delivery record only visits
   
   # get minimum days between outcomes
@@ -511,11 +532,11 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
       previous_category = lag(temp_category),
       # get difference in days with previous episode start date
       prev_date = lag(visit_date)) %>%
-    mutate(after_days = sql_translate("DATEDIFF(day, prev_date, visit_date)", connection),
+    mutate(after_days = !!after_days_sql,
       next_category = lead(temp_category),
       # and next episode start date
       next_date = lead(visit_date)) %>%
-    mutate(before_days = sql_translate("DATEDIFF(day, visit_date, next_date)", connection)
+    mutate(before_days = !!before_days_sql
     )
   
   # have the deliveries and all othe others
@@ -591,6 +612,11 @@ calculate_start <- function(add_delivery_df, Matcho_term_durations, connection =
   if (is.null(connection) && inherits(add_delivery_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- add_delivery_df$src$con
   }
+  
+  # Pre-compute SQL expressions outside the pipeline
+  min_start_date_sql <- sql_translate("DATEADD(day, -CAST(min_term AS INT), visit_date)", connection)
+  max_start_date_sql <- sql_translate("DATEADD(day, -CAST(max_term AS INT), visit_date)", connection)
+  
   # Estimate start of pregnancies based on outcome type.
   
   # join tables
@@ -599,9 +625,9 @@ calculate_start <- function(add_delivery_df, Matcho_term_durations, connection =
     # based only on the outcome, when did pregnancy start
     # calculate latest start start date
     mutate(
-      min_start_date = sql_translate("DATEADD(day, -CAST(min_term AS INT), visit_date)", connection),
+      min_start_date = !!min_start_date_sql,
       # calculate earliest start date
-      max_start_date = sql_translate("DATEADD(day, -CAST(max_term AS INT), visit_date)", connection)
+      max_start_date = !!max_start_date_sql
     )
   
   return(term_df)
@@ -669,19 +695,24 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL, connecti
     # Return empty result with preserved column structure
     # Check if we're working with a database query or local data
     if (inherits(initial_pregnant_cohort_df, c("tbl_lazy", "tbl_sql"))) {
+      # Pre-compute SQL expressions for NULL values
+      null_int_sql <- sql_translate("CAST(NULL AS INT)", connection)
+      null_date_sql <- sql_translate("CAST(NULL AS DATE)", connection)
+      null_bigint_sql <- sql_translate("CAST(NULL AS BIGINT)", connection)
+      
       # For database queries, use SQL-compatible NULL casting
       empty_result <- initial_pregnant_cohort_df %>%
         head(0) %>%
-        mutate(gest_value = sql_translate("CAST(NULL AS INT)", connection))
+        mutate(gest_value = !!null_int_sql)
       
       # Make sure key columns are present
       if (!"visit_date" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(visit_date = sql_translate("CAST(NULL AS DATE)", connection))
+          mutate(visit_date = !!null_date_sql)
       }
       if (!"person_id" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(person_id = sql_translate("CAST(NULL AS BIGINT)", connection))
+          mutate(person_id = !!null_bigint_sql)
       }
     } else {
       # For local data frames, use R functions
@@ -766,6 +797,11 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
     
     # Check if we're working with a database table
     if (inherits(gestation_visits_df, c("tbl_lazy", "tbl_sql"))) {
+      # Pre-compute SQL expressions for NULL values
+      null_int_sql <- sql_translate("CAST(NULL AS INT)", connection)
+      null_date_sql <- sql_translate("CAST(NULL AS DATE)", connection)
+      null_bigint_sql <- sql_translate("CAST(NULL AS BIGINT)", connection)
+      
       # For database tables, create proper empty structure
       empty_result <- gestation_visits_df %>%
         head(0)
@@ -773,19 +809,19 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       # Add required columns if they don't exist
       if (!"gest_week" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(gest_week = sql_translate("CAST(NULL AS INT)", connection))
+          mutate(gest_week = !!null_int_sql)
       }
       if (!"episode" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(episode = sql_translate("CAST(NULL AS INT)", connection))
+          mutate(episode = !!null_int_sql)
       }
       if (!"visit_date" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(visit_date = sql_translate("CAST(NULL AS DATE)", connection))
+          mutate(visit_date = !!null_date_sql)
       }
       if (!"person_id" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(person_id = sql_translate("CAST(NULL AS BIGINT)", connection))
+          mutate(person_id = !!null_bigint_sql)
       }
       
       # Select only the columns we need
@@ -832,6 +868,9 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
     44
   }
   
+  # Pre-compute SQL expression for date difference
+  date_diff_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
+  
   # filter out any empty visit dates
   df <- gestation_visits_df %>%
     filter(
@@ -859,7 +898,7 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       # calculate number of days between gestation weeks with buffer
       day_diff = week_diff * 7 + buffer_days,
       # get difference in days between visit date and previous date
-      date_diff = sql_translate("DATEDIFF(day, prev_date, visit_date)", connection),
+      date_diff = !!date_diff_sql,
       # check if any negative or zero number in week_diff column corresponds to a new pregnancy episode
       # assume it does if the difference in actual dates is larger than the minimum
       # change to 1 (arbitrary positive number) if not;
@@ -1122,29 +1161,37 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   if (is.null(connection) && inherits(calculate_start_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- calculate_start_df$src$con
   }
+  
+  # Pre-compute all SQL expressions outside pipelines
+  visit_id_sql <- sql_translate("CONCAT(CAST(person_id AS VARCHAR), CAST(visit_date AS VARCHAR))", connection)
+  gest_id_sql <- sql_translate("CONCAT(CAST(person_id AS VARCHAR), CAST(max_gest_date AS VARCHAR))", connection)
+  max_gest_start_sql <- sql_translate("DATEADD(day, -CAST((max_gest_week * 7) AS INT), max_gest_date)", connection)
+  min_gest_start_sql <- sql_translate("DATEADD(day, -CAST((min_gest_week * 7) AS INT), min_gest_date)", connection)
+  gest_diff_sql <- sql_translate("DATEDIFF(day, min_gest_start_date, max_gest_start_date)", connection)
+  
   # Add gestation-based episodes. Any gestation-based episode that overlaps with an outcome-based
   # episode is removed as a distinct episode.
   # add unique id for each outcome visit
   calculate_start_df <- calculate_start_df %>%
     # visit date is the first outcome date for the hierarchically chosen outcome
-    mutate(visit_id = sql_translate("CONCAT(CAST(person_id AS VARCHAR), CAST(visit_date AS VARCHAR))", connection))
+    mutate(visit_id = !!visit_id_sql)
   
   # add unique id for each gestation visit
   # FIXED: Split complex mutate into multiple steps to avoid column reassignment issues
   get_min_max_gestation_df <- get_min_max_gestation_df %>%
     # First mutate: Create basic columns and initial date calculations
     mutate(
-      gest_id = sql_translate("CONCAT(CAST(person_id AS VARCHAR), CAST(max_gest_date AS VARCHAR))", connection),
+      gest_id = !!gest_id_sql,
       # add column for gestation period in days for largest gestation week on record
       max_gest_day = (max_gest_week * 7),
       # add column for gestation period in days for smallest gestation week on record
       min_gest_day = (min_gest_week * 7),
       # get date of estimated start date based on max gestation week on record
       # max_gest_date is the first occurrence of the maximum gestational week
-      max_gest_start_date_initial = sql_translate("DATEADD(day, -CAST((max_gest_week * 7) AS INT), max_gest_date)", connection),
+      max_gest_start_date_initial = !!max_gest_start_sql,
       # get date of estimated start date based on min gestation week on record
       # min_gest_date is the first occurence of the min gestational week
-      min_gest_start_date_initial = sql_translate("DATEADD(day, -CAST((min_gest_week * 7) AS INT), min_gest_date)", connection)
+      min_gest_start_date_initial = !!min_gest_start_sql
     ) %>%
     # Second mutate: Determine which date is earlier/later
     mutate(
@@ -1164,7 +1211,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       # Store the earlier date for later reference
       max_gest_start_date_further = max_gest_start_date,
       # get difference in days between estimated start dates
-      gest_start_date_diff = sql_translate("DATEDIFF(day, min_gest_start_date, max_gest_start_date)", connection)
+      gest_start_date_diff = !!gest_diff_sql
     )
   
   # CRITICAL: Materialize data before overlaps join to ensure it works correctly
@@ -1208,6 +1255,10 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     cat("Candidate pairs (same person): Unable to count\n")
   }
   
+  # Pre-compute SQL expressions for the overlap filtering
+  gest_at_outcome_sql <- sql_translate("DATEDIFF(day, max_gest_start_date, visit_date)", connection)
+  days_diff_sql <- sql_translate("DATEDIFF(day, max_gest_date, visit_date)", connection)
+  
   # Now filter for overlapping date ranges
   both_df <- both_df_candidates %>%
     filter(
@@ -1224,12 +1275,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       # add -- these are changed anyway so if there are multiple similar overlaps, choose
       # the one with the better term duration
       # visit date should be the first visit date at which there's an outcome
-      gest_at_outcome = sql_translate("DATEDIFF(day, max_gest_start_date, visit_date)", connection),
+      gest_at_outcome = !!gest_at_outcome_sql,
       # we want it to be under the max
       is_under_max = ifelse(gest_at_outcome <= max_term, 1, 0),
       # and over the min, ie both = 1
       is_over_min = ifelse(gest_at_outcome >= min_term, 1, 0),
-      days_diff = sql_translate("DATEDIFF(day, max_gest_date, visit_date)", connection),
+      days_diff = !!days_diff_sql,
       days_diff = if_else(is_over_min == 1 | is_under_max == 1 | days_diff < -buffer_days, 10000, days_diff)
     ) %>%
     group_by(visit_id) %>%
@@ -1261,10 +1312,15 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # only outcome-based episodes
+  # Pre-compute NULL casts for union compatibility
+  null_varchar_sql <- sql_translate("CAST(NULL AS VARCHAR(255))", connection)
+  null_date_sql <- sql_translate("CAST(NULL AS DATE)", connection)
+  null_int_sql <- sql_translate("CAST(NULL AS INT)", connection)
+  
   # Add missing gest_id column as NULL with proper type casting for union compatibility
   just_outcome_df <- calculate_start_df %>%
     anti_join(overlapping_visit_ids, by = "visit_id") %>%
-    mutate(gest_id = sql_translate("CAST(NULL AS VARCHAR(255))", connection))
+    mutate(gest_id = !!null_varchar_sql)
   
   # only gestation-based episodes
   # Add missing visit_id column as NULL with proper type casting for union compatibility
@@ -1274,7 +1330,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       category = "PREG",
       # visit date becomes
       visit_date = max_gest_date,
-      visit_id = sql_translate("CAST(NULL AS VARCHAR(255))", connection)
+      visit_id = !!null_varchar_sql
     )
   
   # Instead of selecting essential columns, ensure all dataframes have ALL columns
@@ -1288,14 +1344,14 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   just_outcome_df_full <- just_outcome_df %>%
     mutate(
       # These columns come from gestation episodes
-      max_gest_date = sql_translate("CAST(NULL AS DATE)", connection),
-      min_gest_start_date = sql_translate("CAST(NULL AS DATE)", connection),
-      max_gest_start_date = sql_translate("CAST(NULL AS DATE)", connection),
-      gest_start_date_diff = sql_translate("CAST(NULL AS INT)", connection),
-      is_under_max = sql_translate("CAST(NULL AS INT)", connection),
-      is_over_min = sql_translate("CAST(NULL AS INT)", connection),
-      gest_at_outcome = sql_translate("CAST(NULL AS INT)", connection),
-      days_diff = sql_translate("CAST(NULL AS INT)", connection)
+      max_gest_date = !!null_date_sql,
+      min_gest_start_date = !!null_date_sql,
+      max_gest_start_date = !!null_date_sql,
+      gest_start_date_diff = !!null_int_sql,
+      is_under_max = !!null_int_sql,
+      is_over_min = !!null_int_sql,
+      gest_at_outcome = !!null_int_sql,
+      days_diff = !!null_int_sql
     ) %>%
     compute_table()
   
@@ -1303,13 +1359,13 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   just_gestation_df_full <- just_gestation_df %>%
     mutate(
       # These columns come from outcome episodes
-      min_start_date = sql_translate("CAST(NULL AS DATE)", connection),
-      max_start_date = sql_translate("CAST(NULL AS DATE)", connection),
-      is_under_max = sql_translate("CAST(NULL AS INT)", connection),
-      is_over_min = sql_translate("CAST(NULL AS INT)", connection),
-      gest_at_outcome = sql_translate("CAST(NULL AS INT)", connection),
-      gest_start_date_diff = sql_translate("CAST(NULL AS INT)", connection),
-      days_diff = sql_translate("CAST(NULL AS INT)", connection)
+      min_start_date = !!null_date_sql,
+      max_start_date = !!null_date_sql,
+      is_under_max = !!null_int_sql,
+      is_over_min = !!null_int_sql,
+      gest_at_outcome = !!null_int_sql,
+      gest_start_date_diff = !!null_int_sql,
+      days_diff = !!null_int_sql
     ) %>%
     compute_table()
   
@@ -1340,6 +1396,9 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     cat("Expected total: Unable to calculate\n")
   }
   
+  # Pre-compute SQL for days_diff recalculation
+  days_diff_recalc_sql <- sql_translate("DATEDIFF(day, max_gest_date, visit_date)", connection)
+  
   all_df <- reduce(
     list(
       both_df_mat,
@@ -1354,7 +1413,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     mutate(episode = row_number()) %>%
     ungroup() %>%
     # recalculate since I overwrote
-    mutate(days_diff = sql_translate("DATEDIFF(day, max_gest_date, visit_date)", connection)) %>%
+    mutate(days_diff = !!days_diff_recalc_sql) %>%
     compute_table()
   
   # Debug: Check after union
@@ -1497,6 +1556,11 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
     sep = "\n"
   )
   
+  # Pre-compute SQL expressions for quality check columns
+  gest_at_outcome_sql <- sql_translate("DATEDIFF(day, max_gest_start_date, visit_date)", connection)
+  min_gest_date_diff_sql <- sql_translate("DATEDIFF(day, min_gest_date, min_gest_date_2)", connection)
+  date_diff_max_end_sql <- sql_translate("DATEDIFF(day, end_gest_date, max_gest_date)", connection)
+  
   # filter out these episodes from main table
   final_df <- final_df %>%
     filter(!(!is.na(gest_id) & !is.na(visit_id) & days_diff < -buffer_days)) %>%
@@ -1505,9 +1569,9 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
     ###### add columns for quality check ######
     # get new gestational age at visit date
     mutate(
-      gest_at_outcome = sql_translate("DATEDIFF(day, max_gest_start_date, visit_date)", connection),
-      min_gest_date_diff = sql_translate("DATEDIFF(day, min_gest_date, min_gest_date_2)", connection),
-      date_diff_max_end = sql_translate("DATEDIFF(day, end_gest_date, max_gest_date)", connection)
+      gest_at_outcome = !!gest_at_outcome_sql,
+      min_gest_date_diff = !!min_gest_date_diff_sql,
+      date_diff_max_end = !!date_diff_max_end_sql
     ) %>%
     # redo column for episode
     group_by(person_id) %>%
@@ -1542,6 +1606,10 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
   # previous episode end date plus the retry period.
   df <- clean_episodes_df
   
+  # Pre-compute SQL expressions for date differences
+  prev_date_diff_gest_sql <- sql_translate("DATEDIFF(day, prev_date, max_gest_start_date)", connection)
+  prev_date_diff_max_sql <- sql_translate("DATEDIFF(day, prev_date, max_start_date)", connection)
+  
   df <- df %>%
     group_by(person_id) %>%
     arrange(visit_date, .by_group = TRUE) %>%
@@ -1557,8 +1625,8 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
       # get difference in days between start date and previous visit date
       # us gestation-based date if available
       prev_date_diff = ifelse(!is.na(max_gest_start_date),
-        sql_translate("DATEDIFF(day, prev_date, max_gest_start_date)", connection),
-        sql_translate("DATEDIFF(day, prev_date, max_start_date)", connection)
+        !!prev_date_diff_gest_sql,
+        !!prev_date_diff_max_sql
       ),
       # if the difference in days is negative, indicate overlap of episodes
       has_overlap = ifelse(prev_date_diff < 0, 1, 0)
@@ -1575,6 +1643,16 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     distinct(prev_gest_id) %>%
     rename(gest_id = prev_gest_id) %>%
     mutate(category = "PREG")
+  
+  # Pre-compute SQL expressions for the final calculations
+  # These were already computed above, reuse them
+  # prev_date_diff_gest_sql and prev_date_diff_max_sql already defined
+  
+  # Pre-compute SQL for date add with retry period
+  dateadd_retry_sql <- sql_translate("DATEADD(day, CAST(prev_retry AS INT), prev_date)", connection)
+  
+  # Pre-compute SQL for gest_at_outcome calculation
+  gest_at_outcome_est_sql <- sql_translate("DATEDIFF(day, estimated_start_date, visit_date)", connection)
   
   # remove episodes that overlap using anti_join
   final_df <- df %>%
@@ -1594,8 +1672,8 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
       # get difference in days between start date and previous visit date
       # us gestation-based date if available
       prev_date_diff = ifelse(!is.na(max_gest_start_date),
-        sql_translate("DATEDIFF(day, prev_date, max_gest_start_date)", connection),
-        sql_translate("DATEDIFF(day, prev_date, max_start_date)", connection)
+        !!prev_date_diff_gest_sql,
+        !!prev_date_diff_max_sql
       ),
       # if the difference in days is negative, indicate overlap of episodes
       has_overlap = ifelse(prev_date_diff < 0, 1, 0),
@@ -1604,7 +1682,7 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
         # if there's an overlap and a retry period from the earlier episodes
         # and the last episode was not preg (or else would be in gest_id_list)
         # start date = last visit date + retry period
-        has_overlap == 1 & !is.na(prev_retry) ~ sql_translate("DATEADD(day, CAST(prev_retry AS INT), prev_date)", connection),
+        has_overlap == 1 & !is.na(prev_retry) ~ !!dateadd_retry_sql,
         is.na(max_gest_start_date) ~ max_start_date,
         TRUE ~ max_gest_start_date
       )
@@ -1612,7 +1690,7 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     # CRITICAL: Separate mutate to avoid column alias issues in SQL Server
     mutate(
       # get estimated gestational age in days at outcome_visit_date using estimated_start_date
-      gest_at_outcome = sql_translate("DATEDIFF(day, estimated_start_date, visit_date)", connection),
+      gest_at_outcome = !!gest_at_outcome_est_sql,
       # add column to check if gest_at_outcome is less than or equal to max_term, 1 indicates yes
       is_under_max = ifelse(gest_at_outcome <= max_term, 1, 0),
       # add column to check if gest_at_outcome is greater than or equal to min_term, 1 indicates yes
@@ -1627,13 +1705,19 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
       prev_date = lag(visit_date),
       preg_gest_id = lag(gest_id)
     ) %>%
-    ungroup() %>%
+    ungroup()
+  
+  # Pre-compute SQL for final prev_date_diff calculations
+  prev_date_diff_est_sql <- sql_translate("DATEDIFF(day, prev_date, estimated_start_date)", connection)
+  prev_date_diff_max_start_sql <- sql_translate("DATEDIFF(day, prev_date, max_start_date)", connection)
+  
+  final_df <- final_df %>%
     mutate(
       # Recalculate prev_date_diff using the estimated_start_date
       # If estimated_start_date is NULL, use max_start_date as fallback
       prev_date_diff = case_when(
-        !is.na(estimated_start_date) ~ sql_translate("DATEDIFF(day, prev_date, estimated_start_date)", connection),
-        !is.na(max_start_date) ~ sql_translate("DATEDIFF(day, prev_date, max_start_date)", connection),
+        !is.na(estimated_start_date) ~ !!prev_date_diff_est_sql,
+        !is.na(max_start_date) ~ !!prev_date_diff_max_start_sql,
         TRUE ~ NA_real_
       ),
       # checked, there are no remaining
@@ -1721,10 +1805,13 @@ final_episodes_with_length <- function(final_episodes_df, gestation_visits_df, c
     # flag episodes with gestational info
     mutate(gest_flag = ifelse(is.na(gest_date), NA, "yes"))
   
+  # Pre-compute SQL expression for episode length calculation
+  episode_length_sql <- sql_translate("DATEDIFF(day, gest_date, visit_date)", connection)
+  
   # get episode length if there is a gestation record date, otherwise impute 1
   final_df <- merged %>%
     mutate(episode_length = if_else(!is.na(gest_date),
-      sql_translate("DATEDIFF(day, gest_date, visit_date)", connection), 1
+      !!episode_length_sql, 1
     ))
   
   # if an episode length is 0, change to 1
