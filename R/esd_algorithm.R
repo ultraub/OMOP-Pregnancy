@@ -97,9 +97,10 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   }
   
   # need to find concept names that contain 'gestation period' as well as the specific concepts
+  # Use SQL LIKE instead of str_detect for database compatibility
   concepts_to_search <- concept_tbl %>%
     filter(
-      str_detect(tolower(concept_name), "gestation period") |
+      sql("LOWER(concept_name) LIKE '%gestation period%'") |
         concept_id %in% c(
           observation_concept_list, measurement_concept_list, algo2_timing_concepts_id_list,
           est_date_of_delivery_concepts, est_date_of_conception_concepts,

@@ -1132,17 +1132,24 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
                   as.integer(outcome_count), as.integer(gest_count)))
   
   # join both tables to find overlaps
-  # Using explicit conditions instead of overlaps() for SQL Server compatibility
-  both_df <- inner_join(calculate_start_df, get_min_max_gestation_df,
+  # First do a Cartesian join on person_id, then filter for overlaps
+  # This ensures we get all person matches before checking date overlaps
+  both_df_candidates <- inner_join(calculate_start_df, get_min_max_gestation_df,
     by = "person_id",
     suffix = c(".x", ".y")
-  ) %>%
+  )
+  
+  # Debug: Check candidate count
+  candidate_count <- both_df_candidates %>% tally() %>% pull(n)
+  message(sprintf("Candidate pairs (same person): %d", as.integer(candidate_count)))
+  
+  # Now filter for overlapping date ranges
+  both_df <- both_df_candidates %>%
     filter(
       # Check if the two date ranges overlap
       # Range 1: [max_start_date, visit_date]
       # Range 2: [max_gest_start_date, max_gest_date]
-      # They overlap if:
-      # - start1 <= end2 AND end1 >= start2
+      # They overlap if start1 <= end2 AND end1 >= start2
       max_start_date <= max_gest_date & visit_date >= max_gest_start_date
     ) %>%
     # Check for any gestation-based episodes that overlap with more than one outcome-based
