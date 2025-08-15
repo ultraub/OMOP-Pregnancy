@@ -1193,31 +1193,48 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # only outcome-based episodes
-  # Add missing gest_id column as NULL for union compatibility
+  # Add missing gest_id column as NULL with proper type casting for union compatibility
   just_outcome_df <- calculate_start_df %>%
     anti_join(overlapping_visit_ids, by = "visit_id") %>%
-    mutate(gest_id = sql("NULL"))
+    mutate(gest_id = sql("CAST(NULL AS VARCHAR(255))"))
   
   # only gestation-based episodes
-  # Add missing visit_id column as NULL for union compatibility
+  # Add missing visit_id column as NULL with proper type casting for union compatibility
   just_gestation_df <- get_min_max_gestation_df %>%
     anti_join(overlapping_gest_ids, by = "gest_id") %>%
     mutate(
       category = "PREG",
       # visit date becomes
       visit_date = max_gest_date,
-      visit_id = sql("NULL")
+      visit_id = sql("CAST(NULL AS VARCHAR(255))")
     )
   
-  # Materialize each component before union to avoid SQL Server issues
-  both_df_mat <- both_df %>% compute_table()
-  just_outcome_df_mat <- just_outcome_df %>% compute_table()
-  just_gestation_df_mat <- just_gestation_df %>% compute_table()
+  # Select essential columns for union to ensure compatibility
+  # Define the essential columns needed for final output
+  essential_cols <- c("person_id", "visit_date", "visit_id", "gest_id", 
+                      "category", "max_gest_date", "episode",
+                      "max_start_date", "min_start_date",
+                      "max_gest_start_date", "min_gest_start_date",
+                      "gest_start_date_diff", "days_diff")
+  
+  # Select only essential columns from each dataframe before union
+  # Add missing columns as NULL where needed
+  both_df_essential <- both_df %>%
+    select(any_of(essential_cols)) %>%
+    compute_table()
+  
+  just_outcome_df_essential <- just_outcome_df %>%
+    select(any_of(essential_cols)) %>%
+    compute_table()
+  
+  just_gestation_df_essential <- just_gestation_df %>%
+    select(any_of(essential_cols)) %>%
+    compute_table()
   
   # Debug: Check component counts
-  both_count <- both_df_mat %>% tally() %>% pull(n)
-  outcome_only_count <- just_outcome_df_mat %>% tally() %>% pull(n)
-  gestation_only_count <- just_gestation_df_mat %>% tally() %>% pull(n)
+  both_count <- both_df_essential %>% tally() %>% pull(n)
+  outcome_only_count <- just_outcome_df_essential %>% tally() %>% pull(n)
+  gestation_only_count <- just_gestation_df_essential %>% tally() %>% pull(n)
   
   cat("\n=== DEBUG: Union Components ===\n")
   cat(sprintf("Overlapping episodes: %d\n", as.integer(both_count)))
@@ -1227,9 +1244,9 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   all_df <- reduce(
     list(
-      both_df_mat,
-      just_outcome_df_mat,
-      just_gestation_df_mat
+      both_df_essential,
+      just_outcome_df_essential,
+      just_gestation_df_essential
     ),
     union_all
   ) %>%
