@@ -432,10 +432,34 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
     final_merged_episode_detailed_df <- final_merged_episode_detailed_df %>% collect()
   }
   
-  # Merge timing information with episode details
-  merged <- final_merged_episode_detailed_df %>%
-    left_join(episodes_with_gestational_timing_info_df,
-              by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
+  # Check which episode column exists in final_merged_episode_detailed_df
+  col_names <- names(final_merged_episode_detailed_df)
+  
+  # Determine the correct episode column to join on
+  if ("episode_number" %in% col_names) {
+    # episode_number exists, use it directly
+    merged <- final_merged_episode_detailed_df %>%
+      left_join(episodes_with_gestational_timing_info_df,
+                by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
+  } else if ("episode" %in% col_names) {
+    # Use episode column, rename it for the join
+    merged <- final_merged_episode_detailed_df %>%
+      rename(episode_number = episode) %>%
+      left_join(episodes_with_gestational_timing_info_df,
+                by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
+  } else if ("person_episode_number" %in% col_names) {
+    # Use person_episode_number column
+    merged <- final_merged_episode_detailed_df %>%
+      rename(episode_number = person_episode_number) %>%
+      left_join(episodes_with_gestational_timing_info_df,
+                by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
+  } else {
+    # No episode column found - join only on person_id
+    warning("No episode column found in final_merged_episode_detailed_df - joining only on person_id")
+    merged <- final_merged_episode_detailed_df %>%
+      left_join(episodes_with_gestational_timing_info_df,
+                by = "person_id", suffix = c(".x", ".y"))
+  }
   
   # Add term duration information
   merged_with_terms <- merged %>%
