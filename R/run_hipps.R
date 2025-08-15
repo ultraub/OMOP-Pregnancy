@@ -422,7 +422,7 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
   )
   
   # Get episode date ranges
-  PPS_episodes_df <- get_episode_max_min_dates(get_PPS_episodes_df) %>%
+  PPS_episodes_df <- get_episode_max_min_dates(get_PPS_episodes_df, connection) %>%
     compute_table()
   
   return(list(

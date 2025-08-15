@@ -229,7 +229,7 @@ compute_table <- function(lazy_query,
   
   # Clean name for database compatibility
   dbms <- attr(connection, "dbms", exact = TRUE)
-  if (dbms == "spark" || dbms == "databricks") {
+  if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
     # Remove any # prefix that might have been added for SQL Server
     name <- gsub("^#", "", name)
     # Ensure valid table name

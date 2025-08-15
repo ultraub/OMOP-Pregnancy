@@ -260,12 +260,12 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
     ) %>%
     mutate(
-      # Use direct SQL for date construction to avoid function call issues
-      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
+      # Use cross-platform SQL functions
+      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
     ) %>%
     mutate(
-      # Use direct SQL for date difference to avoid function call issues
-      date_diff = sql("DATEDIFF(day, date_of_birth, domain_concept_start_date)"),
+      # Use cross-platform date difference
+      date_diff = sql_date_diff("date_of_birth", "domain_concept_start_date", "day", connection),
       age = date_diff / 365
     ) %>%
     # women of reproductive age
@@ -302,10 +302,16 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
 #' Get episode maximum and minimum dates
 #'
 #' @param get_PPS_episodes_df PPS episodes data frame
+#' @param connection Database connection (optional, for dialect detection)
 #'
 #' @return Data frame with episode date ranges
 #' @export
-get_episode_max_min_dates <- function(get_PPS_episodes_df) {
+get_episode_max_min_dates <- function(get_PPS_episodes_df, connection = NULL) {
+  # Extract connection if not provided
+  if (is.null(connection) && inherits(get_PPS_episodes_df, c("tbl_lazy", "tbl_sql"))) {
+    connection <- get_PPS_episodes_df$src$con
+  }
+  
   df <- get_PPS_episodes_df %>%
     filter(!is.na(person_episode_number)) %>%
     group_by(person_id, person_episode_number) %>%
@@ -319,8 +325,8 @@ get_episode_max_min_dates <- function(get_PPS_episodes_df) {
     ) %>%
     ungroup() %>%
     mutate(
-      # Use SQL DATEADD for date arithmetic after grouping
-      episode_max_date_plus_two_months = sql("DATEADD(month, 2, episode_max_date)")
+      # Use sql_date_add for cross-platform date arithmetic
+      episode_max_date_plus_two_months = sql_date_add("episode_max_date", 2, "month", connection)
     ) %>%
     group_by(person_id, person_episode_number) %>%
     ungroup()
