@@ -227,6 +227,15 @@ compute_table <- function(lazy_query,
                   sample(10000:99999, 1))
   }
   
+  # Clean name for database compatibility
+  dbms <- attr(connection, "dbms", exact = TRUE)
+  if (dbms == "spark" || dbms == "databricks") {
+    # Remove any # prefix that might have been added for SQL Server
+    name <- gsub("^#", "", name)
+    # Ensure valid table name
+    name <- gsub("[^a-zA-Z0-9_]", "_", name)
+  }
+  
   if (mode == "allofus") {
     # Use All of Us specific function if available
     if (requireNamespace("allofus", quietly = TRUE) && 
@@ -270,9 +279,13 @@ compute_table <- function(lazy_query,
         }
         
         # Generate unique table name if not provided
-        if (is.null(name) || name == paste0("computed_", format(Sys.time(), "%Y%m%d_%H%M%S_"), sample(10000:99999, 1))) {
+        if (is.null(name) || grepl("^computed_.*_%H%M%S_", name)) {
           name <- paste0("computed_", Sys.getpid(), "_", format(Sys.time(), "%Y%m%d%H%M%S"))
         }
+        
+        # Clean table name for Spark - remove any # prefix and ensure valid name
+        name <- gsub("^#", "", name)  # Remove SQL Server temp table prefix
+        name <- gsub("[^a-zA-Z0-9_]", "_", name)  # Replace invalid characters with underscore
         
         # Create fully qualified table name
         full_table_name <- paste(catalog, schema_name, name, sep = ".")
