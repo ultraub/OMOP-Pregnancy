@@ -550,12 +550,24 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
     select(-previous_category, -next_category, -before_days, -after_days, -temp_category) %>%
     distinct()
   
-  counts <- final_df %>%
-    count(category) %>%
-    safe_collect()
-  
-  cat("Total preliminary episodes:\n")
-  apply(counts, 1, cat, sep = "\n")
+  # Try to get counts with better error handling
+  tryCatch({
+    counts <- final_df %>%
+      count(category) %>%
+      safe_collect()
+    
+    cat("Total preliminary episodes:\n")
+    if (!is.null(counts) && nrow(counts) > 0) {
+      for (i in 1:nrow(counts)) {
+        cat(sprintf("  %s: %d\n", counts$category[i], counts$n[i]))
+      }
+    } else {
+      cat("  Unable to retrieve episode counts (collection failed)\n")
+    }
+  }, error = function(e) {
+    cat("Total preliminary episodes:\n")
+    cat("  Unable to retrieve episode counts due to error: ", e$message, "\n")
+  })
   
   return(final_df)
 }
@@ -638,19 +650,36 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
   
   if (is.na(result_count) || result_count == 0) {
     # Return empty result with preserved column structure
-    # Ensure visit_date is included for downstream functions
-    empty_result <- initial_pregnant_cohort_df %>%
-      head(0) %>%
-      mutate(gest_value = integer())
-    
-    # Make sure key columns are present
-    if (!"visit_date" %in% colnames(empty_result)) {
-      empty_result <- empty_result %>%
-        mutate(visit_date = as.Date(character()))
-    }
-    if (!"person_id" %in% colnames(empty_result)) {
-      empty_result <- empty_result %>%
-        mutate(person_id = integer())
+    # Check if we're working with a database query or local data
+    if (inherits(initial_pregnant_cohort_df, c("tbl_lazy", "tbl_sql"))) {
+      # For database queries, use SQL-compatible NULL casting
+      empty_result <- initial_pregnant_cohort_df %>%
+        head(0) %>%
+        mutate(gest_value = sql("CAST(NULL AS INT)"))
+      
+      # Make sure key columns are present
+      if (!"visit_date" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(visit_date = sql("CAST(NULL AS DATE)"))
+      }
+      if (!"person_id" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(person_id = sql("CAST(NULL AS BIGINT)"))
+      }
+    } else {
+      # For local data frames, use R functions
+      empty_result <- initial_pregnant_cohort_df %>%
+        head(0) %>%
+        mutate(gest_value = integer())
+      
+      if (!"visit_date" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(visit_date = as.Date(character()))
+      }
+      if (!"person_id" %in% colnames(empty_result)) {
+        empty_result <- empty_result %>%
+          mutate(person_id = integer())
+      }
     }
     
     return(empty_result)
@@ -725,11 +754,11 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       # Add required columns if they don't exist
       if (!"gest_week" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(gest_week = as.integer(NA))
+          mutate(gest_week = sql("CAST(NULL AS INT)"))
       }
       if (!"episode" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(episode = as.integer(NA))
+          mutate(episode = sql("CAST(NULL AS INT)"))
       }
       if (!"visit_date" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
@@ -737,7 +766,7 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       }
       if (!"person_id" %in% colnames(empty_result)) {
         empty_result <- empty_result %>%
-          mutate(person_id = as.integer(NA))
+          mutate(person_id = sql("CAST(NULL AS BIGINT)"))
       }
       
       # Select only the columns we need
@@ -1127,12 +1156,20 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   }
   
   # Debug: Check counts before join
-  outcome_count <- calculate_start_df %>% tally() %>% pull(n)
-  gest_count <- get_min_max_gestation_df %>% tally() %>% pull(n)
+  outcome_count <- safe_count(calculate_start_df)
+  gest_count <- safe_count(get_min_max_gestation_df)
   
   cat("\n=== DEBUG: Overlap Join Analysis ===\n")
-  cat(sprintf("Outcome-based episodes: %d\n", as.integer(outcome_count)))
-  cat(sprintf("Gestation-based episodes: %d\n", as.integer(gest_count)))
+  if (!is.na(outcome_count)) {
+    cat(sprintf("Outcome-based episodes: %d\n", as.integer(outcome_count)))
+  } else {
+    cat("Outcome-based episodes: Unable to count\n")
+  }
+  if (!is.na(gest_count)) {
+    cat(sprintf("Gestation-based episodes: %d\n", as.integer(gest_count)))
+  } else {
+    cat("Gestation-based episodes: Unable to count\n")
+  }
   
   # join both tables to find overlaps
   # First do a Cartesian join on person_id, then filter for overlaps
@@ -1143,8 +1180,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   )
   
   # Debug: Check candidate count
-  candidate_count <- both_df_candidates %>% tally() %>% pull(n)
-  cat(sprintf("Candidate pairs (same person): %d\n", as.integer(candidate_count)))
+  candidate_count <- safe_count(both_df_candidates)
+  if (!is.na(candidate_count)) {
+    cat(sprintf("Candidate pairs (same person): %d\n", as.integer(candidate_count)))
+  } else {
+    cat("Candidate pairs (same person): Unable to count\n")
+  }
   
   # Now filter for overlapping date ranges
   both_df <- both_df_candidates %>%
@@ -1179,8 +1220,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # Debug: Check overlapping episodes count
-  overlap_count <- both_df %>% tally() %>% pull(n)
-  cat(sprintf("After overlap filter - Overlapping episodes: %d\n", as.integer(overlap_count)))
+  overlap_count <- safe_count(both_df)
+  if (!is.na(overlap_count)) {
+    cat(sprintf("After overlap filter - Overlapping episodes: %d\n", as.integer(overlap_count)))
+  } else {
+    cat("After overlap filter - Overlapping episodes: Unable to count\n")
+  }
   cat("=== END DEBUG ===\n\n")
   
   # Get IDs from overlapping episodes for exclusion
@@ -1248,15 +1293,31 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # Debug: Check component counts
-  both_count <- both_df_mat %>% tally() %>% pull(n)
-  outcome_only_count <- just_outcome_df_full %>% tally() %>% pull(n)
-  gestation_only_count <- just_gestation_df_full %>% tally() %>% pull(n)
+  both_count <- safe_count(both_df_mat)
+  outcome_only_count <- safe_count(just_outcome_df_full)
+  gestation_only_count <- safe_count(just_gestation_df_full)
   
   cat("\n=== DEBUG: Union Components ===\n")
-  cat(sprintf("Overlapping episodes: %d\n", as.integer(both_count)))
-  cat(sprintf("Outcome-only episodes: %d\n", as.integer(outcome_only_count)))
-  cat(sprintf("Gestation-only episodes: %d\n", as.integer(gestation_only_count)))
-  cat(sprintf("Expected total: %d\n", as.integer(both_count) + as.integer(outcome_only_count) + as.integer(gestation_only_count)))
+  if (!is.na(both_count)) {
+    cat(sprintf("Overlapping episodes: %d\n", as.integer(both_count)))
+  } else {
+    cat("Overlapping episodes: Unable to count\n")
+  }
+  if (!is.na(outcome_only_count)) {
+    cat(sprintf("Outcome-only episodes: %d\n", as.integer(outcome_only_count)))
+  } else {
+    cat("Outcome-only episodes: Unable to count\n")
+  }
+  if (!is.na(gestation_only_count)) {
+    cat(sprintf("Gestation-only episodes: %d\n", as.integer(gestation_only_count)))
+  } else {
+    cat("Gestation-only episodes: Unable to count\n")
+  }
+  if (!is.na(both_count) && !is.na(outcome_only_count) && !is.na(gestation_only_count)) {
+    cat(sprintf("Expected total: %d\n", as.integer(both_count) + as.integer(outcome_only_count) + as.integer(gestation_only_count)))
+  } else {
+    cat("Expected total: Unable to calculate\n")
+  }
   
   all_df <- reduce(
     list(
@@ -1276,8 +1337,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # Debug: Check after union
-  all_df_count <- all_df %>% tally() %>% pull(n)
-  cat(sprintf("After union total episodes: %d\n", as.integer(all_df_count)))
+  tryCatch({
+    all_df_count <- all_df %>% safe_count()
+    cat(sprintf("After union total episodes: %d\n", as.integer(all_df_count)))
+  }, error = function(e) {
+    cat("After union total episodes: Unable to count\n")
+  })
   cat("=== END DEBUG ===\n\n")
   
   counts <- count(all_df,
@@ -1570,10 +1635,12 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     union_all(temp_df) %>%
     compute_table()
   
-  cat("Total number of episodes with removed outcome:",
-    final_df %>% filter(removed_outcome == 1) %>% tally() %>% pull(n) %>% as.integer(),
-    sep = "\n"
-  )
+  removed_count <- safe_count(final_df %>% filter(removed_outcome == 1))
+  if (!is.na(removed_count)) {
+    cat("Total number of episodes with removed outcome:", as.integer(removed_count), sep = "\n")
+  } else {
+    cat("Total number of episodes with removed outcome: Unable to count\n")
+  }
   return(final_df)
 }
 
