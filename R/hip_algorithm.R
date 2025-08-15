@@ -1193,20 +1193,20 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # only outcome-based episodes
-  # Add missing gest_id column as NA for union compatibility
+  # Add missing gest_id column as NULL for union compatibility
   just_outcome_df <- calculate_start_df %>%
     anti_join(overlapping_visit_ids, by = "visit_id") %>%
-    mutate(gest_id = NA_character_)
+    mutate(gest_id = sql("NULL"))
   
   # only gestation-based episodes
-  # Add missing visit_id column as NA for union compatibility
+  # Add missing visit_id column as NULL for union compatibility
   just_gestation_df <- get_min_max_gestation_df %>%
     anti_join(overlapping_gest_ids, by = "gest_id") %>%
     mutate(
       category = "PREG",
       # visit date becomes
       visit_date = max_gest_date,
-      visit_id = NA_character_
+      visit_id = sql("NULL")
     )
   
   # Materialize each component before union to avoid SQL Server issues
