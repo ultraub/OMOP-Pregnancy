@@ -1209,32 +1209,46 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       visit_id = sql("CAST(NULL AS VARCHAR(255))")
     )
   
-  # Select essential columns for union to ensure compatibility
-  # Define the essential columns needed for final output
-  essential_cols <- c("person_id", "visit_date", "visit_id", "gest_id", 
-                      "category", "max_gest_date", "episode",
-                      "max_start_date", "min_start_date",
-                      "max_gest_start_date", "min_gest_start_date",
-                      "gest_start_date_diff", "days_diff")
+  # Instead of selecting essential columns, ensure all dataframes have ALL columns
+  # First, materialize the overlapping episodes
+  both_df_mat <- both_df %>% compute_table()
   
-  # Select only essential columns from each dataframe before union
-  # Add missing columns as NULL where needed
-  both_df_essential <- both_df %>%
-    select(any_of(essential_cols)) %>%
+  # Add ALL missing columns from both_df to the other dataframes
+  # This ensures union compatibility without losing any columns
+  
+  # For outcome-only episodes: add all gestation-related columns as NULL
+  just_outcome_df_full <- just_outcome_df %>%
+    mutate(
+      # These columns come from gestation episodes
+      max_gest_date = sql("CAST(NULL AS DATE)"),
+      min_gest_start_date = sql("CAST(NULL AS DATE)"),
+      max_gest_start_date = sql("CAST(NULL AS DATE)"),
+      gest_start_date_diff = sql("CAST(NULL AS INT)"),
+      is_under_max = sql("CAST(NULL AS INT)"),
+      is_over_min = sql("CAST(NULL AS INT)"),
+      gest_at_outcome = sql("CAST(NULL AS INT)"),
+      days_diff = sql("CAST(NULL AS INT)")
+    ) %>%
     compute_table()
   
-  just_outcome_df_essential <- just_outcome_df %>%
-    select(any_of(essential_cols)) %>%
-    compute_table()
-  
-  just_gestation_df_essential <- just_gestation_df %>%
-    select(any_of(essential_cols)) %>%
+  # For gestation-only episodes: add all outcome-related columns as NULL
+  just_gestation_df_full <- just_gestation_df %>%
+    mutate(
+      # These columns come from outcome episodes
+      min_start_date = sql("CAST(NULL AS DATE)"),
+      max_start_date = sql("CAST(NULL AS DATE)"),
+      is_under_max = sql("CAST(NULL AS INT)"),
+      is_over_min = sql("CAST(NULL AS INT)"),
+      gest_at_outcome = sql("CAST(NULL AS INT)"),
+      gest_start_date_diff = sql("CAST(NULL AS INT)"),
+      days_diff = sql("CAST(NULL AS INT)")
+    ) %>%
     compute_table()
   
   # Debug: Check component counts
-  both_count <- both_df_essential %>% tally() %>% pull(n)
-  outcome_only_count <- just_outcome_df_essential %>% tally() %>% pull(n)
-  gestation_only_count <- just_gestation_df_essential %>% tally() %>% pull(n)
+  both_count <- both_df_mat %>% tally() %>% pull(n)
+  outcome_only_count <- just_outcome_df_full %>% tally() %>% pull(n)
+  gestation_only_count <- just_gestation_df_full %>% tally() %>% pull(n)
   
   cat("\n=== DEBUG: Union Components ===\n")
   cat(sprintf("Overlapping episodes: %d\n", as.integer(both_count)))
@@ -1244,9 +1258,9 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   all_df <- reduce(
     list(
-      both_df_essential,
-      just_outcome_df_essential,
-      just_gestation_df_essential
+      both_df_mat,
+      just_outcome_df_full,
+      just_gestation_df_full
     ),
     union_all
   ) %>%
@@ -1269,6 +1283,11 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     outcome_based = !is.na(visit_id)
   ) %>%
     collect()
+  
+  # Debug: Check what's in the counts
+  cat("\n=== DEBUG: Count Results ===\n")
+  print(counts)
+  cat("=== END DEBUG ===\n\n")
   
   # Helper function to safely get count for a specific combination
   get_count <- function(df, gest_val, outcome_val) {
