@@ -1290,9 +1290,14 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   cat("=== END DEBUG ===\n\n")
   
   # Helper function to safely get count for a specific combination
+  # Note: The counts dataframe has character columns "1" and "0", not booleans
   get_count <- function(df, gest_val, outcome_val) {
+    # Convert boolean values to character for comparison
+    gest_str <- if(gest_val) "1" else "0"
+    outcome_str <- if(outcome_val) "1" else "0"
+    
     result <- df %>% 
-      filter(gestation_based == gest_val, outcome_based == outcome_val) %>% 
+      filter(gestation_based == gest_str, outcome_based == outcome_str) %>% 
       pull(n)
     if (length(result) == 0) 0L else as.integer(result)
   }

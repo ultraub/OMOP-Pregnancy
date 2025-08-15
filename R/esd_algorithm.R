@@ -278,7 +278,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
         (str_detect(tolower(domain_concept_name), "gestational age")) |
         (domain_concept_id %in% gestational_age_validation_concepts & 
          domain_value < max_gestational_weeks & domain_value > 0), 1, 0),
-      extrapolated_preg_start = if_else(keep_value == 1, domain_concept_start_date - (domain_value * 7), NA_Date_)
+      extrapolated_preg_start = if_else(keep_value == 1, domain_concept_start_date - (domain_value * 7), as.Date(NA))
     )
   
   preg_related_concepts_local
