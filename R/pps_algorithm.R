@@ -260,11 +260,12 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
     ) %>%
     mutate(
-      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth")
+      # Use direct SQL for date construction to avoid function call issues
+      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
     ) %>%
     mutate(
-      # Separate mutate for date_diff to ensure date_of_birth is available
-      date_diff = sql_date_diff("domain_concept_start_date", "date_of_birth", "day"),
+      # Use direct SQL for date difference to avoid function call issues
+      date_diff = sql("DATEDIFF(day, date_of_birth, domain_concept_start_date)"),
       age = date_diff / 365
     ) %>%
     # women of reproductive age

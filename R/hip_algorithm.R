@@ -1115,6 +1115,15 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       gest_start_date_diff = sql("DATEDIFF(day, min_gest_start_date, max_gest_start_date)")
     )
   
+  # CRITICAL: Materialize data before overlaps join to ensure it works correctly
+  # The overlaps join may not translate properly with lazy queries
+  if (inherits(calculate_start_df, c("tbl_lazy", "tbl_sql"))) {
+    calculate_start_df <- calculate_start_df %>% compute_table()
+  }
+  if (inherits(get_min_max_gestation_df, c("tbl_lazy", "tbl_sql"))) {
+    get_min_max_gestation_df <- get_min_max_gestation_df %>% compute_table()
+  }
+  
   # join both tables to find overlaps
   both_df <- inner_join(calculate_start_df, get_min_max_gestation_df,
     by = join_by(person_id, overlaps(
