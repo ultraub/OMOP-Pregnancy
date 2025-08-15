@@ -111,9 +111,52 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   }
   
   # add: change to pregnancy start rather than recorded episode start
+  # Handle different column names that might exist
+  # Check which columns are available
+  col_names <- names(pregnant_dates)
+  
+  # Determine start date column
+  if ("pregnancy_start" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = pregnancy_start)
+  } else if ("estimated_start_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = estimated_start_date)
+  } else if ("episode_min_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = episode_min_date)
+  } else if ("merged_episode_start" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = merged_episode_start)
+  } else {
+    warning("No recognized start date column found - using first available date column")
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = pregnancy_end)  # fallback
+  }
+  
+  # Determine end date column
+  if ("recorded_episode_end" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = recorded_episode_end)
+  } else if ("pregnancy_end" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = pregnancy_end)
+  } else if ("episode_max_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = episode_max_date)
+  } else if ("merged_episode_end" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = merged_episode_end)
+  } else {
+    warning("No recognized end date column found")
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = start_date)  # fallback
+  }
+  
+  # Determine episode number column
+  if ("episode_number" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(episode_num = episode_number)
+  } else if ("episode" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(episode_num = episode)
+  } else if ("person_episode_number" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(episode_num = person_episode_number)
+  } else {
+    pregnant_dates <- pregnant_dates %>% mutate(episode_num = row_number())
+  }
+  
   person_id_list <- pregnant_dates %>%
-    mutate(start_date = pmin(pregnancy_start, recorded_episode_start, na.rm = TRUE)) %>%
-    select(person_id, start_date, recorded_episode_end, episode_number) %>%
+    select(person_id, start_date, recorded_episode_end = end_date, episode_number = episode_num) %>%
+    filter(!is.na(start_date)) %>%
     create_temp_table()
   
   c_o <- concepts_to_search %>%
