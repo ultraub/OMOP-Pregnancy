@@ -205,6 +205,14 @@ final_merged_episodes <- function(HIP_episodes_local_df, PPS_episodes_with_outco
   # - end in algo1 is within algo2
   # - end in algo2 is within algo1
   
+  # Materialize data if needed for overlaps join
+  if (inherits(HIP_episodes_local_df, c("tbl_lazy", "tbl_sql"))) {
+    HIP_episodes_local_df <- HIP_episodes_local_df %>% collect()
+  }
+  if (inherits(PPS_episodes_with_outcomes_df, c("tbl_lazy", "tbl_sql"))) {
+    PPS_episodes_with_outcomes_df <- PPS_episodes_with_outcomes_df %>% collect()
+  }
+  
   algo1_pregnancy <- HIP_episodes_local_df %>%
     rename(
       pregnancy_start = estimated_start_date,

@@ -30,7 +30,19 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   # obtain the gestational timing <= 3 month concept information to use as additional 
   # information for precision category designation
   
-  pregnant_dates <- final_merged_episode_detailed_df
+  # Ensure we have a proper dataframe, not a lazy query
+  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+    message("Computing merged episodes dataframe...")
+    pregnant_dates <- final_merged_episode_detailed_df %>% collect()
+  } else {
+    pregnant_dates <- final_merged_episode_detailed_df
+  }
+  
+  # Check if we have any data
+  if (is.null(pregnant_dates) || nrow(pregnant_dates) == 0) {
+    warning("No episodes found in merged dataframe - returning empty result")
+    return(data.frame())
+  }
   
   algo2_timing_concepts_id_list <- PPS_concepts %>%
     select(domain_concept_id) %>%
@@ -177,10 +189,24 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     pregnant_dates <- pregnant_dates %>% mutate(episode_num = row_number())
   }
   
-  person_id_list <- pregnant_dates %>%
+  # Get the connection from the original lazy query if available
+  connection <- NULL
+  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+    connection <- final_merged_episode_detailed_df$src$con
+  }
+  
+  # Prepare the person_id_list dataframe
+  person_id_list_df <- pregnant_dates %>%
     select(person_id, start_date, recorded_episode_end = end_date, episode_number = episode_num) %>%
-    filter(!is.na(start_date)) %>%
-    create_temp_table()
+    filter(!is.na(start_date))
+  
+  # Create temp table with proper parameter order
+  if (!is.null(connection)) {
+    person_id_list <- create_temp_table(connection, person_id_list_df)
+  } else {
+    # If no connection available, just use the dataframe as-is
+    person_id_list <- person_id_list_df
+  }
   
   c_o <- concepts_to_search %>%
     inner_join(condition_occurrence_tbl, by = c("concept_id" = "condition_concept_id"), suffix = c(".x", ".y")) %>%

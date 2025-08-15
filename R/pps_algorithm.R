@@ -314,11 +314,15 @@ get_episode_max_min_dates <- function(get_PPS_episodes_df) {
       episode_min_date = min(domain_concept_start_date),
       # last time a pregnancy concept appears
       episode_max_date = max(domain_concept_start_date),
-      # Use SQL DATEADD for date arithmetic instead of lubridate
-      episode_max_date_plus_two_months = sql("DATEADD(month, 2, MAX(domain_concept_start_date))"),
       # add the number of unique gestational timing concepts per episode
       n_GT_concepts = n_distinct(domain_concept_id)
     ) %>%
+    ungroup() %>%
+    mutate(
+      # Use SQL DATEADD for date arithmetic after grouping
+      episode_max_date_plus_two_months = sql("DATEADD(month, 2, episode_max_date)")
+    ) %>%
+    group_by(person_id, person_episode_number) %>%
     ungroup()
   
   return(df)
