@@ -587,15 +587,15 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
       } else if (use_temp_table) {
         # Strategy 2: Use temp table approach for large datasets
         # This can help with memory issues by staging the data
-        tryCatch({
+        result <- tryCatch({
           temp_result <- compute_table(lazy_query, connection = connection)
           # Just collect from the computed table directly
-          result <- collect(temp_result)
+          collect(temp_result)
         }, error = function(e) {
           # If temp table approach fails, recursively try without temp table
           message("Temp table collection failed, trying alternative strategy...")
           # Recursive call without temp table to use other strategies
-          result <- safe_collect(lazy_query, n_max = n_max, use_temp_table = FALSE)
+          safe_collect(lazy_query, n_max = n_max, use_temp_table = FALSE)
         })
       } else {
         # Strategy 3: Direct collection
@@ -627,10 +627,15 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
           } else {
             # For complex queries, try batched collection
             # First try to get a small sample to verify it works
-            test_query <- paste0("SELECT * FROM (", sql_query, ") LIMIT 1")
-            test_result <- DBI::dbGetQuery(connection, test_query)
+            test_query <- paste0("SELECT * FROM (", sql_query, ") AS test_query LIMIT 1")
+            tryCatch({
+              test_result <- DBI::dbGetQuery(connection, test_query)
+            }, error = function(e) {
+              # LIMIT might not work, just proceed with full query
+              NULL
+            })
             
-            # If test works, get the full result
+            # Try to get the full result
             if (requireNamespace("DatabaseConnector", quietly = TRUE)) {
               result <- DatabaseConnector::querySql(connection, as.character(sql_query))
               names(result) <- tolower(names(result))
