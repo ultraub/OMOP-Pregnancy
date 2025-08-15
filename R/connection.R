@@ -234,7 +234,25 @@ get_cdm_table <- function(connection, table_name, cdmDatabaseSchema = NULL) {
     }
     
     # Create schema-qualified table reference
-    if (attr(connection, "dbms") %in% c("postgresql", "redshift", "snowflake")) {
+    dbms <- attr(connection, "dbms", exact = TRUE)
+    
+    if (dbms %in% c("spark", "databricks")) {
+      # Databricks uses three-level namespace: catalog.schema.table
+      # Parse the cdmDatabaseSchema to handle both formats
+      if (grepl("\\.", cdmDatabaseSchema)) {
+        # Already in catalog.schema format
+        table_ref <- dplyr::tbl(connection, 
+                                dbplyr::in_catalog(
+                                  strsplit(cdmDatabaseSchema, "\\.")[[1]][1],
+                                  strsplit(cdmDatabaseSchema, "\\.")[[1]][2],
+                                  table_name
+                                ))
+      } else {
+        # Just schema name, use default catalog
+        table_ref <- dplyr::tbl(connection, 
+                                dbplyr::in_catalog("main", cdmDatabaseSchema, table_name))
+      }
+    } else if (dbms %in% c("postgresql", "redshift", "snowflake")) {
       table_ref <- dplyr::tbl(connection, 
                               dbplyr::in_schema(cdmDatabaseSchema, table_name))
     } else {
