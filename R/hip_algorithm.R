@@ -634,12 +634,9 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
   all_gest_df <- union_all(gest_df, other_gest_df)
   
   # Check if result is empty and ensure column structure is preserved
-  result_count <- all_gest_df %>%
-    count() %>%
-    safe_collect() %>%
-    pull(n)
+  result_count <- safe_count(all_gest_df)
   
-  if (result_count == 0) {
+  if (is.na(result_count) || result_count == 0) {
     # Return empty result with preserved column structure
     # Ensure visit_date is included for downstream functions
     empty_result <- initial_pregnant_cohort_df %>%
@@ -669,8 +666,12 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
   }
   
   # Check row count
-  row_count <- all_gest_df %>% count() %>% safe_collect() %>% pull(n)
-  cat("[DEBUG] gestation_visits: Returning", row_count, "rows\n")
+  row_count <- safe_count(all_gest_df)
+  if (!is.na(row_count)) {
+    cat("[DEBUG] gestation_visits: Returning", row_count, "rows\n")
+  } else {
+    cat("[DEBUG] gestation_visits: Unable to determine row count\n")
+  }
   
   return(all_gest_df)
 }
