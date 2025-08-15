@@ -445,6 +445,12 @@ merge_episodes <- function(hip_episodes,
                          initial_pregnant_cohort,
                          config) {
   
+  # Check for NULL PPS episodes
+  if (is.null(pps_episodes) || is.null(pps_episodes$episodes)) {
+    warning("PPS episodes is NULL - returning only HIP episodes")
+    return(hip_episodes)
+  }
+  
   # Get outcomes per episode
   outcomes_per_episode_df <- outcomes_per_episode(
     pps_episodes$episodes,

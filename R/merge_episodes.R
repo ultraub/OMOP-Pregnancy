@@ -32,6 +32,17 @@ outcomes_per_episode <- function(PPS_episodes_df, get_PPS_episodes_df, initial_p
   # then selected the outcome based on Matcho et al's outcome hierarchy
   # assessment
   
+  # Check for NULL inputs
+  if (is.null(PPS_episodes_df)) {
+    warning("PPS_episodes_df is NULL - returning empty data frame")
+    return(data.frame())
+  }
+  
+  if (nrow(PPS_episodes_df) == 0) {
+    warning("PPS_episodes_df has no rows - returning empty data frame")
+    return(data.frame())
+  }
+  
   pregnant_dates <- PPS_episodes_df %>%
     group_by(person_id) %>%
     arrange(person_episode_number, episode_min_date) %>%
@@ -47,6 +58,13 @@ outcomes_per_episode <- function(PPS_episodes_df, get_PPS_episodes_df, initial_p
   # (if multiple on the same date then the one containing max month),
   # of which the min month is used out of the tuple of month values where necessary and subtracted from 10,
   # this then is added onto the concept date to get 'max_pregnancy_date'
+  
+  # Check if get_PPS_episodes_df is NULL or empty
+  if (is.null(get_PPS_episodes_df) || nrow(get_PPS_episodes_df) == 0) {
+    warning("get_PPS_episodes_df is NULL or empty - using basic pregnant_dates")
+    return(pregnant_dates)
+  }
+  
   tmp_preg_episode_concept_GA <- get_PPS_episodes_df %>%
     group_by(person_id, person_episode_number) %>%
     arrange(desc(domain_concept_start_date), desc(max_month), desc(min_month)) %>%
