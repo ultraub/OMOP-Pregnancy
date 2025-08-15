@@ -121,7 +121,10 @@ create_connection <- function(connectionDetails = NULL,
         }
       }, error = function(e) {
         # Ignore if setting fails - not all Spark versions support this
-        message("Note: Could not disable Arrow optimization via SQL. Continuing...")
+        # Only show in debug mode to avoid unnecessary user concern
+        if (getOption("omop_pregnancy.debug", FALSE)) {
+          message("Note: Could not disable Arrow optimization via SQL. Continuing...")
+        }
       })
     }
     

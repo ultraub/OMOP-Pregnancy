@@ -540,8 +540,15 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
       } else if (use_temp_table) {
         # Strategy 2: Use temp table approach for large datasets
         # This can help with memory issues by staging the data
-        temp_result <- compute_table(lazy_query, connection = connection)
-        result <- DBI::dbReadTable(connection, temp_result$ops$x)
+        tryCatch({
+          temp_result <- compute_table(lazy_query, connection = connection)
+          # Just collect from the computed table directly
+          result <- collect(temp_result)
+        }, error = function(e) {
+          # If temp table approach fails, try direct collection
+          message("Temp table collection failed, trying direct collection...")
+          result <- collect(lazy_query)
+        })
       } else {
         # Strategy 3: Direct collection
         result <- collect(lazy_query)
@@ -551,25 +558,32 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
       
     }, error = function(e) {
       # If Arrow error, try alternative approach
-      if (grepl("Arrow|arrow|MemoryUtil", e$message, ignore.case = TRUE)) {
+      if (grepl("Arrow|arrow|MemoryUtil|ArrowNotAvailable", e$message, ignore.case = TRUE)) {
         message("Arrow collection failed, trying JDBC fallback...")
         
         # Strategy 4: Use SQL query directly via JDBC
-        sql_query <- dbplyr::sql_render(lazy_query)
-        
-        # Use DatabaseConnector for more robust collection
-        if (requireNamespace("DatabaseConnector", quietly = TRUE)) {
-          result <- DatabaseConnector::querySql(connection, as.character(sql_query))
-          names(result) <- tolower(names(result))
-          return(result)
-        } else {
-          # Final fallback: Use DBI
-          result <- DBI::dbGetQuery(connection, as.character(sql_query))
-          return(result)
-        }
+        tryCatch({
+          sql_query <- dbplyr::sql_render(lazy_query)
+          
+          # Use DatabaseConnector for more robust collection
+          if (requireNamespace("DatabaseConnector", quietly = TRUE)) {
+            result <- DatabaseConnector::querySql(connection, as.character(sql_query))
+            names(result) <- tolower(names(result))
+            return(result)
+          } else {
+            # Final fallback: Use DBI
+            result <- DBI::dbGetQuery(connection, as.character(sql_query))
+            return(result)
+          }
+        }, error = function(e2) {
+          # If even JDBC fails, provide helpful error message
+          stop(paste("Failed to collect data from Databricks. Error:", e2$message,
+                    "\nConsider: 1) Reducing query size, 2) Increasing Java memory,",
+                    "3) Checking network connectivity"))
+        })
       } else {
-        # Re-throw non-Arrow errors
-        stop(e)
+        # Re-throw non-Arrow errors with context
+        stop(paste("Collection failed:", e$message))
       }
     })
     
