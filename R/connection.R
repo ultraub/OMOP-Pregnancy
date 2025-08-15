@@ -95,6 +95,15 @@ create_connection <- function(connectionDetails = NULL,
     attr(con, "resultsDatabaseSchema") <- resultsDatabaseSchema
     attr(con, "dbms") <- connectionDetails$dbms
     
+    # Set Spark-specific options to prevent SQL Server syntax
+    if (connectionDetails$dbms == "spark" || connectionDetails$dbms == "databricks") {
+      # Prevent # prefix for temp tables
+      options(dbplyr.compute.defaults = list(temporary = FALSE))
+      options(dbplyr.temp_prefix = "temp_")
+      # Ensure Spark SQL dialect is used
+      options(sqlRenderTempEmulationSchema = resultsDatabaseSchema)
+    }
+    
     return(con)
   }
 }

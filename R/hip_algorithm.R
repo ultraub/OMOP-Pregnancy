@@ -180,7 +180,8 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
     filter(age >= min_age, age < max_age)
   
   # return the resulting dataframe
-  distinct(union_df)
+  # For Spark compatibility, avoid implicit compute in distinct()
+  union_df %>% distinct()
 }
 
 #' Identify final visits for pregnancy outcomes

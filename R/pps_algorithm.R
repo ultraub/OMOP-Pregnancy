@@ -250,7 +250,7 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   
   # Check if we're in a database context and compute if needed
   if (inherits(patients_with_concepts, "tbl_sql")) {
-    patients_with_concepts <- compute(patients_with_concepts)
+    patients_with_concepts <- compute_table(patients_with_concepts)
   }
   
   patients_with_preg_concepts <- patients_with_concepts %>%
