@@ -1124,14 +1124,27 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     get_min_max_gestation_df <- get_min_max_gestation_df %>% compute_table()
   }
   
+  # Debug: Check counts before join
+  outcome_count <- calculate_start_df %>% tally() %>% pull(n)
+  gest_count <- get_min_max_gestation_df %>% tally() %>% pull(n)
+  
+  message(sprintf("Before overlaps join - Outcome episodes: %d, Gestation episodes: %d", 
+                  as.integer(outcome_count), as.integer(gest_count)))
+  
   # join both tables to find overlaps
+  # Using explicit conditions instead of overlaps() for SQL Server compatibility
   both_df <- inner_join(calculate_start_df, get_min_max_gestation_df,
-    by = join_by(person_id, overlaps(
-      max_start_date, visit_date,
-      max_gest_start_date, max_gest_date
-    )),
+    by = "person_id",
     suffix = c(".x", ".y")
   ) %>%
+    filter(
+      # Check if the two date ranges overlap
+      # Range 1: [max_start_date, visit_date]
+      # Range 2: [max_gest_start_date, max_gest_date]
+      # They overlap if:
+      # - start1 <= end2 AND end1 >= start2
+      max_start_date <= max_gest_date & visit_date >= max_gest_start_date
+    ) %>%
     # Check for any gestation-based episodes that overlap with more than one outcome-based
     # episode and keep only those episodes where the gestation-based end date is closest to the
     # outcome date.
@@ -1155,24 +1168,44 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     ungroup() %>%
     compute_table()
   
+  # Debug: Check overlapping episodes count
+  overlap_count <- both_df %>% tally() %>% pull(n)
+  message(sprintf("After overlaps join - Overlapping episodes: %d", as.integer(overlap_count)))
+  
+  # Get IDs from overlapping episodes for exclusion
+  overlapping_visit_ids <- both_df %>% 
+    select(visit_id) %>% 
+    distinct() %>%
+    compute_table()
+  
+  overlapping_gest_ids <- both_df %>% 
+    select(gest_id) %>% 
+    distinct() %>%
+    compute_table()
+  
   # only outcome-based episodes
   just_outcome_df <- calculate_start_df %>%
-    anti_join(select(both_df, visit_id), by = "visit_id")
+    anti_join(overlapping_visit_ids, by = "visit_id")
   
   # only gestation-based episodes
   just_gestation_df <- get_min_max_gestation_df %>%
-    anti_join(select(both_df, gest_id), by = "gest_id") %>%
+    anti_join(overlapping_gest_ids, by = "gest_id") %>%
     mutate(
       category = "PREG",
       # visit date becomes
       visit_date = max_gest_date
     )
   
+  # Materialize each component before union to avoid SQL Server issues
+  both_df_mat <- both_df %>% compute_table()
+  just_outcome_df_mat <- just_outcome_df %>% compute_table()
+  just_gestation_df_mat <- just_gestation_df %>% compute_table()
+  
   all_df <- reduce(
     list(
-      both_df,
-      just_outcome_df,
-      just_gestation_df
+      both_df_mat,
+      just_outcome_df_mat,
+      just_gestation_df_mat
     ),
     union_all
   ) %>%

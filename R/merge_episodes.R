@@ -225,13 +225,16 @@ final_merged_episodes <- function(HIP_episodes_local_df, PPS_episodes_with_outco
     mutate(algo2_id = paste(person_id, person_episode_number, "2", sep = "_"))
   
   all_episodes <- algo1_pregnancy %>%
-    full_join(algo2, by = join_by(
-      person_id,
-      overlaps(
-        pregnancy_start, pregnancy_end,
-        episode_min_date, episode_max_date_plus_two_months
-      )
-    ), suffix = c(".x", ".y")) %>%
+    full_join(algo2, 
+      by = "person_id",
+      suffix = c(".x", ".y")
+    ) %>%
+    filter(
+      # Keep all rows where episodes overlap OR where one algorithm has no match
+      is.na(pregnancy_start) | is.na(episode_min_date) |
+      (pregnancy_start <= episode_max_date_plus_two_months & 
+       pregnancy_end >= episode_min_date)
+    ) %>%
     mutate(
       merged_episode_start = pmin(first_gest_date, episode_min_date, pregnancy_end),
       merged_episode_end = pmax(episode_max_date, pregnancy_end),
