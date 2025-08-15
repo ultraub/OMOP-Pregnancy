@@ -217,29 +217,32 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   # Process each domain table separately with proper column handling
   c_o <- condition_occurrence_tbl %>%
     inner_join(concepts_to_search, by = c("condition_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
-    mutate(value_col = concept_name) %>%
+    mutate(value_col = concept_name, concept_id = condition_concept_id) %>%
     compute_table() %>%
     get_preg_related_concepts(person_id_list, "condition_start_date")
     
   o_df <- observation_tbl %>%
     inner_join(concepts_to_search, by = c("observation_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
-    mutate(value_col = value_as_string) %>%
+    mutate(value_col = value_as_string, concept_id = observation_concept_id) %>%
     compute_table() %>%
     get_preg_related_concepts(person_id_list, "observation_date")
     
   m_df <- measurement_tbl %>%
     inner_join(concepts_to_search, by = c("measurement_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
-    mutate(value_col = value_as_number) %>%
+    mutate(value_col = value_as_number, concept_id = measurement_concept_id) %>%
     compute_table() %>%
     get_preg_related_concepts(person_id_list, "measurement_date")
     
   p_df <- procedure_occurrence_tbl %>%
     inner_join(concepts_to_search, by = c("procedure_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
-    mutate(value_col = concept_name) %>%
+    mutate(value_col = concept_name, concept_id = procedure_concept_id) %>%
     compute_table() %>%
     get_preg_related_concepts(person_id_list, "procedure_date")
   
-  preg_related_concepts <- list(c_o, o_df, mutate(m_df, value_col = as.character(value_col)), p_df) %>%
+  # Ensure value_col is character for all before union
+  m_df_char <- m_df %>% mutate(value_col = as.character(value_col))
+  
+  preg_related_concepts <- list(c_o, o_df, m_df_char, p_df) %>%
     reduce(union_all)
   
   algo2_timing_concepts_df <- PPS_concepts %>%

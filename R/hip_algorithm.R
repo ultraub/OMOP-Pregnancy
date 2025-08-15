@@ -1128,8 +1128,9 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   outcome_count <- calculate_start_df %>% tally() %>% pull(n)
   gest_count <- get_min_max_gestation_df %>% tally() %>% pull(n)
   
-  message(sprintf("Before overlaps join - Outcome episodes: %d, Gestation episodes: %d", 
-                  as.integer(outcome_count), as.integer(gest_count)))
+  cat("\n=== DEBUG: Overlap Join Analysis ===\n")
+  cat(sprintf("Outcome-based episodes: %d\n", as.integer(outcome_count)))
+  cat(sprintf("Gestation-based episodes: %d\n", as.integer(gest_count)))
   
   # join both tables to find overlaps
   # First do a Cartesian join on person_id, then filter for overlaps
@@ -1141,7 +1142,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   # Debug: Check candidate count
   candidate_count <- both_df_candidates %>% tally() %>% pull(n)
-  message(sprintf("Candidate pairs (same person): %d", as.integer(candidate_count)))
+  cat(sprintf("Candidate pairs (same person): %d\n", as.integer(candidate_count)))
   
   # Now filter for overlapping date ranges
   both_df <- both_df_candidates %>%
@@ -1177,7 +1178,8 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   # Debug: Check overlapping episodes count
   overlap_count <- both_df %>% tally() %>% pull(n)
-  message(sprintf("After overlaps join - Overlapping episodes: %d", as.integer(overlap_count)))
+  cat(sprintf("After overlap filter - Overlapping episodes: %d\n", as.integer(overlap_count)))
+  cat("=== END DEBUG ===\n\n")
   
   # Get IDs from overlapping episodes for exclusion
   overlapping_visit_ids <- both_df %>% 
