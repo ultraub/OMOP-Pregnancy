@@ -246,7 +246,7 @@ validate_config <- function(config) {
 #'
 #' @return List containing concept data frames
 #' @export
-load_concept_sets <- function(concept_dir = NULL, format = "excel") {
+load_concept_sets <- function(concept_dir = NULL, format = "auto") {
   
   # Use default directory if not specified
   if (is.null(concept_dir)) {
@@ -259,6 +259,16 @@ load_concept_sets <- function(concept_dir = NULL, format = "excel") {
   }
   
   concept_sets <- list()
+  
+  # Auto-detect format: prefer CSV if available, fallback to Excel
+  if (format == "auto") {
+    csv_test <- file.path(concept_dir, "HIP_concepts.csv")
+    if (file.exists(csv_test)) {
+      format <- "csv"
+    } else {
+      format <- "excel"
+    }
+  }
   
   if (format == "excel") {
     # Load Excel files

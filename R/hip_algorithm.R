@@ -165,8 +165,8 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
     mutate(
       day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
-      # Use SqlRender wrapper for cross-platform compatibility
-      date_of_birth = sql("DATEFROMPARTS(year_of_birth, month_of_birth, day_of_birth)")
+      # Use cross-platform SQL function
+      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
     ) %>%
     select(person_id, date_of_birth)
   
@@ -174,7 +174,7 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
   union_df <- union_df %>%
     inner_join(person_df, by = "person_id", suffix = c(".x", ".y")) %>%
     mutate(
-      date_diff = sql("DATEDIFF(day, date_of_birth, visit_date)"),
+      date_diff = sql_date_diff("visit_date", "date_of_birth", "day", connection),
       age = date_diff / 365
     ) %>%
     filter(age >= min_age, age < max_age)
@@ -629,20 +629,25 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
     )
   }
   
-  # Get records with gestation period
+  # Get records with gestation period from HIP_concepts (where gest_value is populated)
   gest_df <- initial_pregnant_cohort_df %>% filter(!is.na(gest_value))
   
-  # Get records with gestational age in weeks
+  # Get records with gestational age in weeks from measurement table
+  # This is crucial: for gestational age concepts that have NA in gest_value (HIP_concepts),
+  # we need to use the actual measurement value from value_as_number
   other_gest_df <- initial_pregnant_cohort_df %>%
     filter(
       concept_id %in% gestational_age_concepts,
+      is.na(gest_value),  # Only get records where gest_value is NA to avoid duplicates
       !is.na(value_as_number),
       # also filter out 0 -- this is an error
       value_as_number > 0, value_as_number <= max_gestational_weeks
     ) %>%
     mutate(gest_value = as.integer(value_as_number))
   
-  # Combine tables
+  # Combine tables - this ensures we get both:
+  # 1. Records with gest_value from HIP_concepts
+  # 2. Records with value_as_number for gestational age measurements
   all_gest_df <- union_all(gest_df, other_gest_df)
   
   # Check if result is empty and ensure column structure is preserved

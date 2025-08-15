@@ -313,10 +313,35 @@ get_sql_dialect <- function(obj) {
     return("redshift")
   } else if (grepl("snowflake", obj_class, ignore.case = TRUE)) {
     return("snowflake")
+  } else if (grepl("spark|databricks", obj_class, ignore.case = TRUE)) {
+    return("spark")
   }
   
   # Default to SQL Server (OHDSI standard)
   return("sql server")
+}
+
+#' Get DBMS from connection with fallback
+#'
+#' Internal helper to reliably get DBMS type from connection
+#'
+#' @param connection Database connection object
+#'
+#' @return DBMS string
+#' @keywords internal
+get_dbms_from_connection <- function(connection) {
+  dbms <- NULL
+  
+  if (!is.null(connection)) {
+    dbms <- attr(connection, "dbms", exact = TRUE)
+  }
+  
+  # Default to SQL Server if not specified
+  if (is.null(dbms)) {
+    dbms <- "sql server"
+  }
+  
+  return(dbms)
 }
 
 #' Create SQL expressions with automatic dialect detection
