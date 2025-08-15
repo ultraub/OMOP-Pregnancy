@@ -115,6 +115,12 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   # Check which columns are available
   col_names <- names(pregnant_dates)
   
+  # Debug: print available columns
+  message("Available columns in pregnant_dates: ", paste(col_names, collapse = ", "))
+  
+  # Find date columns (any column with 'date' in the name)
+  date_cols <- col_names[grepl("date", col_names, ignore.case = TRUE)]
+  
   # Determine start date column
   if ("pregnancy_start" %in% col_names) {
     pregnant_dates <- pregnant_dates %>% mutate(start_date = pregnancy_start)
@@ -124,9 +130,17 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     pregnant_dates <- pregnant_dates %>% mutate(start_date = episode_min_date)
   } else if ("merged_episode_start" %in% col_names) {
     pregnant_dates <- pregnant_dates %>% mutate(start_date = merged_episode_start)
+  } else if ("visit_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = visit_date)
+  } else if ("final_outcome_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = final_outcome_date)
+  } else if (length(date_cols) > 0) {
+    warning(paste("No recognized start date column found - using", date_cols[1]))
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = !!sym(date_cols[1]))
   } else {
-    warning("No recognized start date column found - using first available date column")
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = pregnancy_end)  # fallback
+    # Create a dummy date if no date columns exist
+    warning("No date columns found - creating dummy dates")
+    pregnant_dates <- pregnant_dates %>% mutate(start_date = as.Date("2020-01-01"))
   }
   
   # Determine end date column
@@ -138,9 +152,18 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     pregnant_dates <- pregnant_dates %>% mutate(end_date = episode_max_date)
   } else if ("merged_episode_end" %in% col_names) {
     pregnant_dates <- pregnant_dates %>% mutate(end_date = merged_episode_end)
+  } else if ("visit_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = visit_date)
+  } else if ("final_outcome_date" %in% col_names) {
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = final_outcome_date)
+  } else if (length(date_cols) > 0) {
+    # Use the last date column if available
+    last_date_col <- date_cols[length(date_cols)]
+    warning(paste("No recognized end date column found - using", last_date_col))
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = !!sym(last_date_col))
   } else {
-    warning("No recognized end date column found")
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = start_date)  # fallback
+    warning("No recognized end date column found - using start_date")
+    pregnant_dates <- pregnant_dates %>% mutate(end_date = start_date)
   }
   
   # Determine episode number column
