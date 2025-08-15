@@ -426,6 +426,12 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
                                          final_merged_episode_detailed_df,
                                          Matcho_term_durations) {
   
+  # Ensure both dataframes are in the same location (local)
+  # If final_merged_episode_detailed_df is a database table, collect it
+  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+    final_merged_episode_detailed_df <- final_merged_episode_detailed_df %>% collect()
+  }
+  
   # Merge timing information with episode details
   merged <- final_merged_episode_detailed_df %>%
     left_join(episodes_with_gestational_timing_info_df,
