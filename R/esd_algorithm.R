@@ -107,16 +107,21 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
           len_of_gestation_at_birth_concepts
         )
     ) %>%
-    select(concept_id, concept_name)
+    select(concept_id, concept_name) %>%
+    compute_table()  # Materialize to avoid complex nested queries
   
   get_preg_related_concepts <- function(df, person_id_list, df_date_col) {
+    # Create the rename list dynamically
+    rename_list <- setNames("domain_concept_start_date", df_date_col)
+    
     df %>%
       select(person_id, all_of(df_date_col), concept_id, concept_name, value_col) %>%
-      rename(all_of(c(domain_concept_start_date = df_date_col))) %>%
-      inner_join(person_id_list, by = join_by(
-        person_id, domain_concept_start_date >= start_date,
+      rename(!!!rename_list) %>%
+      inner_join(person_id_list, by = "person_id", suffix = c(".x", ".y")) %>%
+      filter(
+        domain_concept_start_date >= start_date,
         domain_concept_start_date <= recorded_episode_end
-      ), suffix = c(".x", ".y")) %>%
+      ) %>%
       select(person_id, domain_concept_start_date,
         domain_concept_id = concept_id, domain_concept_name = concept_name,
         start_date, recorded_episode_end, value_col, episode_number
@@ -209,21 +214,29 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     person_id_list <- person_id_list_df
   }
   
-  c_o <- concepts_to_search %>%
-    inner_join(condition_occurrence_tbl, by = c("concept_id" = "condition_concept_id"), suffix = c(".x", ".y")) %>%
+  # Process each domain table separately with proper column handling
+  c_o <- condition_occurrence_tbl %>%
+    inner_join(concepts_to_search, by = c("condition_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = concept_name) %>%
+    compute_table() %>%
     get_preg_related_concepts(person_id_list, "condition_start_date")
-  o_df <- concepts_to_search %>%
-    inner_join(observation_tbl, by = c("concept_id" = "observation_concept_id"), suffix = c(".x", ".y")) %>%
+    
+  o_df <- observation_tbl %>%
+    inner_join(concepts_to_search, by = c("observation_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = value_as_string) %>%
+    compute_table() %>%
     get_preg_related_concepts(person_id_list, "observation_date")
-  m_df <- concepts_to_search %>%
-    inner_join(measurement_tbl, by = c("concept_id" = "measurement_concept_id"), suffix = c(".x", ".y")) %>%
+    
+  m_df <- measurement_tbl %>%
+    inner_join(concepts_to_search, by = c("measurement_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = value_as_number) %>%
+    compute_table() %>%
     get_preg_related_concepts(person_id_list, "measurement_date")
-  p_df <- concepts_to_search %>%
-    inner_join(procedure_occurrence_tbl, by = c("concept_id" = "procedure_concept_id"), suffix = c(".x", ".y")) %>%
+    
+  p_df <- procedure_occurrence_tbl %>%
+    inner_join(concepts_to_search, by = c("procedure_concept_id" = "concept_id"), suffix = c(".x", ".y")) %>%
     mutate(value_col = concept_name) %>%
+    compute_table() %>%
     get_preg_related_concepts(person_id_list, "procedure_date")
   
   preg_related_concepts <- list(c_o, o_df, mutate(m_df, value_col = as.character(value_col)), p_df) %>%
