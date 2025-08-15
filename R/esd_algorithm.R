@@ -44,10 +44,19 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     return(data.frame())
   }
   
-  algo2_timing_concepts_id_list <- PPS_concepts %>%
-    select(domain_concept_id) %>%
-    pull(domain_concept_id) %>%
-    as.integer()
+  # Ensure PPS_concepts is collected before pulling values
+  if (inherits(PPS_concepts, c("tbl_lazy", "tbl_sql"))) {
+    algo2_timing_concepts_id_list <- PPS_concepts %>%
+      select(domain_concept_id) %>%
+      collect() %>%
+      pull(domain_concept_id) %>%
+      as.integer()
+  } else {
+    algo2_timing_concepts_id_list <- PPS_concepts %>%
+      select(domain_concept_id) %>%
+      pull(domain_concept_id) %>%
+      as.integer()
+  }
   
   # Get concept lists from config or use defaults
   if (is.null(config)) {
@@ -278,7 +287,10 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
         (str_detect(tolower(domain_concept_name), "gestational age")) |
         (domain_concept_id %in% gestational_age_validation_concepts & 
          domain_value < max_gestational_weeks & domain_value > 0), 1, 0),
-      extrapolated_preg_start = if_else(keep_value == 1, domain_concept_start_date - (domain_value * 7), as.Date(NA))
+      # Use SQL-compatible date arithmetic
+      extrapolated_preg_start = if_else(keep_value == 1, 
+                                        domain_concept_start_date - days(domain_value * 7), 
+                                        as.Date(NA))
     )
   
   preg_related_concepts_local
@@ -309,6 +321,11 @@ validate <- function(date_text) {
 #' @return Intersection of intervals
 #' @export
 findIntersection <- function(intervals) {
+  # This function works with local data only - ensure input is not a lazy query
+  if (inherits(intervals, c("tbl_lazy", "tbl_sql"))) {
+    stop("findIntersection requires local data - please collect() the data first")
+  }
+  
   if (length(intervals) == 1) {
     intervals <- matrix(intervals[[1]], ncol = 2)
   } else {
@@ -462,13 +479,52 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
   }
   
   # Add term duration information
-  merged_with_terms <- merged %>%
-    left_join(Matcho_term_durations, by = c("final_category" = "category"), suffix = c(".x", ".y"))
+  # Check if final_category column exists, otherwise use category
+  if ("final_category" %in% names(merged)) {
+    merged_with_terms <- merged %>%
+      left_join(Matcho_term_durations, by = c("final_category" = "category"), suffix = c(".x", ".y"))
+  } else if ("category" %in% names(merged)) {
+    merged_with_terms <- merged %>%
+      left_join(Matcho_term_durations, by = "category", suffix = c(".x", ".y"))
+  } else {
+    warning("No category column found for term duration join")
+    merged_with_terms <- merged %>%
+      mutate(max_term = 301, min_term = 140)  # Use default values
+  }
   
   # Calculate final estimated start dates considering all information
+  # Check which columns exist and add missing ones with default values
+  col_names <- names(merged_with_terms)
+  
+  # Ensure required columns exist
+  if (!"final_outcome_date" %in% col_names) {
+    if ("visit_date" %in% col_names) {
+      merged_with_terms <- merged_with_terms %>% mutate(final_outcome_date = visit_date)
+    } else {
+      merged_with_terms <- merged_with_terms %>% mutate(final_outcome_date = as.Date(NA))
+    }
+  }
+  
+  if (!"estimated_start_date" %in% col_names) {
+    merged_with_terms <- merged_with_terms %>% mutate(estimated_start_date = as.Date(NA))
+  }
+  
+  if (!"pregnancy_start" %in% col_names) {
+    merged_with_terms <- merged_with_terms %>% mutate(pregnancy_start = as.Date(NA))
+  }
+  
+  if (!"max_term" %in% col_names) {
+    merged_with_terms <- merged_with_terms %>% mutate(max_term = 301)
+  }
+  
+  if (!"min_term" %in% col_names) {
+    merged_with_terms <- merged_with_terms %>% mutate(min_term = 140)
+  }
+  
   final_episodes <- merged_with_terms %>%
     mutate(
       # Use gestational timing if available, otherwise use outcome-based calculation
+      # Note: This is on local data after collect(), so date operations should work
       final_estimated_start = coalesce(
         estimated_start_date,
         pregnancy_start,
@@ -477,7 +533,7 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
       # Calculate gestational age at outcome
       gestational_age_at_outcome = case_when(
         !is.na(final_outcome_date) & !is.na(final_estimated_start) ~
-          as.numeric(final_outcome_date - final_estimated_start) / 7,
+          as.numeric(difftime(final_outcome_date, final_estimated_start, units = "days")) / 7,
         TRUE ~ NA_real_
       ),
       # Validate gestational age is within expected ranges
@@ -487,12 +543,19 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
           gestational_age_at_outcome <= max_term/7 ~ TRUE,
         TRUE ~ FALSE
       ),
-      # Add quality indicator
-      episode_quality = case_when(
-        precision_category == "High" & gestational_age_valid == TRUE ~ "High",
-        precision_category == "Medium" | gestational_age_valid == TRUE ~ "Medium",
-        TRUE ~ "Low"
-      )
+      # Add quality indicator - check if precision_category exists
+      episode_quality = if ("precision_category" %in% names(.)) {
+        case_when(
+          precision_category == "High" & gestational_age_valid == TRUE ~ "High",
+          precision_category == "Medium" | gestational_age_valid == TRUE ~ "Medium",
+          TRUE ~ "Low"
+        )
+      } else {
+        case_when(
+          gestational_age_valid == TRUE ~ "Medium",
+          TRUE ~ "Low"
+        )
+      }
     )
   
   return(final_episodes)
