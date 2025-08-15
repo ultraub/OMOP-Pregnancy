@@ -170,9 +170,12 @@ create_temp_table <- function(connection,
                                       dropTableIfExists = TRUE)
       })
       
-      # Return table reference using in_catalog for proper three-level namespace
-      return(dplyr::tbl(connection, 
-                       dbplyr::in_catalog(catalog, schema_name, temp_table_name)))
+      # Return table reference - try using SQL string for better qualification
+      # This ensures the full catalog.schema.table name is used in SQL generation
+      full_sql_ref <- paste(catalog, schema_name, temp_table_name, sep = ".")
+      
+      # Use sql() to create a SQL literal that will be used as-is in queries
+      return(dplyr::tbl(connection, dbplyr::sql(full_sql_ref)))
       
     } else {
       # Default fallback
@@ -243,18 +246,71 @@ compute_table <- function(lazy_query,
       dbms <- "sql server"
     }
     
-    # Platform-specific compute
-    if (dbms %in% c("sql server", "pdw") && temporary) {
+    # Special handling for Spark/Databricks
+    if (dbms == "spark" || dbms == "databricks") {
+      # For Spark, we need to create the table in the correct schema
+      # Use create_temp_table which handles schema properly
+      
+      # First, collect the data or use CREATE TABLE AS SELECT
+      # Get the schema from connection attributes
+      schema <- attr(connection, "resultsDatabaseSchema", exact = TRUE)
+      if (is.null(schema)) {
+        schema <- attr(connection, "cdmDatabaseSchema", exact = TRUE)
+      }
+      
+      if (!is.null(schema)) {
+        # Parse catalog and schema
+        if (grepl("\\.", schema)) {
+          parts <- strsplit(schema, "\\.")[[1]]
+          catalog <- parts[1]
+          schema_name <- parts[2]
+        } else {
+          catalog <- "main"
+          schema_name <- schema
+        }
+        
+        # Generate unique table name if not provided
+        if (is.null(name) || name == paste0("computed_", format(Sys.time(), "%Y%m%d_%H%M%S_"), sample(10000:99999, 1))) {
+          name <- paste0("computed_", Sys.getpid(), "_", format(Sys.time(), "%Y%m%d%H%M%S"))
+        }
+        
+        # Create fully qualified table name
+        full_table_name <- paste(catalog, schema_name, name, sep = ".")
+        
+        # Get the SQL query
+        sql_query <- dbplyr::sql_render(lazy_query)
+        
+        # Create table using CREATE TABLE AS SELECT
+        create_sql <- paste0("CREATE OR REPLACE TABLE ", full_table_name, " AS ", sql_query)
+        
+        # Execute the CREATE TABLE statement
+        DBI::dbExecute(connection, create_sql)
+        
+        # Return reference to the new table using in_catalog
+        return(dplyr::tbl(connection, 
+                         dbplyr::in_catalog(catalog, schema_name, name)))
+      } else {
+        # Fallback to standard compute if no schema available
+        warning("No schema specified for Spark/Databricks compute_table. Results may fail.")
+        result <- dplyr::compute(lazy_query, name = name, temporary = FALSE)
+        return(result)
+      }
+      
+    } else if (dbms %in% c("sql server", "pdw") && temporary) {
       # SQL Server requires # prefix for temp tables
       name <- paste0("#", gsub("^#", "", name))
+      # Use dplyr compute with platform-appropriate settings
+      result <- dplyr::compute(lazy_query,
+                             name = name,
+                             temporary = temporary)
+      return(result)
+    } else {
+      # Use dplyr compute with platform-appropriate settings
+      result <- dplyr::compute(lazy_query,
+                             name = name,
+                             temporary = temporary)
+      return(result)
     }
-    
-    # Use dplyr compute with platform-appropriate settings
-    result <- dplyr::compute(lazy_query,
-                           name = name,
-                           temporary = temporary)
-    
-    return(result)
   }
 }
 
