@@ -552,7 +552,7 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
   
   counts <- final_df %>%
     count(category) %>%
-    collect()
+    safe_collect()
   
   cat("Total preliminary episodes:\n")
   apply(counts, 1, cat, sep = "\n")
@@ -636,7 +636,7 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
   # Check if result is empty and ensure column structure is preserved
   result_count <- all_gest_df %>%
     count() %>%
-    collect() %>%
+    safe_collect() %>%
     pull(n)
   
   if (result_count == 0) {
@@ -669,7 +669,7 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL) {
   }
   
   # Check row count
-  row_count <- all_gest_df %>% count() %>% collect() %>% pull(n)
+  row_count <- all_gest_df %>% count() %>% safe_collect() %>% pull(n)
   cat("[DEBUG] gestation_visits: Returning", row_count, "rows\n")
   
   return(all_gest_df)

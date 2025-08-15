@@ -102,6 +102,27 @@ create_connection <- function(connectionDetails = NULL,
       options(dbplyr.temp_prefix = "temp_")
       # Ensure Spark SQL dialect is used
       options(sqlRenderTempEmulationSchema = resultsDatabaseSchema)
+      
+      # Configure Arrow settings to prevent memory issues
+      # Disable Arrow optimization to avoid memory initialization errors
+      options(sparklyr.arrow = FALSE)
+      
+      # Set Java memory options if not already set
+      if (is.null(getOption("sparklyr.java.options"))) {
+        options(sparklyr.java.options = "-Xmx4g")
+      }
+      
+      # For JDBC connections, try to disable Arrow at connection level
+      tryCatch({
+        if (!is.null(connectionDetails$connectionString) && 
+            grepl("jdbc", connectionDetails$connectionString, ignore.case = TRUE)) {
+          # Try to set Arrow disabled via JDBC property
+          DBI::dbExecute(con, "SET spark.sql.execution.arrow.enabled = false")
+        }
+      }, error = function(e) {
+        # Ignore if setting fails - not all Spark versions support this
+        message("Note: Could not disable Arrow optimization via SQL. Continuing...")
+      })
     }
     
     return(con)

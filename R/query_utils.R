@@ -496,3 +496,89 @@ date_diff <- function(date1, date2, unit, connection = NULL) {
   # Use the SqlRender-based wrapper for cross-platform compatibility
   return(sql_date_diff(date1, date2, units, connection))
 }
+
+#' Safe collect operation for Spark/Databricks
+#'
+#' Handles collect() operations with Spark-specific optimizations to avoid
+#' Apache Arrow memory issues. This function provides a safe way to collect
+#' data from Spark/Databricks that avoids Arrow serialization problems.
+#'
+#' @param lazy_query A lazy dplyr query
+#' @param n_max Maximum number of rows to collect (default NULL for all)
+#' @param use_temp_table For Spark, whether to use temp table approach (default TRUE)
+#'
+#' @return A local data frame
+#' @export
+safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
+  
+  # Extract connection from lazy query
+  if (inherits(lazy_query, c("tbl_lazy", "tbl_sql"))) {
+    connection <- lazy_query$src$con
+  } else {
+    # If it's already collected, just return it
+    return(lazy_query)
+  }
+  
+  # Get the DBMS type
+  dbms <- attr(connection, "dbms", exact = TRUE)
+  
+  # For Spark/Databricks, use special collection strategy
+  if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
+    
+    # Strategy 1: Try to disable Arrow for this specific collection
+    tryCatch({
+      # Temporarily disable Arrow if possible
+      old_arrow <- getOption("sparklyr.arrow")
+      options(sparklyr.arrow = FALSE)
+      on.exit(options(sparklyr.arrow = old_arrow), add = TRUE)
+      
+      # Try direct collection with limited rows first
+      if (!is.null(n_max)) {
+        result <- lazy_query %>% 
+          head(n_max) %>%
+          collect()
+      } else if (use_temp_table) {
+        # Strategy 2: Use temp table approach for large datasets
+        # This can help with memory issues by staging the data
+        temp_result <- compute_table(lazy_query, connection = connection)
+        result <- DBI::dbReadTable(connection, temp_result$ops$x)
+      } else {
+        # Strategy 3: Direct collection
+        result <- collect(lazy_query)
+      }
+      
+      return(result)
+      
+    }, error = function(e) {
+      # If Arrow error, try alternative approach
+      if (grepl("Arrow|arrow|MemoryUtil", e$message, ignore.case = TRUE)) {
+        message("Arrow collection failed, trying JDBC fallback...")
+        
+        # Strategy 4: Use SQL query directly via JDBC
+        sql_query <- dbplyr::sql_render(lazy_query)
+        
+        # Use DatabaseConnector for more robust collection
+        if (requireNamespace("DatabaseConnector", quietly = TRUE)) {
+          result <- DatabaseConnector::querySql(connection, as.character(sql_query))
+          names(result) <- tolower(names(result))
+          return(result)
+        } else {
+          # Final fallback: Use DBI
+          result <- DBI::dbGetQuery(connection, as.character(sql_query))
+          return(result)
+        }
+      } else {
+        # Re-throw non-Arrow errors
+        stop(e)
+      }
+    })
+    
+  } else {
+    # For non-Spark databases, use standard collect
+    if (!is.null(n_max)) {
+      return(lazy_query %>% head(n_max) %>% collect())
+    } else {
+      return(collect(lazy_query))
+    }
+  }
+}
