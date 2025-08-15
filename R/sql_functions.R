@@ -344,6 +344,66 @@ get_dbms_from_connection <- function(connection) {
   return(dbms)
 }
 
+#' Translate SQL string using SqlRender for cross-platform compatibility
+#'
+#' This function takes SQL Server syntax and translates it to the target
+#' database dialect using SqlRender. Use this for any SQL that would 
+#' otherwise be passed directly to sql().
+#'
+#' @param sql_string SQL string in SQL Server syntax
+#' @param connection Database connection for dialect detection
+#'
+#' @return A dbplyr SQL expression translated for the target database
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Instead of:
+#' mutate(days = sql("DATEDIFF(day, date1, date2)"))
+#' 
+#' # Use:
+#' mutate(days = sql_translate("DATEDIFF(day, date1, date2)", connection))
+#' }
+sql_translate <- function(sql_string, connection = NULL) {
+  
+  # Get database dialect
+  dbms <- get_dbms_from_connection(connection)
+  
+  # Special handling for Spark/Databricks - they need different syntax
+  if (dbms == "spark" || dbms == "databricks") {
+    # Handle common SQL Server patterns that Spark doesn't support
+    
+    # DATEDIFF(unit, date1, date2) -> DATEDIFF(date2, date1) for days
+    if (grepl("DATEDIFF\\s*\\(\\s*day", sql_string, ignore.case = TRUE)) {
+      # Extract the dates and reorder for Spark
+      sql_string <- gsub("DATEDIFF\\s*\\(\\s*day\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)",
+                        "DATEDIFF(\\2, \\1)", sql_string, ignore.case = TRUE)
+    }
+    
+    # DATEADD(day, n, date) -> DATE_ADD(date, n)
+    if (grepl("DATEADD\\s*\\(\\s*day", sql_string, ignore.case = TRUE)) {
+      sql_string <- gsub("DATEADD\\s*\\(\\s*day\\s*,\\s*([^,]+)\\s*,\\s*([^)]+)\\s*\\)",
+                        "DATE_ADD(\\2, \\1)", sql_string, ignore.case = TRUE)
+    }
+    
+    # CONCAT with CAST - Spark handles this differently
+    if (grepl("CONCAT\\s*\\(.*CAST", sql_string, ignore.case = TRUE)) {
+      # Keep as is - Spark supports CONCAT and CAST
+    }
+    
+    # CAST(NULL AS DATE) - ensure proper NULL handling
+    sql_string <- gsub("CAST\\s*\\(\\s*NULL\\s+AS\\s+DATE\\s*\\)",
+                      "CAST(NULL AS DATE)", sql_string, ignore.case = TRUE)
+  } else {
+    # For non-Spark databases, use SqlRender translation
+    translated_sql <- SqlRender::translate(sql_string, targetDialect = dbms)
+    return(dbplyr::sql(translated_sql))
+  }
+  
+  # Return as dbplyr SQL expression
+  return(dbplyr::sql(sql_string))
+}
+
 #' Create SQL expressions with automatic dialect detection
 #'
 #' Wrapper function that automatically detects the database dialect from

@@ -161,7 +161,11 @@ create_temp_table <- function(connection,
                          temporary = FALSE)
       }, error = function(e) {
         # Fallback to DatabaseConnector if DBI fails
-        message("Note: Using DatabaseConnector fallback for table creation")
+        # This is expected behavior for Spark/Databricks and is not an error
+        # DatabaseConnector has better Spark support than DBI for table creation
+        if (interactive()) {
+          message("Note: Using DatabaseConnector fallback for table creation (expected for Spark/Databricks)")
+        }
         DatabaseConnector::insertTable(connection = connection,
                                       databaseSchema = paste(catalog, schema_name, sep = "."),
                                       tableName = temp_table_name,
