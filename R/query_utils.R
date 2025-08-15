@@ -61,6 +61,11 @@ create_temp_table <- function(connection,
     
     dbms <- attr(connection, "dbms", exact = TRUE)
     
+    # Handle NULL dbms - default to sql server for OHDSI compatibility
+    if (is.null(dbms)) {
+      dbms <- "sql server"
+    }
+    
     # Platform-specific temp table creation
     if (dbms %in% c("postgresql", "redshift")) {
       # PostgreSQL/Redshift: Use TEMP tables
@@ -163,6 +168,11 @@ compute_table <- function(lazy_query,
     # Generic OMOP CDM approach
     dbms <- attr(connection, "dbms", exact = TRUE)
     
+    # Handle NULL dbms - default to sql server for OHDSI compatibility
+    if (is.null(dbms)) {
+      dbms <- "sql server"
+    }
+    
     # Platform-specific compute
     if (dbms %in% c("sql server", "pdw") && temporary) {
       # SQL Server requires # prefix for temp tables
@@ -220,6 +230,11 @@ execute_query <- function(connection,
     # Generic OMOP CDM with SqlRender
     dbms <- attr(connection, "dbms", exact = TRUE)
     
+    # Handle NULL dbms - default to sql server for OHDSI compatibility
+    if (is.null(dbms)) {
+      dbms <- "sql server"
+    }
+    
     # Render SQL with parameters
     rendered_sql <- SqlRender::render(sql,
                                      cdm_database_schema = cdmDatabaseSchema,
@@ -265,6 +280,11 @@ drop_temp_table <- function(connection,
   } else {
     # Generic OMOP CDM
     dbms <- attr(connection, "dbms", exact = TRUE)
+    
+    # Handle NULL dbms - default to sql server for OHDSI compatibility
+    if (is.null(dbms)) {
+      dbms <- "sql server"
+    }
     
     if (dbms %in% c("sql server", "pdw")) {
       # SQL Server temp table
