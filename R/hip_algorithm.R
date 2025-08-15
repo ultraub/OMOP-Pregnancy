@@ -1193,22 +1193,37 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     compute_table()
   
   # only outcome-based episodes
+  # Add missing gest_id column as NA for union compatibility
   just_outcome_df <- calculate_start_df %>%
-    anti_join(overlapping_visit_ids, by = "visit_id")
+    anti_join(overlapping_visit_ids, by = "visit_id") %>%
+    mutate(gest_id = NA_character_)
   
   # only gestation-based episodes
+  # Add missing visit_id column as NA for union compatibility
   just_gestation_df <- get_min_max_gestation_df %>%
     anti_join(overlapping_gest_ids, by = "gest_id") %>%
     mutate(
       category = "PREG",
       # visit date becomes
-      visit_date = max_gest_date
+      visit_date = max_gest_date,
+      visit_id = NA_character_
     )
   
   # Materialize each component before union to avoid SQL Server issues
   both_df_mat <- both_df %>% compute_table()
   just_outcome_df_mat <- just_outcome_df %>% compute_table()
   just_gestation_df_mat <- just_gestation_df %>% compute_table()
+  
+  # Debug: Check component counts
+  both_count <- both_df_mat %>% tally() %>% pull(n)
+  outcome_only_count <- just_outcome_df_mat %>% tally() %>% pull(n)
+  gestation_only_count <- just_gestation_df_mat %>% tally() %>% pull(n)
+  
+  cat("\n=== DEBUG: Union Components ===\n")
+  cat(sprintf("Overlapping episodes: %d\n", as.integer(both_count)))
+  cat(sprintf("Outcome-only episodes: %d\n", as.integer(outcome_only_count)))
+  cat(sprintf("Gestation-only episodes: %d\n", as.integer(gestation_only_count)))
+  cat(sprintf("Expected total: %d\n", as.integer(both_count) + as.integer(outcome_only_count) + as.integer(gestation_only_count)))
   
   all_df <- reduce(
     list(
@@ -1226,6 +1241,11 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     # recalculate since I overwrote
     mutate(days_diff = sql("DATEDIFF(day, max_gest_date, visit_date)")) %>%
     compute_table()
+  
+  # Debug: Check after union
+  all_df_count <- all_df %>% tally() %>% pull(n)
+  cat(sprintf("After union total episodes: %d\n", as.integer(all_df_count)))
+  cat("=== END DEBUG ===\n\n")
   
   counts <- count(all_df,
     gestation_based = !is.na(gest_id),

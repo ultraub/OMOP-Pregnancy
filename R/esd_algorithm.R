@@ -111,12 +111,13 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     compute_table()  # Materialize to avoid complex nested queries
   
   get_preg_related_concepts <- function(df, person_id_list, df_date_col) {
-    # Create the rename list dynamically
-    rename_list <- setNames("domain_concept_start_date", df_date_col)
-    
-    df %>%
+    # Rename the date column to a standard name for filtering
+    # Use rename_with to handle the dynamic column name
+    df_renamed <- df %>%
       select(person_id, all_of(df_date_col), concept_id, concept_name, value_col) %>%
-      rename(!!!rename_list) %>%
+      rename_with(~ "domain_concept_start_date", all_of(df_date_col))
+    
+    df_renamed %>%
       inner_join(person_id_list, by = "person_id", suffix = c(".x", ".y")) %>%
       filter(
         domain_concept_start_date >= start_date,
