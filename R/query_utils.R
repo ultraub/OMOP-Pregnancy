@@ -108,22 +108,71 @@ create_temp_table <- function(connection,
       # Spark/Databricks: Use managed tables with unique prefix
       # Spark doesn't support true temp tables, so we create regular tables
       # with a unique prefix to avoid conflicts
+      
+      # Get the schema from connection attributes - try multiple sources
+      schema <- attr(connection, "resultsDatabaseSchema", exact = TRUE)
+      if (is.null(schema)) {
+        schema <- attr(connection, "cdmDatabaseSchema", exact = TRUE)
+      }
+      if (is.null(schema)) {
+        # Try to get from resultsDatabaseSchema parameter
+        schema <- resultsDatabaseSchema
+      }
+      if (is.null(schema)) {
+        # Default to a temp schema if nothing else is available
+        schema <- "default"
+        warning("No schema specified for temp tables, using 'default'")
+      }
+      
+      # Parse catalog and schema if in catalog.schema format
+      if (grepl("\\.", schema)) {
+        parts <- strsplit(schema, "\\.")[[1]]
+        catalog <- parts[1]
+        schema_name <- parts[2]
+      } else {
+        # Just schema name, use main catalog
+        catalog <- "main"
+        schema_name <- schema
+      }
+      
+      # Create unique table name
       temp_table_name <- paste0("temp_", Sys.getpid(), "_", gsub("-", "_", table_name))
       
-      # Drop table if it exists
+      # Create fully qualified table name for Databricks
+      full_table_name <- paste(catalog, schema_name, temp_table_name, sep = ".")
+      
+      # Drop table if it exists using fully qualified name
       tryCatch({
-        DBI::dbExecute(connection, paste0("DROP TABLE IF EXISTS ", temp_table_name))
+        DBI::dbExecute(connection, paste0("DROP TABLE IF EXISTS ", full_table_name))
       }, error = function(e) {
         # Ignore errors if table doesn't exist
       })
       
-      # Insert data using DatabaseConnector for better compatibility
-      DatabaseConnector::insertTable(connection = connection,
-                                    tableName = temp_table_name,
-                                    data = data,
-                                    tempTable = FALSE,  # Spark doesn't support temp tables
-                                    dropTableIfExists = TRUE)
-      return(dplyr::tbl(connection, temp_table_name))
+      # Use DBI directly for better control over table creation
+      # This avoids DatabaseConnector's assumptions about schema
+      tryCatch({
+        # Write the table using DBI which handles Spark better
+        DBI::dbWriteTable(connection, 
+                         dbplyr::Id(catalog = catalog, 
+                                    schema = schema_name, 
+                                    table = temp_table_name),
+                         data,
+                         overwrite = TRUE,
+                         temporary = FALSE)
+      }, error = function(e) {
+        # Fallback to DatabaseConnector if DBI fails
+        message("Note: Using DatabaseConnector fallback for table creation")
+        DatabaseConnector::insertTable(connection = connection,
+                                      databaseSchema = paste(catalog, schema_name, sep = "."),
+                                      tableName = temp_table_name,
+                                      data = data,
+                                      tempTable = FALSE,
+                                      dropTableIfExists = TRUE)
+      })
+      
+      # Return table reference using in_catalog for proper three-level namespace
+      return(dplyr::tbl(connection, 
+                       dbplyr::in_catalog(catalog, schema_name, temp_table_name)))
       
     } else {
       # Default fallback
