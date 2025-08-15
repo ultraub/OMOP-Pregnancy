@@ -33,7 +33,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   # Ensure we have a proper dataframe, not a lazy query
   if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
     message("Computing merged episodes dataframe...")
-    pregnant_dates <- final_merged_episode_detailed_df %>% collect()
+    pregnant_dates <- final_merged_episode_detailed_df %>% safe_collect()
   } else {
     pregnant_dates <- final_merged_episode_detailed_df
   }
@@ -451,7 +451,7 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
   # Ensure both dataframes are in the same location (local)
   # If final_merged_episode_detailed_df is a database table, collect it
   if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
-    final_merged_episode_detailed_df <- final_merged_episode_detailed_df %>% collect()
+    final_merged_episode_detailed_df <- final_merged_episode_detailed_df %>% safe_collect()
   }
   
   # Check which episode column exists in final_merged_episode_detailed_df

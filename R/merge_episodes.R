@@ -207,10 +207,10 @@ final_merged_episodes <- function(HIP_episodes_local_df, PPS_episodes_with_outco
   
   # Materialize data if needed for overlaps join
   if (inherits(HIP_episodes_local_df, c("tbl_lazy", "tbl_sql"))) {
-    HIP_episodes_local_df <- HIP_episodes_local_df %>% collect()
+    HIP_episodes_local_df <- HIP_episodes_local_df %>% safe_collect()
   }
   if (inherits(PPS_episodes_with_outcomes_df, c("tbl_lazy", "tbl_sql"))) {
-    PPS_episodes_with_outcomes_df <- PPS_episodes_with_outcomes_df %>% collect()
+    PPS_episodes_with_outcomes_df <- PPS_episodes_with_outcomes_df %>% safe_collect()
   }
   
   algo1_pregnancy <- HIP_episodes_local_df %>%

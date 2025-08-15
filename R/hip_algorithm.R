@@ -732,14 +732,16 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   cat("[DEBUG] gestation_episodes: Input columns:", paste(input_cols, collapse=", "), "\n")
   
   # Check if there are any gestation visits
-  visit_count <- gestation_visits_df %>%
-    count() %>%
-    collect() %>%
-    pull(n)
+  visit_count <- safe_count(gestation_visits_df)
   
-  cat("[DEBUG] gestation_episodes: Found", visit_count, "gestation visits\n")
+  if (!is.na(visit_count)) {
+    cat("[DEBUG] gestation_episodes: Found", visit_count, "gestation visits\n")
+  } else {
+    cat("[DEBUG] gestation_episodes: Unable to determine visit count\n")
+    visit_count <- 0  # Treat as 0 for the purpose of the check below
+  }
   
-  if (visit_count == 0) {
+  if (is.na(visit_count) || visit_count == 0) {
     cat("[DEBUG] gestation_episodes: No visits found, returning empty result with required columns\n")
     # Return empty data frame with expected columns if no gestation visits
     # Create an empty result with all required columns
@@ -878,11 +880,12 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   cat("[DEBUG] gestation_episodes: Returning columns:", paste(result_cols, collapse=", "), "\n")
   
   # Check if result has any rows
-  result_count <- result %>%
-    count() %>%
-    collect() %>%
-    pull(n)
-  cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
+  result_count <- safe_count(result)
+  if (!is.na(result_count)) {
+    cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
+  } else {
+    cat("[DEBUG] gestation_episodes: Unable to determine row count\n")
+  }
   
   return(result)
 }
@@ -924,7 +927,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   # This breaks the lazy query chain that contains problematic window functions
   if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
     cat("[DEBUG] get_min_max_gestation: Collecting and re-uploading to break query chain\n")
-    temp_data <- gestation_episodes_df %>% collect()
+    temp_data <- gestation_episodes_df %>% safe_collect()
     cat("[DEBUG] get_min_max_gestation: Collected", nrow(temp_data), "rows\n")
     
     # Get connection from original query
@@ -936,12 +939,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   }
   
   # Check if there are any gestation episodes
-  episode_count <- gestation_episodes_df %>%
-    count() %>%
-    collect() %>%
-    pull(n)
+  episode_count <- safe_count(gestation_episodes_df)
   
-  cat("[DEBUG] get_min_max_gestation: Working with", episode_count, "gestation episodes\n")
+  if (!is.na(episode_count)) {
+    cat("[DEBUG] get_min_max_gestation: Working with", episode_count, "gestation episodes\n")
+  } else {
+    cat("[DEBUG] get_min_max_gestation: Unable to determine episode count\n")
+  }
   
   if (episode_count == 0) {
     # Return empty database table with expected columns if no gestation episodes
@@ -1349,7 +1353,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     gestation_based = !is.na(gest_id),
     outcome_based = !is.na(visit_id)
   ) %>%
-    collect()
+    safe_collect()
   
   # Debug: Check what's in the counts
   cat("\n=== DEBUG: Count Results ===\n")
@@ -1399,7 +1403,7 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
   # FIXED: Collect and re-upload to avoid window function issues
   # This function uses row_number() which can cause issues with DatabaseConnector
   if (inherits(add_gestation_df, c("tbl_lazy", "tbl_sql"))) {
-    temp_data <- add_gestation_df %>% collect()
+    temp_data <- add_gestation_df %>% safe_collect()
     add_gestation_df <- create_temp_table(temp_data, connection = connection)
   }
   
@@ -1512,7 +1516,7 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
   # FIXED: Collect and re-upload to avoid window function issues
   # This function uses lag() which can cause issues with DatabaseConnector
   if (inherits(clean_episodes_df, c("tbl_lazy", "tbl_sql"))) {
-    temp_data <- clean_episodes_df %>% collect()
+    temp_data <- clean_episodes_df %>% safe_collect()
     clean_episodes_df <- create_temp_table(temp_data, connection = connection)
   }
   
