@@ -61,6 +61,7 @@ jdbc_url <- paste0(
   "EnableArrow=1;",         # ENABLE Arrow for efficient columnar transfer
   "UID=token;",             # User ID for token auth
   "PWD=", Sys.getenv("DATABRICKS_TOKEN")  # Token directly in URL
+  # Removed LowLatency parameter as it's not needed
 )
 
 # Create connection details using the optimized JDBC URL
