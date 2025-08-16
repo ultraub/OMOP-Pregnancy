@@ -257,17 +257,21 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   patients_with_preg_concepts <- patients_with_concepts %>%
     inner_join(person_subset, by = "person_id", suffix = c(".x", ".y")) %>%
     mutate(
-      day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
-      month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
+      day_of_birth = if_else(is.na(day_of_birth), 1L, as.integer(day_of_birth)),
+      month_of_birth = if_else(is.na(month_of_birth), 1L, as.integer(month_of_birth)),
       # Simple age calculation using year difference
-      # This avoids complex date construction and works in both databases
+      # Use explicit integers to avoid BIT datatype issues in Spark
       year_diff = year(domain_concept_start_date) - year_of_birth,
-      # Check if birthday has passed this year
-      birthday_passed = month(domain_concept_start_date) > month_of_birth |
-                       (month(domain_concept_start_date) == month_of_birth & 
-                        day(domain_concept_start_date) >= day_of_birth),
-      # Calculate age with birthday adjustment
-      age = year_diff - if_else(birthday_passed, 0, 1)
+      # Use case_when instead of boolean logic to avoid BIT datatype
+      birthday_adjustment = case_when(
+        month(domain_concept_start_date) > month_of_birth ~ 0L,
+        month(domain_concept_start_date) < month_of_birth ~ 1L,
+        month(domain_concept_start_date) == month_of_birth & 
+          day(domain_concept_start_date) >= day_of_birth ~ 0L,
+        TRUE ~ 1L
+      ),
+      # Calculate age with adjustment
+      age = year_diff - birthday_adjustment
     ) %>%
     # women of reproductive age
     filter(
@@ -277,7 +281,7 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       age < max_age
     ) %>%
     select(-year_of_birth, -month_of_birth, -day_of_birth, -gender_concept_id, 
-           -year_diff, -birthday_passed)
+           -year_diff, -birthday_adjustment)
   
   # Materialize the query now that all SQL operations are complete
   patients_with_preg_concepts <- compute_table(patients_with_preg_concepts, connection = connection)
