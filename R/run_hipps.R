@@ -472,6 +472,23 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
                             config,
                             connection = NULL) {
   
+  # Extract connection if not provided
+  if (is.null(connection)) {
+    # Try to extract from one of the input tables
+    if (inherits(condition_occurrence_tbl, c("tbl_lazy", "tbl_sql"))) {
+      connection <- condition_occurrence_tbl$src$con
+    } else if (inherits(procedure_occurrence_tbl, c("tbl_lazy", "tbl_sql"))) {
+      connection <- procedure_occurrence_tbl$src$con
+    } else if (inherits(observation_tbl, c("tbl_lazy", "tbl_sql"))) {
+      connection <- observation_tbl$src$con
+    }
+  }
+  
+  # Validate we have a connection
+  if (is.null(connection)) {
+    stop("run_pps_algorithm: No database connection available")
+  }
+  
   # Get input GT concepts
   input_GT_concepts_df <- input_GT_concepts(
     condition_occurrence_tbl,

@@ -1176,6 +1176,17 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
     cat("[ERROR] get_min_max_gestation: Available columns are:", paste(input_cols, collapse=", "), "\n")
   }
   
+  # Extract connection if not provided
+  if (is.null(connection) && inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
+    connection <- gestation_episodes_df$src$con
+    cat("[DEBUG] get_min_max_gestation: Extracted connection from input data frame\n")
+  }
+  
+  # Validate we have a connection for database operations
+  if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql")) && is.null(connection)) {
+    stop("get_min_max_gestation: No database connection available for database operations")
+  }
+  
   # NEW APPROACH: Keep all computation in the database
   # The input from gestation_episodes is already a materialized temp table
   # We should NOT try to collect 466K rows - just compute aggregates in DB
