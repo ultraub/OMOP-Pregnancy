@@ -875,6 +875,31 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   # Pre-compute SQL expression for date difference
   date_diff_sql <- sql_translate("DATEDIFF(day, prev_date, visit_date)", connection)
   
+  # Pre-compute CASE WHEN expressions to avoid IIF function issues in Spark
+  # For new_diff: if (date_diff < min_days & week_diff <= 0) then 1 else week_diff
+  new_diff_sql <- sql_case_when(
+    paste0("date_diff < ", min_days, " AND week_diff <= 0"),
+    "1",
+    "week_diff",
+    connection
+  )
+  
+  # For new_diff2: if (date_diff >= day_diff & week_diff > 0) then -1 else new_diff
+  new_diff2_sql <- sql_case_when(
+    "date_diff >= day_diff AND week_diff > 0",
+    "-1",
+    "new_diff",
+    connection
+  )
+  
+  # For episode indicator: if (new_diff2 <= 0 or row_index = 1) then 1 else 0
+  episode_indicator_sql <- sql_case_when(
+    "new_diff2 <= 0 OR row_index = 1",
+    "1",
+    "0",
+    connection
+  )
+  
   # filter out any empty visit dates
   df <- gestation_visits_df %>%
     filter(
@@ -909,19 +934,23 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       # new_diff = 1 if the next obs has lower gest week and the difference in dates
       # is smaller than the minimum number of days between pregnancies
       # week_diff is negative if at a lower gestational age now
-      new_diff = if_else(date_diff < min_days & week_diff <= 0, 1, week_diff),
+      # Use pre-computed CASE WHEN instead of if_else to avoid IIF function in Spark
+      new_diff = !!new_diff_sql,
       # check if any positive number in week_diff column (so at a higher gestational age next time)
       # has a date_diff >= day_diff
       # that means that the difference in time is greater than the difference
       # in gestational age + buffer
       # may correspond to new pregnancy episode, if so change to -1 (negative number)
-      new_diff2 = if_else(date_diff >= day_diff & week_diff > 0, -1, new_diff),
+      # Use pre-computed CASE WHEN instead of if_else to avoid IIF function in Spark
+      new_diff2 = !!new_diff2_sql,
       # create new columns, index and episode; any zero or negative number in newdiff2 column indicates a new episode
       row_index = row_number(),
       # count as an episodes if first row or
       # difference in gest age is negative and date_diff large enough for it to be a new pregnancy or
       # difference in gest age is positive but that difference is larger than the difference in dates
-      episode = as.integer(cumsum(ifelse(new_diff2 <= 0 | row_index == 1, 1, 0))),
+      # Use pre-computed CASE WHEN instead of ifelse to avoid IIF function in Spark
+      episode_indicator = !!episode_indicator_sql,
+      episode = as.integer(cumsum(episode_indicator)),
       episode_chr = as.character(episode) # for grouping
     ) %>%
     ungroup()

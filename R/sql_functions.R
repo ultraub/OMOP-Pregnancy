@@ -404,6 +404,31 @@ sql_translate <- function(sql_string, connection = NULL) {
   return(dbplyr::sql(sql_string))
 }
 
+#' Create SQL CASE WHEN expression that works across all databases
+#'
+#' This function creates a CASE WHEN expression that is compatible with all
+#' database platforms including Spark/Databricks. It avoids the IIF function
+#' which is SQL Server specific and not supported by Spark.
+#'
+#' @param condition SQL condition expression (as string or sql object)
+#' @param true_value Value when condition is true
+#' @param false_value Value when condition is false
+#' @param connection Optional database connection for dialect detection
+#'
+#' @return A dbplyr SQL expression for CASE WHEN
+#' @export
+sql_case_when <- function(condition, true_value, false_value, connection = NULL) {
+  # Convert inputs to character for building SQL
+  condition_str <- if (inherits(condition, "sql")) as.character(condition) else condition
+  true_str <- if (inherits(true_value, "sql")) as.character(true_value) else as.character(true_value)
+  false_str <- if (inherits(false_value, "sql")) as.character(false_value) else as.character(false_value)
+  
+  # Build CASE WHEN expression - this syntax works in all databases
+  sql_string <- paste0("CASE WHEN ", condition_str, " THEN ", true_str, " ELSE ", false_str, " END")
+  
+  return(dbplyr::sql(sql_string))
+}
+
 #' Create SQL expressions with automatic dialect detection
 #'
 #' Wrapper function that automatically detects the database dialect from
