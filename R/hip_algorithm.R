@@ -941,6 +941,80 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
     connection
   )
   
+  # SQL Server-specific path: collect simple data and compute locally
+  # This avoids SQL Server's limitations with complex window functions
+  dbms <- tryCatch({
+    attr(connection, "dbms", exact = TRUE)
+  }, error = function(e) NULL)
+  
+  # Check if we're on SQL Server and the data size is manageable
+  if (!is.null(dbms) && dbms == "sql server" && visit_count < 100000) {
+    cat("[DEBUG] gestation_episodes: SQL Server detected, using local computation to avoid window function issues\n")
+    
+    # First filter and collect the simple data
+    df_local <- gestation_visits_df %>%
+      filter(
+        !is.na(visit_date),
+        gest_value > 0 & gest_value <= max_gestational_weeks
+      ) %>%
+      collect()  # Collect the simple data locally
+    
+    if (!is.null(df_local) && nrow(df_local) > 0) {
+      cat("[DEBUG] gestation_episodes: Collected", nrow(df_local), "rows locally for processing\n")
+      
+      # Do all computations locally in R
+      df_processed <- df_local %>%
+        # keep max gest_value if two or more gestational records share same date
+        group_by(person_id, visit_date) %>%
+        mutate(gest_week = floor(max(gest_value))) %>%  # Use floor to match SQL behavior
+        ungroup() %>%
+        # filter out rows that are not the max gest_value at visit_date
+        filter(floor(gest_value) == gest_week) %>%
+        # add column for gestation period in days
+        mutate(gest_day = gest_week * 7) %>%
+        group_by(person_id) %>%
+        arrange(visit_date, .by_group = TRUE) %>%
+        mutate(
+          # get previous gestation week
+          prev_week = lag(gest_week, 1),
+          # get previous date
+          prev_date = lag(visit_date, 1),
+          # calculate difference between gestation weeks
+          week_diff = gest_week - prev_week,
+          # calculate number of days between gestation weeks with buffer
+          day_diff = week_diff * 7 + buffer_days,
+          # get difference in days between visit date and previous date
+          date_diff = as.numeric(visit_date - prev_date),
+          # Apply episode logic using R's ifelse
+          new_diff = ifelse(date_diff < min_days & week_diff <= 0, 1, week_diff),
+          new_diff2 = ifelse(date_diff >= day_diff & week_diff > 0, -1, new_diff),
+          # create new columns, index and episode
+          row_index = row_number(),
+          # count as an episode if first row or conditions met
+          episode_indicator = (row_index == 1) | (new_diff2 <= 0),
+          episode = cumsum(as.integer(episode_indicator))
+        ) %>%
+        ungroup() %>%
+        # Select only the required columns and ensure proper types
+        select(person_id, visit_date, gest_week, episode) %>%
+        mutate(
+          gest_week = as.integer(gest_week),
+          episode = as.integer(episode)
+        )
+      
+      cat("[DEBUG] gestation_episodes: Processed", nrow(df_processed), "episodes locally\n")
+      
+      # Upload back as temp table
+      result <- create_temp_table(df_processed, connection = connection)
+      
+      cat("[DEBUG] gestation_episodes: Uploaded result as temp table\n")
+      
+      # Return early, skipping all the SQL-based processing
+      return(result)
+    }
+  }
+  
+  # Standard SQL-based path for non-SQL Server databases
   # filter out any empty visit dates
   df <- gestation_visits_df %>%
     filter(
