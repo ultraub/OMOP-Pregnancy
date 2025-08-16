@@ -245,17 +245,20 @@ final_merged_episodes <- function(HIP_episodes_local_df, PPS_episodes_with_outco
     mutate(algo1_id = paste(person_id, episode, "1", sep = "_"))
   
   algo2 <- PPS_episodes_with_outcomes_df %>%
-    mutate(algo2_id = paste(person_id, person_episode_number, "2", sep = "_"))
+    mutate(
+      algo2_id = paste(person_id, person_episode_number, "2", sep = "_"),
+      # Add HIP-specific columns to PPS episodes for SQL Server compatibility
+      # This ensures both sides of the join have the same columns
+      pregnancy_start = NA_real_,
+      pregnancy_end = NA_real_,
+      first_gest_date = NA_real_,
+      category = NA_character_  # HIP outcome category
+    )
   
   all_episodes <- algo1_pregnancy %>%
     full_join(algo2, 
       by = "person_id",
       suffix = c(".x", ".y")
-    ) %>%
-    # Ensure pregnancy_start exists for all rows (NA for PPS-only episodes)
-    # This is critical for SQL Server compatibility
-    mutate(
-      pregnancy_start = if_else(is.na(algo1_id), NA_real_, pregnancy_start)
     ) %>%
     filter(
       # Keep all rows where episodes overlap OR where one algorithm has no match
