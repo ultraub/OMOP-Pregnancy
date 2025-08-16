@@ -117,7 +117,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   like_pattern_sql <- if (!is.null(connection)) {
     sql_translate("LOWER(concept_name) LIKE '%gestation period%'", connection)
   } else {
-    sql("LOWER(concept_name) LIKE '%gestation period%'")
+    dbplyr::sql("LOWER(concept_name) LIKE '%gestation period%'")
   }
   
   concepts_to_search <- concept_tbl %>%
