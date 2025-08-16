@@ -527,6 +527,36 @@ date_diff <- function(date1, date2, unit, connection = NULL) {
   return(sql_date_diff(date1, date2, units, connection))
 }
 
+#' Execute query using DatabaseConnector for better Spark support
+#'
+#' Helper function that uses DatabaseConnector::querySql instead of DBI::dbGetQuery
+#' for better compatibility with Spark/Databricks connections.
+#'
+#' @param connection Database connection
+#' @param sql SQL query string
+#'
+#' @return Query results as data frame
+dc_query <- function(connection, sql) {
+  # Ensure SQL is a character string
+  sql_string <- as.character(sql)
+  
+  # Use DatabaseConnector for better Spark support
+  tryCatch({
+    result <- DatabaseConnector::querySql(connection, sql_string)
+    # DatabaseConnector returns uppercase column names, convert to lowercase
+    names(result) <- tolower(names(result))
+    return(result)
+  }, error = function(e) {
+    # Fallback to DBI if DatabaseConnector fails (for non-OHDSI connections)
+    tryCatch({
+      return(DBI::dbGetQuery(connection, sql_string))
+    }, error = function(e2) {
+      warning("Query failed with both DatabaseConnector and DBI: ", e2$message)
+      return(NULL)
+    })
+  })
+}
+
 #' Safe count operation for Spark/Databricks
 #'
 #' Gets row count from a lazy query without collecting all data.
@@ -549,49 +579,68 @@ safe_count <- function(lazy_query) {
   # Get the DBMS type
   dbms <- attr(connection, "dbms", exact = TRUE)
   
-  # For Spark/Databricks, use multiple fallback strategies
+  # For Spark/Databricks, use multiple fallback strategies with DatabaseConnector
   if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
-    # Strategy 1: Try standard dplyr count
+    # Strategy 1: Try direct SQL COUNT using DatabaseConnector
     tryCatch({
-      result <- lazy_query %>% 
+      count_query <- lazy_query %>% 
         summarise(n = n()) %>%
-        collect()
-      return(as.numeric(result$n))
-    }, error = function(e1) {
-      # Strategy 2: Try direct SQL COUNT
-      tryCatch({
-        count_query <- lazy_query %>% 
-          summarise(n = n()) %>%
-          dbplyr::sql_render()
-        
-        result <- DBI::dbGetQuery(connection, as.character(count_query))
+        dbplyr::sql_render()
+      
+      result <- dc_query(connection, as.character(count_query))
+      if (!is.null(result) && nrow(result) > 0) {
         return(as.numeric(result[[1]]))
-      }, error = function(e2) {
-        # Strategy 3: Try COUNT(*) on the rendered table
-        tryCatch({
-          # Get the table SQL
-          table_sql <- dbplyr::sql_render(lazy_query)
-          # Wrap in COUNT(*)
-          count_sql <- paste0("SELECT COUNT(*) as n FROM (", table_sql, ") AS count_query")
-          result <- DBI::dbGetQuery(connection, count_sql)
-          return(as.numeric(result[[1]]))
-        }, error = function(e3) {
-          # Last resort: return NA with detailed warning
-          warning("Could not get count from Databricks. Errors:\n",
-                  "  Method 1: ", e1$message, "\n",
-                  "  Method 2: ", e2$message, "\n", 
-                  "  Method 3: ", e3$message)
-          return(NA_real_)
-        })
-      })
+      }
+    }, error = function(e1) {
+      # Continue to next strategy
     })
-  } else {
-    # For non-Spark, use standard approach with error handling
+    
+    # Strategy 2: Try COUNT(*) on the rendered table with DatabaseConnector
     tryCatch({
-      result <- lazy_query %>% 
+      # Get the table SQL
+      table_sql <- dbplyr::sql_render(lazy_query)
+      # Wrap in COUNT(*)
+      count_sql <- paste0("SELECT COUNT(*) as n FROM (", as.character(table_sql), ") AS count_query")
+      result <- dc_query(connection, count_sql)
+      if (!is.null(result) && nrow(result) > 0) {
+        return(as.numeric(result[[1]]))
+      }
+    }, error = function(e2) {
+      # Continue to next strategy
+    })
+    
+    # Strategy 3: Try simpler COUNT(*) without subquery
+    tryCatch({
+      # If lazy_query is a simple table reference, try direct COUNT
+      if (inherits(lazy_query, "tbl_sql")) {
+        table_name <- as.character(lazy_query$lazy_query$x)
+        count_sql <- paste0("SELECT COUNT(*) FROM ", table_name)
+        result <- dc_query(connection, count_sql)
+        if (!is.null(result) && nrow(result) > 0) {
+          return(as.numeric(result[[1]]))
+        }
+      }
+    }, error = function(e3) {
+      # Continue to fallback
+    })
+    
+    # Last resort: return NA with warning
+    warning("Could not get count from Databricks after trying all strategies")
+    return(NA_real_)
+  } else {
+    # For non-Spark, use standard approach with DatabaseConnector fallback
+    tryCatch({
+      count_query <- lazy_query %>% 
         summarise(n = n()) %>%
-        collect()
-      return(as.numeric(result$n))
+        dbplyr::sql_render()
+      
+      result <- dc_query(connection, as.character(count_query))
+      if (!is.null(result) && nrow(result) > 0) {
+        return(as.numeric(result[[1]]))
+      } else {
+        warning("Could not get count: query returned no results")
+        return(NA_real_)
+      }
     }, error = function(e) {
       warning("Could not get count: ", e$message)
       return(NA_real_)
@@ -647,20 +696,32 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
         # This can help with memory issues by staging the data
         result <- tryCatch({
           temp_result <- compute_table(lazy_query, connection = connection)
-          # Just collect from the computed table directly
-          # Use base collect() to avoid any custom methods that might access connection fields
-          result <- DBI::dbGetQuery(connection, dbplyr::sql_render(temp_result))
-          return(result)
+          # Use DatabaseConnector for better Spark support
+          sql_query <- dbplyr::sql_render(temp_result)
+          result <- dc_query(connection, as.character(sql_query))
+          if (!is.null(result)) {
+            return(result)
+          } else {
+            stop("Query returned NULL")
+          }
         }, error = function(e) {
-          # If temp table approach fails, try direct SQL query
-          message("Temp table collection failed, trying SQL query...")
+          # If temp table approach fails, try direct SQL query with DatabaseConnector
+          message("Temp table collection failed, trying direct SQL query...")
           sql_query <- dbplyr::sql_render(lazy_query)
-          return(DBI::dbGetQuery(connection, as.character(sql_query)))
+          result <- dc_query(connection, as.character(sql_query))
+          if (!is.null(result)) {
+            return(result)
+          } else {
+            stop("Direct query also returned NULL")
+          }
         })
       } else {
         # Strategy 3: Try direct SQL query first for Spark
         sql_query <- dbplyr::sql_render(lazy_query)
-        result <- DBI::dbGetQuery(connection, as.character(sql_query))
+        result <- dc_query(connection, as.character(sql_query))
+        if (is.null(result)) {
+          stop("Query returned NULL")
+        }
       }
       
       return(result)
@@ -670,7 +731,7 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
       if (grepl("Arrow|arrow|MemoryUtil|ArrowNotAvailable|Failed to collect|use_cli_format|no field", e$message, ignore.case = TRUE)) {
         message("Collection failed (", substring(e$message, 1, 50), "...), trying direct SQL fallback...")
         
-        # Strategy 4: Use SQL query directly
+        # Strategy 4: Use SQL query directly with DatabaseConnector
         tryCatch({
           sql_query <- dbplyr::sql_render(lazy_query)
           
@@ -678,17 +739,21 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
           if (grepl("COUNT\\(\\*\\)|COUNT\\(1\\)", as.character(sql_query), ignore.case = TRUE)) {
             # This is likely a count query - handle specially
             result <- tryCatch({
-              DBI::dbGetQuery(connection, as.character(sql_query))
+              dc_query(connection, as.character(sql_query))
             }, error = function(e) {
               # If even simple count fails, return empty data frame with n column
               warning("Could not execute count query: ", e$message)
               data.frame(n = 0)
             })
-            return(result)
+            if (!is.null(result)) {
+              return(result)
+            }
           } else {
-            # For complex queries, try direct execution
-            result <- DBI::dbGetQuery(connection, as.character(sql_query))
-            return(result)
+            # For complex queries, try direct execution with DatabaseConnector
+            result <- dc_query(connection, as.character(sql_query))
+            if (!is.null(result)) {
+              return(result)
+            }
           }
         }, error = function(e2) {
           # Check if this is a count query
