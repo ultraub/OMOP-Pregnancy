@@ -1683,10 +1683,21 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
     connection <- add_gestation_df$src$con
   }
   
-  # Materialize in database to handle window functions
-  # Databricks and most databases support row_number() in SQL
+  # Handle window functions based on database type
   if (inherits(add_gestation_df, c("tbl_lazy", "tbl_sql"))) {
-    add_gestation_df <- compute_table(add_gestation_df, connection = connection)
+    # Get database type
+    dbms <- attr(connection, "dbms", exact = TRUE)
+    
+    if (!is.null(dbms) && dbms == "sql server") {
+      # SQL Server: collect and re-upload to avoid row_number() issues
+      cat("[DEBUG] clean_episodes: SQL Server detected, using collect/re-upload pattern\n")
+      temp_data <- add_gestation_df %>% safe_collect()
+      add_gestation_df <- create_temp_table(temp_data, connection = connection)
+    } else {
+      # Databricks and other databases: keep in database
+      cat("[DEBUG] clean_episodes: Using database-native window functions\n")
+      add_gestation_df <- compute_table(add_gestation_df, connection = connection)
+    }
   }
   
   # Clean up episodes by removing duplicate episodes and reclassifying outcome-based episodes
@@ -1800,10 +1811,21 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     connection <- clean_episodes_df$src$con
   }
   
-  # Materialize in database to handle window functions
-  # Databricks and most databases support lag() in SQL
+  # Handle window functions based on database type
   if (inherits(clean_episodes_df, c("tbl_lazy", "tbl_sql"))) {
-    clean_episodes_df <- compute_table(clean_episodes_df, connection = connection)
+    # Get database type
+    dbms <- attr(connection, "dbms", exact = TRUE)
+    
+    if (!is.null(dbms) && dbms == "sql server") {
+      # SQL Server: collect and re-upload to avoid lag() issues
+      cat("[DEBUG] remove_overlaps: SQL Server detected, using collect/re-upload pattern\n")
+      temp_data <- clean_episodes_df %>% safe_collect()
+      clean_episodes_df <- create_temp_table(temp_data, connection = connection)
+    } else {
+      # Databricks and other databases: keep in database
+      cat("[DEBUG] remove_overlaps: Using database-native window functions\n")
+      clean_episodes_df <- compute_table(clean_episodes_df, connection = connection)
+    }
   }
   
   # Identify episodes that overlap and keep only the latter episode if the previous episode is PREG.
