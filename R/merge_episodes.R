@@ -252,6 +252,11 @@ final_merged_episodes <- function(HIP_episodes_local_df, PPS_episodes_with_outco
       by = "person_id",
       suffix = c(".x", ".y")
     ) %>%
+    # Ensure pregnancy_start exists for all rows (NA for PPS-only episodes)
+    # This is critical for SQL Server compatibility
+    mutate(
+      pregnancy_start = if_else(is.na(algo1_id), NA_real_, pregnancy_start)
+    ) %>%
     filter(
       # Keep all rows where episodes overlap OR where one algorithm has no match
       is.na(pregnancy_start) | is.na(episode_min_date) |
@@ -480,20 +485,31 @@ final_merged_episode_detailed <- function(final_merged_episodes_no_duplicates_df
       )
     )
   
-  # Rename columns to match what ESD algorithm expects
-  # We explicitly select columns using any_of() to handle missing columns gracefully
-  # This matches the All of Us implementation pattern
+  # Add calculated fields first
   df <- df %>%
-    select(any_of(c(
-      "algo1_id", "algo2_id", "person_id", "pregnancy_end", "pregnancy_start",
-      "first_gest_date", "category", "episode_min_date", "episode_max_date",
-      "algo1_dup", "algo2_dup", "algo2_category", "algo2_outcome_date",
-      "merged_episode_start", "merged_episode_end", "merged_episode_length",
-      "gest_date", "gest_flag", "episode_length", "episode_number"
-    ))) %>%
     mutate(
-      # Add pregnancy_start as NA if missing (for PPS-only episodes)
-      pregnancy_start = if ("pregnancy_start" %in% names(.)) pregnancy_start else NA_real_,
+      # Add calculated fields
+      final_category = coalesce(category, algo2_category),
+      final_outcome_date = coalesce(pregnancy_end, algo2_outcome_date),
+      algorithm_source = case_when(
+        !is.na(algo1_id) & !is.na(algo2_id) ~ "Both",
+        !is.na(algo1_id) ~ "HIP",
+        !is.na(algo2_id) ~ "PPS",
+        TRUE ~ "Unknown"
+      ),
+      # ADD: Assign PPS episodes without outcomes to PREG (from original)
+      algo2_category = if_else(
+        !is.na(algo2_id) & is.na(algo2_category), "PREG", algo2_category
+      ),
+      algo2_outcome_date = if_else(
+        !is.na(algo2_id) & is.na(algo2_outcome_date),
+        episode_max_date, algo2_outcome_date
+      )
+    )
+  
+  # Rename columns to match what ESD algorithm expects
+  df <- df %>%
+    mutate(
       # These renamings match the original All of Us algorithm
       HIP_end_date = pregnancy_end,
       HIP_outcome_category = category,
