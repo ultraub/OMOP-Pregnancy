@@ -1009,12 +1009,50 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   result_cols <- colnames(result)
   cat("[DEBUG] gestation_episodes: Returning columns:", paste(result_cols, collapse=", "), "\n")
   
-  # Check if result has any rows
-  result_count <- safe_count(result)
-  if (!is.na(result_count)) {
-    cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
+  # CRITICAL FIX for SQL Server: Force materialization to break complex SQL chain
+  # This prevents dbplyr from generating invalid SQL with column references to 
+  # intermediate columns like 'day_diff' that are not in the final SELECT
+  if (inherits(result, c("tbl_lazy", "tbl_sql"))) {
+    # Extract connection before collection
+    conn <- if (!is.null(connection)) {
+      connection
+    } else if (!is.null(result$src$con)) {
+      result$src$con
+    } else {
+      NULL
+    }
+    
+    # Collect the simplified result
+    result_local <- result %>% safe_collect()
+    
+    if (!is.null(result_local) && nrow(result_local) > 0) {
+      cat("[DEBUG] gestation_episodes: Materializing", nrow(result_local), "rows to break SQL chain\n")
+      
+      # If we have a connection, re-upload as clean temp table
+      if (!is.null(conn)) {
+        result <- create_temp_table(result_local, connection = conn)
+        cat("[DEBUG] gestation_episodes: Re-uploaded as clean temp table\n")
+      } else {
+        # Just use the local data frame if no connection available
+        result <- result_local
+        cat("[DEBUG] gestation_episodes: Using local data frame (no connection available)\n")
+      }
+      
+      # Update count after materialization
+      result_count <- nrow(result_local)
+      cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
+    } else {
+      cat("[DEBUG] gestation_episodes: No data to materialize\n")
+      result_count <- 0
+    }
   } else {
-    cat("[DEBUG] gestation_episodes: Unable to determine row count\n")
+    # For local data frames, just get the count
+    result_count <- safe_count(result)
+    if (!is.na(result_count)) {
+      cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
+    } else {
+      cat("[DEBUG] gestation_episodes: Unable to determine row count\n")
+    }
   }
   
   return(result)
