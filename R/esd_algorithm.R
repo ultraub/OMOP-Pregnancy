@@ -43,6 +43,11 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     }
   }
   
+  # Materialize the dataframe to access column names
+  if (inherits(pregnant_dates, c("tbl_lazy", "tbl_sql"))) {
+    pregnant_dates <- compute_table(pregnant_dates, connection = connection)
+  }
+  
   # Check if we have any data (works for both lazy and local)
   row_count <- tryCatch({
     if (inherits(pregnant_dates, c("tbl_lazy", "tbl_sql"))) {
