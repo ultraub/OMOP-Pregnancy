@@ -123,6 +123,138 @@ records_comparison <- function(personlist, i) {
   return(FALSE)
 }
 
+#' Assign episode numbers to pregnancy concepts (database-side)
+#'
+#' @param patients_with_preg_concepts Lazy table with pregnancy concepts
+#' @param connection Database connection
+#'
+#' @return Lazy table with episode numbers assigned
+#' @export
+assign_episodes_database <- function(patients_with_preg_concepts, connection = NULL) {
+  # Extract connection if not provided
+  if (is.null(connection) && inherits(patients_with_preg_concepts, c("tbl_lazy", "tbl_sql"))) {
+    connection <- patients_with_preg_concepts$src$con
+  }
+  
+  # Use window functions to assign episodes based on temporal patterns
+  # This mirrors the logic from assign_episodes but runs in the database
+  result <- patients_with_preg_concepts %>%
+    arrange(person_id, domain_concept_start_date) %>%
+    group_by(person_id) %>%
+    mutate(
+      # Add previous and next record information for comparisons
+      prev_date = lag(domain_concept_start_date, 1),
+      prev_min_month = lag(min_month, 1),
+      prev_max_month = lag(max_month, 1),
+      
+      # Also get next record for bridge comparisons (simplified version)
+      next_date = lead(domain_concept_start_date, 1),
+      next_min_month = lead(min_month, 1),
+      next_max_month = lead(max_month, 1),
+      
+      # Time difference in months from previous record
+      delta_t = case_when(
+        is.na(prev_date) ~ 0,
+        TRUE ~ as.numeric(sql_date_diff(domain_concept_start_date, prev_date, "day", connection)) / 30
+      ),
+      
+      # Check concept agreement with previous record
+      # Max expected delta with 2 month leniency
+      max_expected_delta = case_when(
+        is.na(prev_min_month) ~ 999,
+        TRUE ~ max_month - prev_min_month + 2
+      ),
+      
+      # Min expected delta with 2 month leniency  
+      min_expected_delta = case_when(
+        is.na(prev_max_month) ~ -999,
+        TRUE ~ min_month - prev_max_month - 2
+      ),
+      
+      # Agreement check with previous record
+      agreement_prev = (delta_t >= min_expected_delta) & (delta_t <= max_expected_delta),
+      
+      # Simplified bridge check: does next record agree with previous record?
+      # This approximates the bridge logic from the original algorithm
+      bridge_delta_t = case_when(
+        is.na(prev_date) | is.na(next_date) ~ 999,
+        TRUE ~ as.numeric(sql_date_diff(next_date, prev_date, "day", connection)) / 30
+      ),
+      
+      bridge_max_delta = case_when(
+        is.na(prev_min_month) | is.na(next_max_month) ~ 999,
+        TRUE ~ next_max_month - prev_min_month + 2
+      ),
+      
+      bridge_min_delta = case_when(
+        is.na(prev_max_month) | is.na(next_min_month) ~ -999,
+        TRUE ~ next_min_month - prev_max_month - 2
+      ),
+      
+      # Bridge agreement check
+      agreement_bridge = (bridge_delta_t >= bridge_min_delta) & (bridge_delta_t <= bridge_max_delta),
+      
+      # Combined agreement (either direct or bridge)
+      agreement_t_c = agreement_prev | agreement_bridge,
+      
+      # New episode flag based on original logic:
+      # - Start new episode if no agreement and delta_t > 1 month
+      # - Start new episode if delta_t > 10 months
+      new_episode_flag = case_when(
+        is.na(prev_date) ~ 1L,  # First record is always new episode
+        delta_t > 10 ~ 1L,       # Time gap > 10 months
+        (!agreement_t_c) & (delta_t > 1) ~ 1L,  # No agreement and gap > 1 month
+        TRUE ~ 0L
+      ),
+      
+      # Cumulative sum of new_episode_flag gives episode number
+      person_episode_number = cumsum(new_episode_flag)
+    ) %>%
+    # Clean up intermediate columns
+    select(-prev_date, -prev_min_month, -prev_max_month, 
+           -next_date, -next_min_month, -next_max_month,
+           -delta_t, -max_expected_delta, -min_expected_delta, 
+           -agreement_prev, -bridge_delta_t, -bridge_max_delta, -bridge_min_delta,
+           -agreement_bridge, -agreement_t_c, -new_episode_flag) %>%
+    ungroup()
+  
+  # Now filter episodes that are > 12 months and renumber
+  # Calculate episode length and filter
+  episodes_filtered <- result %>%
+    group_by(person_id, person_episode_number) %>%
+    mutate(
+      episode_min_date = min(domain_concept_start_date),
+      episode_max_date = max(domain_concept_start_date),
+      # Episode length in months
+      episode_length_months = as.numeric(
+        sql_date_diff(episode_max_date, episode_min_date, "day", connection)
+      ) / 30
+    ) %>%
+    # Mark episodes > 12 months as invalid (set to 0)
+    mutate(
+      person_episode_number = case_when(
+        episode_length_months > 12 ~ 0L,
+        TRUE ~ person_episode_number
+      )
+    ) %>%
+    # Clean up
+    select(-episode_min_date, -episode_max_date, -episode_length_months) %>%
+    ungroup()
+  
+  # Renumber remaining valid episodes using dense_rank
+  final_result <- episodes_filtered %>%
+    filter(person_episode_number > 0) %>%
+    group_by(person_id) %>%
+    mutate(
+      # Use dense_rank to renumber episodes sequentially
+      # This ensures episodes are numbered 1, 2, 3... after filtering
+      person_episode_number = dense_rank(person_episode_number)
+    ) %>%
+    ungroup()
+  
+  return(final_result)
+}
+
 #' Assign episode numbers to pregnancy concepts
 #'
 #' @param personlist Person's concept list
@@ -298,10 +430,7 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   # record date: list of matching months, save this to a new dictionary with record dates as the keys. Where no match occurs, put NA
   #   person_dates_dict <- split(person_dates_df$list_col, person_dates_df$person_id)
   
-  # The database will handle pagination automatically
-  # Batch collection to avoid network timeouts in Databricks
-  
-  # Extract the connection and check its type for proper Databricks detection
+  # Check database type to determine processing strategy
   dbms <- if (!is.null(connection)) {
     attr(connection, "dbms", exact = TRUE)
   } else if (inherits(patients_with_preg_concepts, c("tbl_lazy", "tbl_sql"))) {
@@ -310,53 +439,30 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
     NULL
   }
   
+  # Use database-side processing for Databricks to avoid network timeouts
   if (!is.null(dbms) && dbms %in% c("spark", "databricks")) {
-    # For Databricks, collect in batches to avoid network timeouts
+    message("Using database-side episode assignment for Databricks...")
     
-    # First, get unique person IDs
-    person_ids <- patients_with_preg_concepts %>%
-      select(person_id) %>%
-      distinct() %>%
-      collect() %>%
-      pull(person_id)
+    # Process episodes entirely in the database
+    res <- patients_with_preg_concepts %>%
+      select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
+      assign_episodes_database(connection = connection)
     
-    # Process in batches of 500 persons
-    batch_size <- 500
-    person_dates_list <- list()
-    
-    message(sprintf("Processing %d persons in batches of %d...", 
-                    length(person_ids), batch_size))
-    
-    for (i in seq(1, length(person_ids), batch_size)) {
-      batch_end <- min(i + batch_size - 1, length(person_ids))
-      batch_ids <- person_ids[i:batch_end]
-      
-      message(sprintf("  Batch %d-%d of %d...", i, batch_end, length(person_ids)))
-      
-      batch_data <- patients_with_preg_concepts %>%
-        filter(person_id %in% batch_ids) %>%
-        select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
-        collect()
-      
-      person_dates_list[[length(person_dates_list) + 1]] <- batch_data
-    }
-    
-    # Combine all batches
-    person_dates_df <- bind_rows(person_dates_list) %>%
-      group_by(person_id) %>%
-      arrange(domain_concept_start_date)
+    # Compute the result as a temp table to avoid repeated computation
+    res <- compute_table(res, connection = connection)
     
   } else {
     # For SQL Server and other databases, use standard collection
+    # This works well for SQL Server as it has better data transfer performance
     person_dates_df <- patients_with_preg_concepts %>%
       select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
       collect() %>%
       group_by(person_id) %>%
       arrange(domain_concept_start_date)
+    
+    res <- person_dates_df %>%
+      group_modify(assign_episodes)
   }
-  
-  res <- person_dates_df %>%
-    group_modify(assign_episodes)
   
   return(res)
 }

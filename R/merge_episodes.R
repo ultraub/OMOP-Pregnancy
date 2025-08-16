@@ -494,7 +494,10 @@ final_merged_episode_detailed <- function(final_merged_episodes_no_duplicates_df
       recorded_episode_end = coalesce(merged_episode_end,
                                       pmax(episode_max_date, pregnancy_end, na.rm = TRUE)),
       recorded_episode_length = coalesce(merged_episode_length,
-                                         as.numeric(difftime(recorded_episode_end, recorded_episode_start, units = "days")) / 30.25)
+                                         as.numeric(difftime(recorded_episode_end, recorded_episode_start, units = "days")) / 30.25),
+      # CRITICAL: Ensure pregnancy_start is preserved for ESD algorithm
+      # Use coalesce to handle cases where it might be NULL in SQL
+      pregnancy_start = coalesce(pregnancy_start, NA_Date_)
     )
   
   # Add flags marking if episode was identified by either algorithm
