@@ -1176,73 +1176,14 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
     cat("[ERROR] get_min_max_gestation: Available columns are:", paste(input_cols, collapse=", "), "\n")
   }
   
-  # SMART FIX: Only collect and re-upload if necessary
+  # NEW APPROACH: Keep all computation in the database
+  # The input from gestation_episodes is already a materialized temp table
+  # We should NOT try to collect 466K rows - just compute aggregates in DB
   if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
-    # Check if this is already a computed temp table
-    # temp tables typically have names like "temp_xxxxx" or are from compute_table
-    query_str <- tryCatch({
-      as.character(gestation_episodes_df$lazy_query$x)
-    }, error = function(e) "")
-    
-    is_temp_table <- any(grepl("temp_|#temp", query_str, ignore.case = TRUE))
-    
-    # Also check if this came from gestation_episodes which already materialized
-    # Use any() to ensure we get a single logical value, not a vector
-    is_from_gestation_episodes <- any(grepl("gestation_episodes: Successfully materialized", 
-                                            capture.output(print(gestation_episodes_df)), 
-                                            ignore.case = TRUE))
-    
-    if (is_temp_table || is_from_gestation_episodes) {
-      cat("[DEBUG] get_min_max_gestation: Input is already materialized, skipping collection\n")
-      # Data is already in a temp table, no need to collect and re-upload
-    } else {
-      # Only collect if we have a complex lazy query that needs breaking
-      cat("[DEBUG] get_min_max_gestation: Complex query detected, attempting collection\n")
-      
-      # Get connection first
-      connection <- gestation_episodes_df$src$con
-      
-      # Try arrow_safe_collect for large datasets
-      if (exists("arrow_safe_collect")) {
-        temp_data <- tryCatch({
-          arrow_safe_collect(gestation_episodes_df, 
-                           threshold = 100000, 
-                           connection = connection)
-        }, error = function(e) {
-          cat("[DEBUG] get_min_max_gestation: arrow_safe_collect failed:", e$message, "\n")
-          # Fall back to regular safe_collect
-          gestation_episodes_df %>% safe_collect()
-        })
-      } else {
-        temp_data <- gestation_episodes_df %>% safe_collect()
-      }
-      
-      # Check if collection returned empty or NULL
-      if (is.null(temp_data) || nrow(temp_data) == 0) {
-        cat("[DEBUG] get_min_max_gestation: Collection returned empty data (0 rows)\n")
-        
-        # Create empty data frame with expected columns
-        empty_result <- data.frame(
-          person_id = integer(),
-          episode = integer(),
-          max_gest_week = integer(),
-          max_gest_date = as.Date(character()),
-          min_gest_week = integer(),
-          min_gest_date = as.Date(character()),
-          min_gest_week_2 = integer(),
-          min_gest_date_2 = as.Date(character()),
-          stringsAsFactors = FALSE
-        )
-        
-        return(empty_result)
-      }
-      
-      cat("[DEBUG] get_min_max_gestation: Collected", nrow(temp_data), "rows\n")
-      
-      # Re-upload as a clean temp table only if we have data
-      gestation_episodes_df <- create_temp_table(temp_data, connection = connection)
-      cat("[DEBUG] get_min_max_gestation: Re-uploaded as clean temp table\n")
-    }
+    cat("[DEBUG] get_min_max_gestation: Working with database table - computing aggregates in DB\n")
+    # No need to check if it's a temp table or collect data
+    # The previous function already materialized it
+    # We'll compute all aggregates directly in the database
   }
   
   # Check if there are any gestation episodes
@@ -1299,13 +1240,17 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
   
   # identify first visit for each pregnancy episode
   # and get max gestation week at first visit date
-  # Note: gestation_episodes_df is now a clean temp table after collect/re-upload
+  # Work directly with the materialized temp table from gestation_episodes
   
-  # Get min visit date per episode
+  # Get min visit date per episode - this aggregation happens in DB
+  cat("[DEBUG] get_min_max_gestation: Computing min visits per episode in database\n")
   min_visits <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
     summarise(min_visit_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
     compute_table(connection = connection)
+  
+  min_visits_count <- safe_count(min_visits)
+  cat("[DEBUG] get_min_max_gestation: Computed", min_visits_count, "unique person-episode combinations\n")
   
   # Then join back to get gest_week at that date
   new_first_df <- gestation_episodes_df %>%
@@ -1340,7 +1285,8 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
   
   # get last occurrence of min gestation week
   second_min_df <- temp_min_df %>%
-    group_by(person_id, episode, gest_week) %>% # = min_gest_week
+    mutate(min_gest_week_2 = gest_week) %>%  # Rename for clarity in output
+    group_by(person_id, episode, min_gest_week_2) %>%
     summarize(min_gest_date_2 = max(visit_date, na.rm = TRUE), .groups = "drop") %>%
     compute_table(connection = connection)
   
@@ -1392,11 +1338,19 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
   ############ Join tables ############
   
   # join first and end tables (all already computed)
+  cat("[DEBUG] get_min_max_gestation: Joining all aggregated results in database\n")
   all_df <- new_first_df %>%
     inner_join(new_end_df, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     inner_join(new_min_df, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     inner_join(second_min_df, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     inner_join(new_max_df, by = c("person_id", "episode"), suffix = c(".x", ".y"))
+  
+  # Materialize the final joined result as a temp table
+  cat("[DEBUG] get_min_max_gestation: Materializing final aggregated result\n")
+  all_df <- compute_table(all_df, connection = connection)
+  
+  final_count <- safe_count(all_df)
+  cat("[DEBUG] get_min_max_gestation: Returning", final_count, "aggregated episode records\n")
   
   return(all_df)
 }
