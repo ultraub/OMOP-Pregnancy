@@ -447,14 +447,181 @@ final_merged_episodes_no_duplicates <- function(final_merged_episodes_df) {
   keepB <- best_bothB %>%
     filter(!(algo1_dup == 1 & !is.na(algo2_id)) & !(algo2_dup == 1 & !is.na(algo1_id)))
   
-  # Continue with remaining duplicate resolution logic...
-  # (The full implementation continues but follows the same pattern)
+  # Continue with remaining duplicate resolution logic
+  # Round 3
+  best_algo1C <- best_bothB %>%
+    filter(algo1_dup == 1 & !is.na(algo2_id)) %>%
+    mutate(
+      date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
+      date_diff = ifelse(is.na(algo2_category), 10000, date_diff),
+      new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
+      new_date_diff = ifelse(is.na(algo2_category) | new_date_diff > 310, -1, date_diff)
+    ) %>%
+    group_by(algo1_id) %>%
+    slice_min(date_diff, n = 1, with_ties = TRUE) %>%
+    slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  best_algo2C <- best_bothB %>%
+    filter(algo2_dup == 1 & !is.na(algo1_id)) %>%
+    mutate(
+      date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
+      new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
+      new_date_diff = ifelse(new_date_diff > 310, -1, date_diff)
+    ) %>%
+    group_by(algo2_id) %>%
+    slice_min(date_diff, n = 1, with_ties = TRUE) %>%
+    slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  best_bothC <- bind_rows(
+    best_algo1C,
+    best_algo2C
+  ) %>%
+    select(-contains("date_diff"), -contains("dup")) %>%
+    distinct() %>%
+    group_by(algo1_id) %>%
+    mutate(
+      algo1_dup = if_else(is.na(algo1_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup() %>%
+    group_by(algo2_id) %>%
+    mutate(
+      algo2_dup = if_else(is.na(algo2_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup()
+  
+  keepC <- best_bothC %>%
+    filter(!(algo1_dup == 1 & !is.na(algo2_id)) & !(algo2_dup == 1 & !is.na(algo1_id)))
+  
+  # Round 4
+  best_algo1D <- best_bothC %>%
+    filter(algo1_dup == 1 & !is.na(algo2_id)) %>%
+    mutate(
+      date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
+      date_diff = ifelse(is.na(algo2_category), 10000, date_diff),
+      new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
+      new_date_diff = ifelse(is.na(algo2_category) | new_date_diff > 310, -1, date_diff)
+    ) %>%
+    group_by(algo1_id) %>%
+    slice_min(date_diff, n = 1, with_ties = TRUE) %>%
+    slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  best_algo2D <- best_bothC %>%
+    filter(algo2_dup == 1 & !is.na(algo1_id)) %>%
+    mutate(
+      date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
+      new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
+      new_date_diff = ifelse(new_date_diff > 310, -1, date_diff)
+    ) %>%
+    group_by(algo2_id) %>%
+    slice_min(date_diff, n = 1, with_ties = TRUE) %>%
+    slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  best_bothD <- bind_rows(
+    best_algo1D,
+    best_algo2D
+  ) %>%
+    select(-contains("date_diff"), -contains("dup")) %>%
+    distinct() %>%
+    group_by(algo1_id) %>%
+    mutate(
+      algo1_dup = if_else(is.na(algo1_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup() %>%
+    group_by(algo2_id) %>%
+    mutate(
+      algo2_dup = if_else(is.na(algo2_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup()
+  
+  keepD <- best_bothD %>%
+    filter(!(algo1_dup == 1 & !is.na(algo2_id)) & !(algo2_dup == 1 & !is.na(algo1_id)))
+  
+  # Round 5
+  best_algo1E <- best_bothD %>%
+    filter(algo1_dup == 1 & !is.na(algo2_id)) %>%
+    mutate(
+      date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
+      date_diff = ifelse(is.na(algo2_category), 10000, date_diff),
+      new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
+      new_date_diff = ifelse(is.na(algo2_category) | new_date_diff > 310, -1, date_diff)
+    ) %>%
+    group_by(algo1_id) %>%
+    slice_min(date_diff, n = 1, with_ties = TRUE) %>%
+    slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  best_algo2E <- best_bothD %>%
+    filter(algo2_dup == 1 & !is.na(algo1_id)) %>%
+    mutate(
+      date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
+      new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
+      new_date_diff = ifelse(new_date_diff > 310, -1, date_diff)
+    ) %>%
+    group_by(algo2_id) %>%
+    slice_min(date_diff, n = 1, with_ties = TRUE) %>%
+    slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
+    ungroup()
+  
+  best_bothE <- bind_rows(
+    best_algo1E,
+    best_algo2E
+  ) %>%
+    select(-contains("date_diff"), -contains("dup")) %>%
+    distinct() %>%
+    group_by(algo1_id) %>%
+    mutate(
+      algo1_dup = if_else(is.na(algo1_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup() %>%
+    group_by(algo2_id) %>%
+    mutate(
+      algo2_dup = if_else(is.na(algo2_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup()
+  
+  keepE <- best_bothE %>%
+    filter(!(algo1_dup == 1 & !is.na(algo2_id)) & !(algo2_dup == 1 & !is.na(algo1_id)))
   
   # Combine all kept episodes
-  all_kept <- bind_rows(no_dup_df, keepA, keepB) %>%
-    distinct()
+  all_rows <- bind_rows(no_dup_df, keepA, keepB, keepC, keepD, keepE) %>%
+    distinct() %>%
+    group_by(algo1_id) %>%
+    mutate(
+      algo1_dup = if_else(is.na(algo1_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup() %>%
+    group_by(algo2_id) %>%
+    mutate(
+      algo2_dup = if_else(is.na(algo2_id)[1], NA, as.integer(n() > 1))
+    ) %>%
+    ungroup()
   
-  return(all_kept)
+  # Recalculate merged dates, episode number, and episode length
+  # This is critical - it ensures pregnancy_start is preserved
+  final_df <- all_rows %>%
+    select(any_of(c(
+      "algo1_id", "algo2_id", "person_id", "pregnancy_end", "pregnancy_start",
+      "first_gest_date", "category", "episode_min_date", "episode_max_date",
+      "algo1_dup", "algo2_dup", "algo2_category", "algo2_outcome_date",
+      "episode_max_date_plus_two_months"
+    ))) %>%
+    mutate(
+      merged_episode_start = pmin(first_gest_date, episode_min_date, pregnancy_end, na.rm = TRUE),
+      merged_episode_end = pmax(episode_max_date, pregnancy_end, na.rm = TRUE)
+    ) %>%
+    group_by(person_id) %>%
+    arrange(merged_episode_start) %>%
+    mutate(
+      episode_num = row_number(),
+      merged_episode_length = as.numeric(difftime(merged_episode_end, merged_episode_start, units = "days")) / 30.25
+    ) %>%
+    ungroup()
+  
+  return(final_df)
 }
 
 #' Add demographic details to merged episodes
