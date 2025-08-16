@@ -587,31 +587,48 @@ get_spark_table_name <- function(table_ref) {
       # This might be a complex SQL object
       table_sql <- as.character(table_ref$lazy_query$x)
       
-      # If it's a simple table name (no SELECT), return it
-      if (!grepl("SELECT", table_sql, ignore.case = TRUE)) {
-        return(table_sql)
+      # Handle case where as.character returns a vector (common in Databricks)
+      if (length(table_sql) > 1) {
+        # Collapse into a single string
+        table_sql <- paste(table_sql, collapse = " ")
       }
       
-      # Try to extract table name from FROM clause
-      from_match <- regexpr("FROM\\s+([^\\s\\(]+)", table_sql, ignore.case = TRUE, perl = TRUE)
-      if (from_match > 0) {
-        from_text <- regmatches(table_sql, from_match)
-        table_name <- gsub("^FROM\\s+", "", from_text, ignore.case = TRUE)
-        return(table_name)
+      # Ensure we have a non-empty string
+      if (length(table_sql) == 1 && nchar(table_sql) > 0) {
+        # If it's a simple table name (no SELECT), return it
+        if (!grepl("SELECT", table_sql, ignore.case = TRUE)) {
+          return(table_sql)
+        }
+        
+        # Try to extract table name from FROM clause
+        from_match <- regexpr("FROM\\s+([^\\s\\(]+)", table_sql, ignore.case = TRUE, perl = TRUE)
+        if (from_match > 0) {
+          from_text <- regmatches(table_sql, from_match)
+          table_name <- gsub("^FROM\\s+", "", from_text, ignore.case = TRUE)
+          return(table_name)
+        }
       }
     }
     
     # Method 4: Try sql_render and parse
     tryCatch({
       sql_text <- as.character(dbplyr::sql_render(table_ref))
+      
+      # Handle case where sql_render returns a vector (can happen in Databricks)
+      if (length(sql_text) > 1) {
+        sql_text <- paste(sql_text, collapse = " ")
+      }
+      
       # Look for the actual table name in the SQL
       # Pattern: FROM catalog.schema.table or FROM table
-      matches <- regmatches(sql_text, 
-                          gregexpr("FROM\\s+`?([^`\\s\\(]+\\.?[^`\\s\\(]+\\.?[^`\\s\\(]+)`?", 
-                                  sql_text, ignore.case = TRUE, perl = TRUE))
-      if (length(matches[[1]]) > 0) {
-        table_name <- gsub("^FROM\\s+`?|`?$", "", matches[[1]][1], ignore.case = TRUE)
-        return(table_name)
+      if (length(sql_text) == 1 && nchar(sql_text) > 0) {
+        matches <- regmatches(sql_text, 
+                            gregexpr("FROM\\s+`?([^`\\s\\(]+\\.?[^`\\s\\(]+\\.?[^`\\s\\(]+)`?", 
+                                    sql_text, ignore.case = TRUE, perl = TRUE))
+        if (length(matches[[1]]) > 0) {
+          table_name <- gsub("^FROM\\s+`?|`?$", "", matches[[1]][1], ignore.case = TRUE)
+          return(table_name)
+        }
       }
     }, error = function(e) {
       # Continue to next method
