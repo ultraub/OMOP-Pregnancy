@@ -6,10 +6,12 @@
 # CRITICAL: Set JVM parameters BEFORE loading any packages
 # This configures the JVM for Apache Arrow memory management
 options(java.parameters = c(
-  "-Xmx4g",                                         # Heap memory
-  "-XX:MaxDirectMemorySize=2g",                      # Direct memory for Arrow
+  "-Xmx8g",                                          # Increased heap for 466K+ rows
+  "-XX:MaxDirectMemorySize=4g",                      # More direct memory for Arrow
+  "--add-opens=java.base/java.nio=ALL-UNNAMED",      # Critical: Allow Arrow nio access
   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",    # Java 17 module access
-  "-Dio.netty.tryReflectionSetAccessible=true"      # Netty reflection for Arrow
+  "-Dio.netty.tryReflectionSetAccessible=true",      # Netty reflection for Arrow
+  "-Dio.netty.allocator.type=unpooled"              # Avoid pooled memory issues
 ))
 
 # Initialize rJava with the configured JVM settings
@@ -41,14 +43,17 @@ Sys.setenv(JAVA_HOME="C:/Program Files/Microsoft/jdk-17.0.11.9-hotspot")
 # Download JDBC driver at: https://www.databricks.com/spark/jdbc-drivers-download
 pathToDriver <- "C:/Program Files/DatabricksJDBC42-2.6.38.1068"
 
-# Create JDBC connection URL with Arrow optimization disabled
-# This helps avoid Arrow memory initialization issues
+# Set environment variable to track Arrow status
+Sys.setenv(DATABRICKS_ENABLE_ARROW = "1")
+
+# Create JDBC connection URL with Arrow optimization ENABLED
+# With proper JVM configuration, Arrow provides 3x performance for large datasets
 jdbc_url <- paste0(
   "jdbc:databricks://adb-4068548029743470.10.azuredatabricks.net:443;",
   "httpPath=/sql/1.0/warehouses/ba264cbc36eb86d3;",
-  "UseNativeQuery=0;",     # Disable native query optimization
-  "EnableArrow=0;",         # Disable Arrow columnar transfer
-  "LowLatency=0"           # Disable low latency mode that uses Arrow
+  "UseNativeQuery=0;",     # Disable native query optimization (keep this)
+  "EnableArrow=1;",         # ENABLE Arrow for efficient columnar transfer
+  "LowLatency=0"           # Keep low latency mode disabled for stability
 )
 
 # Create connection details using the optimized JDBC URL

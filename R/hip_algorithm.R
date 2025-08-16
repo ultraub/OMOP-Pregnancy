@@ -1084,44 +1084,72 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
     cat("[ERROR] get_min_max_gestation: Available columns are:", paste(input_cols, collapse=", "), "\n")
   }
   
-  # CRITICAL FIX: Force collection and re-upload to avoid window function issues
-  # This breaks the lazy query chain that contains problematic window functions
+  # SMART FIX: Only collect and re-upload if necessary
   if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
-    cat("[DEBUG] get_min_max_gestation: Collecting and re-uploading to break query chain\n")
-    temp_data <- gestation_episodes_df %>% safe_collect()
+    # Check if this is already a computed temp table
+    # temp tables typically have names like "temp_xxxxx" or are from compute_table
+    query_str <- tryCatch({
+      as.character(gestation_episodes_df$lazy_query$x)
+    }, error = function(e) "")
     
-    # Check if collection returned empty or NULL
-    if (is.null(temp_data) || nrow(temp_data) == 0) {
-      cat("[DEBUG] get_min_max_gestation: Collection returned empty data (0 rows)\n")
-      # Return empty result with correct structure instead of trying to re-upload
-      # Get connection for creating empty result
+    is_temp_table <- grepl("temp_|#temp", query_str, ignore.case = TRUE)
+    
+    # Also check if this came from gestation_episodes which already materialized
+    is_from_gestation_episodes <- grepl("gestation_episodes: Successfully materialized", 
+                                       capture.output(print(gestation_episodes_df)), 
+                                       ignore.case = TRUE)
+    
+    if (is_temp_table || is_from_gestation_episodes) {
+      cat("[DEBUG] get_min_max_gestation: Input is already materialized, skipping collection\n")
+      # Data is already in a temp table, no need to collect and re-upload
+    } else {
+      # Only collect if we have a complex lazy query that needs breaking
+      cat("[DEBUG] get_min_max_gestation: Complex query detected, attempting collection\n")
+      
+      # Get connection first
       connection <- gestation_episodes_df$src$con
       
-      # Create empty data frame with expected columns
-      empty_result <- data.frame(
-        person_id = integer(),
-        episode = integer(),
-        max_gest_week = integer(),
-        max_gest_date = as.Date(character()),
-        min_gest_week = integer(),
-        min_gest_date = as.Date(character()),
-        min_gest_week_2 = integer(),
-        min_gest_date_2 = as.Date(character()),
-        stringsAsFactors = FALSE
-      )
+      # Try arrow_safe_collect for large datasets
+      if (exists("arrow_safe_collect")) {
+        temp_data <- tryCatch({
+          arrow_safe_collect(gestation_episodes_df, 
+                           threshold = 100000, 
+                           connection = connection)
+        }, error = function(e) {
+          cat("[DEBUG] get_min_max_gestation: arrow_safe_collect failed:", e$message, "\n")
+          # Fall back to regular safe_collect
+          gestation_episodes_df %>% safe_collect()
+        })
+      } else {
+        temp_data <- gestation_episodes_df %>% safe_collect()
+      }
       
-      # Return the empty result - no need to upload to database
-      return(empty_result)
+      # Check if collection returned empty or NULL
+      if (is.null(temp_data) || nrow(temp_data) == 0) {
+        cat("[DEBUG] get_min_max_gestation: Collection returned empty data (0 rows)\n")
+        
+        # Create empty data frame with expected columns
+        empty_result <- data.frame(
+          person_id = integer(),
+          episode = integer(),
+          max_gest_week = integer(),
+          max_gest_date = as.Date(character()),
+          min_gest_week = integer(),
+          min_gest_date = as.Date(character()),
+          min_gest_week_2 = integer(),
+          min_gest_date_2 = as.Date(character()),
+          stringsAsFactors = FALSE
+        )
+        
+        return(empty_result)
+      }
+      
+      cat("[DEBUG] get_min_max_gestation: Collected", nrow(temp_data), "rows\n")
+      
+      # Re-upload as a clean temp table only if we have data
+      gestation_episodes_df <- create_temp_table(temp_data, connection = connection)
+      cat("[DEBUG] get_min_max_gestation: Re-uploaded as clean temp table\n")
     }
-    
-    cat("[DEBUG] get_min_max_gestation: Collected", nrow(temp_data), "rows\n")
-    
-    # Get connection from original query
-    connection <- gestation_episodes_df$src$con
-    
-    # Re-upload as a clean temp table only if we have data
-    gestation_episodes_df <- create_temp_table(temp_data, connection = connection)
-    cat("[DEBUG] get_min_max_gestation: Re-uploaded as clean temp table\n")
   }
   
   # Check if there are any gestation episodes

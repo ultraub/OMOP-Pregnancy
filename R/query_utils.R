@@ -1263,3 +1263,80 @@ verify_table_upload <- function(table_ref, table_name = "table") {
     table_name = table_name
   ))
 }
+
+#' Arrow-aware collection for large datasets
+#'
+#' @param lazy_query A lazy query to collect
+#' @param threshold Row count threshold for warning (default 100000)
+#' @param connection Database connection for fallback operations
+#'
+#' @return Collected data frame
+#' @export
+arrow_safe_collect <- function(lazy_query, threshold = 100000, connection = NULL) {
+  # Try to estimate row count
+  row_estimate <- tryCatch({
+    lazy_query %>% 
+      tally() %>% 
+      pull(n)
+  }, error = function(e) {
+    # If count fails, assume it's large
+    message("Unable to estimate row count, assuming large dataset")
+    threshold + 1
+  })
+  
+  # Warn if large dataset without Arrow
+  if (!is.na(row_estimate) && row_estimate > threshold) {
+    if (Sys.getenv("DATABRICKS_ENABLE_ARROW") != "1") {
+      warning(sprintf("Attempting to collect %d rows without Arrow - may fail or be slow", row_estimate))
+      warning("Consider enabling Arrow with EnableArrow=1 in JDBC URL")
+    } else {
+      message(sprintf("Collecting %d rows with Arrow enabled", row_estimate))
+    }
+  }
+  
+  # Attempt collection with better error handling
+  result <- tryCatch({
+    lazy_query %>% collect()
+  }, error = function(e) {
+    if (grepl("MemoryUtil|Arrow", e$message)) {
+      # Arrow-specific error
+      stop(paste("Arrow initialization failed. Check JVM settings:",
+                 "\n  - Ensure --add-opens=java.base/java.nio=ALL-UNNAMED is set",
+                 "\n  - Increase heap memory with -Xmx",
+                 "\n  - Or disable Arrow with EnableArrow=0 in JDBC URL",
+                 "\nOriginal error:", e$message))
+    } else if (grepl("heap space|OutOfMemory", e$message, ignore.case = TRUE)) {
+      # Memory error
+      stop(paste("Out of memory collecting", row_estimate, "rows.",
+                 "\n  - Increase JVM heap with -Xmx",
+                 "\n  - Enable Arrow for efficient transfer",
+                 "\n  - Or process in smaller chunks",
+                 "\nOriginal error:", e$message))
+    } else {
+      # Other error - try fallback if connection available
+      if (!is.null(connection)) {
+        message("Collection failed, trying compute_table fallback")
+        temp_result <- tryCatch({
+          compute_table(lazy_query, connection = connection)
+        }, error = function(e2) {
+          stop(paste("Both collect and compute_table failed:",
+                    "\n  collect error:", e$message,
+                    "\n  compute error:", e2$message))
+        })
+        
+        # Try to collect the computed table
+        tryCatch({
+          temp_result %>% collect()
+        }, error = function(e3) {
+          stop(paste("Failed to collect even after compute_table:",
+                    "\n  Original error:", e$message,
+                    "\n  Compute collect error:", e3$message))
+        })
+      } else {
+        stop(e$message)
+      }
+    }
+  })
+  
+  return(result)
+}
