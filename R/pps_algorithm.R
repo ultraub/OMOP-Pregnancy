@@ -86,7 +86,7 @@ records_comparison <- function(personlist, i) {
     agreement_t_c <- (adjConceptMonths_MaxExpectedDelta >= delta_t) & (delta_t >= adjConceptMonths_MinExpectedDelta)
     
     # If there is agreement between the concepts, update the return_agreement_t_c variable
-    if (agreement_t_c == TRUE) {
+    if (isTRUE(agreement_t_c)) {
       return(TRUE) # return early -- only needs to be true once
     }
   }
@@ -113,7 +113,7 @@ records_comparison <- function(personlist, i) {
       bridge_agreement_t_c <- (bridge_adjConceptMonths_MaxExpectedDelta >= bridge_delta_t) &
         (bridge_delta_t >= bridge_adjConceptMonths_MinExpectedDelta)
       # If there is agreement between the bridge concepts, update the return_agreement_t_c variable
-      if (bridge_agreement_t_c == TRUE) {
+      if (isTRUE(bridge_agreement_t_c)) {
         return(TRUE) # return early -- only needs to be true once
       }
     }
@@ -253,38 +253,31 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
     patients_with_concepts <- compute_table(patients_with_concepts, connection = connection)
   }
   
-  # Pre-compute SQL expressions for date operations
-  # IMPORTANT: All SQL expressions must be applied BEFORE compute_table() in Spark/Databricks
-  date_of_birth_sql <- sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
-  
-  # For age calculation, we need to nest the date construction inside the date_diff
-  # This avoids referencing a column that doesn't exist yet
-  age_days_sql <- sql_date_diff(
-    sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection),
-    "domain_concept_start_date",
-    "day",
-    connection
-  )
-  
-  # Apply all SQL operations BEFORE materializing
+  # Simplified age calculation that works in both SQL Server and Databricks
   patients_with_preg_concepts <- patients_with_concepts %>%
     inner_join(person_subset, by = "person_id", suffix = c(".x", ".y")) %>%
     mutate(
       day_of_birth = if_else(is.na(day_of_birth), 1, day_of_birth),
-      month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
-    ) %>%
-    mutate(
-      # Apply both SQL expressions while still a lazy query
-      date_of_birth = !!date_of_birth_sql,
-      age = (!!age_days_sql) / 365
+      month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth),
+      # Simple age calculation using year difference
+      # This avoids complex date construction and works in both databases
+      year_diff = year(domain_concept_start_date) - year_of_birth,
+      # Check if birthday has passed this year
+      birthday_passed = month(domain_concept_start_date) > month_of_birth |
+                       (month(domain_concept_start_date) == month_of_birth & 
+                        day(domain_concept_start_date) >= day_of_birth),
+      # Calculate age with birthday adjustment
+      age = year_diff - if_else(birthday_passed, 0, 1)
     ) %>%
     # women of reproductive age
     filter(
       gender_concept_id != male_concept_id,
+      !is.na(age),  # Explicitly filter out NULL ages
       age >= min_age,
       age < max_age
     ) %>%
-    select(-year_of_birth, -month_of_birth, -day_of_birth, -gender_concept_id, -date_of_birth)
+    select(-year_of_birth, -month_of_birth, -day_of_birth, -gender_concept_id, 
+           -year_diff, -birthday_passed)
   
   # Materialize the query now that all SQL operations are complete
   patients_with_preg_concepts <- compute_table(patients_with_preg_concepts, connection = connection)
