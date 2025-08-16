@@ -253,6 +253,10 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
     patients_with_concepts <- compute_table(patients_with_concepts, connection = connection)
   }
   
+  # Pre-compute SQL expressions for date operations
+  date_of_birth_sql <- sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
+  age_sql <- sql_date_diff("date_of_birth", "domain_concept_start_date", "day", connection)
+  
   patients_with_preg_concepts <- patients_with_concepts %>%
     inner_join(person_subset, by = "person_id", suffix = c(".x", ".y")) %>%
     mutate(
@@ -260,12 +264,12 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
     ) %>%
     mutate(
-      # Use standard date construction that dbplyr can translate
-      date_of_birth = make_date(year_of_birth, month_of_birth, day_of_birth)
+      # Use pre-computed SQL expression
+      date_of_birth = !!date_of_birth_sql
     ) %>%
     mutate(
-      # Use standard date arithmetic that dbplyr can translate
-      age = as.numeric(domain_concept_start_date - date_of_birth) / 365
+      # Use pre-computed SQL expression for age calculation
+      age = (!!age_sql) / 365
     ) %>%
     # women of reproductive age
     filter(
@@ -273,7 +277,7 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       age >= min_age,
       age < max_age
     ) %>%
-    select(-year_of_birth, -month_of_birth, -day_of_birth, -date_diff, -gender_concept_id)
+    select(-year_of_birth, -month_of_birth, -day_of_birth, -gender_concept_id)
   
   # OBTAIN ALL RELEVANT INPUT PATIENTS AND SAVE GT INFORMATION PER CONCEPT TO A LOOKUP DICTIONARY
   # First we save the women that have gestational timing concepts, and save the gestational timing information for each concept.
@@ -311,6 +315,9 @@ get_episode_max_min_dates <- function(get_PPS_episodes_df, connection = NULL) {
     connection <- get_PPS_episodes_df$src$con
   }
   
+  # Pre-compute SQL expression for date addition (60 days = ~2 months)
+  episode_max_plus_two_sql <- sql_date_add("episode_max_date", 60, "day", connection)
+  
   df <- get_PPS_episodes_df %>%
     filter(!is.na(person_episode_number)) %>%
     group_by(person_id, person_episode_number) %>%
@@ -324,8 +331,8 @@ get_episode_max_min_dates <- function(get_PPS_episodes_df, connection = NULL) {
     ) %>%
     ungroup() %>%
     mutate(
-      # Use simple date arithmetic - dbplyr will translate appropriately
-      episode_max_date_plus_two_months = episode_max_date + months(2)
+      # Use pre-computed SQL expression
+      episode_max_date_plus_two_months = !!episode_max_plus_two_sql
     ) %>%
     group_by(person_id, person_episode_number) %>%
     ungroup()
