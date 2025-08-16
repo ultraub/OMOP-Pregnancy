@@ -1243,28 +1243,8 @@ arrow_safe_collect <- function(lazy_query, threshold = 100000, connection = NULL
                  "\n  - Or process in smaller chunks",
                  "\nOriginal error:", e$message))
     } else {
-      # Other error - try fallback if connection available
-      if (!is.null(connection)) {
-        message("Collection failed, trying compute_table fallback")
-        temp_result <- tryCatch({
-          compute_table(lazy_query, connection = connection)
-        }, error = function(e2) {
-          stop(paste("Both collect and compute_table failed:",
-                    "\n  collect error:", e$message,
-                    "\n  compute error:", e2$message))
-        })
-        
-        # Try to collect the computed table
-        tryCatch({
-          temp_result %>% collect()
-        }, error = function(e3) {
-          stop(paste("Failed to collect even after compute_table:",
-                    "\n  Original error:", e$message,
-                    "\n  Compute collect error:", e3$message))
-        })
-      } else {
-        stop(e$message)
-      }
+      # Other error - no fallbacks, just fail
+      stop("Collection failed: ", e$message)
     }
   })
   
