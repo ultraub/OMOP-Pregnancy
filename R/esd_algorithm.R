@@ -173,7 +173,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   # add: change to pregnancy start rather than recorded episode start
   # Handle different column names that might exist
   # Check which columns are available
-  col_names <- names(pregnant_dates)
+  col_names <- colnames(pregnant_dates)
   
   # Debug: print available columns
   message("Available columns in pregnant_dates: ", paste(col_names, collapse = ", "))
@@ -528,7 +528,7 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
   }
   
   # Check which episode column exists in final_merged_episode_detailed_df
-  col_names <- names(final_merged_episode_detailed_df)
+  col_names <- colnames(final_merged_episode_detailed_df)
   
   # Determine the correct episode column to join on
   if ("episode_number" %in% col_names) {
@@ -563,10 +563,10 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
   
   # Add term duration information
   # Check if final_category column exists, otherwise use category
-  if ("final_category" %in% names(merged)) {
+  if ("final_category" %in% colnames(merged)) {
     merged_with_terms <- merged %>%
       left_join(Matcho_term_durations, by = c("final_category" = "category"), suffix = c(".x", ".y"))
-  } else if ("category" %in% names(merged)) {
+  } else if ("category" %in% colnames(merged)) {
     merged_with_terms <- merged %>%
       left_join(Matcho_term_durations, by = "category", suffix = c(".x", ".y"))
   } else {
@@ -582,7 +582,7 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
   
   # Calculate final estimated start dates considering all information
   # Check which columns exist and add missing ones with default values
-  col_names <- names(merged_with_terms)
+  col_names <- colnames(merged_with_terms)
   
   # Ensure required columns exist
   if (!"final_outcome_date" %in% col_names) {
