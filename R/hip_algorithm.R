@@ -600,23 +600,17 @@ add_delivery <- function(add_abortion_df, Matcho_outcome_limits, final_delivery_
     select(-previous_category, -next_category, -before_days, -after_days, -temp_category) %>%
     distinct()
   
-  # Try to get counts with better error handling
+  # Skip collecting detailed counts for large datasets
+  # Just get total count which is much faster
   tryCatch({
-    counts <- final_df %>%
-      count(category) %>%
-      safe_collect()
-    
-    cat("Total preliminary episodes:\n")
-    if (!is.null(counts) && nrow(counts) > 0) {
-      for (i in 1:nrow(counts)) {
-        cat(sprintf("  %s: %d\n", counts$category[i], counts$n[i]))
-      }
-    } else {
-      cat("  Unable to retrieve episode counts (collection failed)\n")
-    }
+    total_count <- final_df %>% 
+      tally() %>% 
+      pull(n)
+    cat(sprintf("Total preliminary episodes: %d\n", as.integer(total_count)))
+    cat("  (Category breakdown skipped for large datasets)\n")
   }, error = function(e) {
-    cat("Total preliminary episodes:\n")
-    cat("  Unable to retrieve episode counts due to error: ", e$message, "\n")
+    cat("Total preliminary episodes: Unable to compute\n")
+    cat("  Continuing without statistics...\n")
   })
   
   return(final_df)
@@ -1659,42 +1653,21 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   })
   cat("=== END DEBUG ===\n\n")
   
-  counts <- count(all_df,
-    gestation_based = !is.na(gest_id),
-    outcome_based = !is.na(visit_id)
-  ) %>%
-    safe_collect()
-  
-  # Debug: Check what's in the counts
-  cat("\n=== DEBUG: Count Results ===\n")
-  print(counts)
-  cat("=== END DEBUG ===\n\n")
-  
-  # Helper function to safely get count for a specific combination
-  # Note: The counts dataframe has character columns "1" and "0", not booleans
-  get_count <- function(df, gest_val, outcome_val) {
-    # Convert boolean values to character for comparison
-    gest_str <- if(gest_val) "1" else "0"
-    outcome_str <- if(outcome_val) "1" else "0"
+  # Skip collecting counts for large datasets - just log basic info
+  # This avoids collecting 490K+ rows just for debugging
+  cat("\n=== Episode Statistics ===\n")
+  tryCatch({
+    outcome_count <- tally(calculate_start_df) %>% pull(n) %>% as.integer()
+    gest_count <- tally(get_min_max_gestation_df) %>% pull(n) %>% as.integer()
+    total_count <- tally(all_df) %>% pull(n) %>% as.integer()
     
-    result <- df %>% 
-      filter(gestation_based == gest_str, outcome_based == outcome_str) %>% 
-      pull(n)
-    if (length(result) == 0) 0L else as.integer(result)
-  }
-  
-  cat("Total number of outcome-based episodes:",
-    tally(calculate_start_df) %>% pull(n) %>% as.integer(),
-    "Total number of gestation-based episodes:",
-    tally(get_min_max_gestation_df) %>% pull(n) %>% as.integer(),
-    "Total number of only outcome-based episodes after merging:",
-    get_count(counts, FALSE, TRUE),
-    "Total number of only gestation-based episodes after merging:",
-    get_count(counts, TRUE, FALSE),
-    "Total number of episodes with both after merging:",
-    get_count(counts, TRUE, TRUE),
-    sep = "\n"
-  )
+    cat("Total number of outcome-based episodes:", outcome_count, "\n")
+    cat("Total number of gestation-based episodes:", gest_count, "\n")
+    cat("Total episodes after merging:", total_count, "\n")
+  }, error = function(e) {
+    cat("Unable to compute episode statistics (dataset too large)\n")
+  })
+  cat("=== END Statistics ===\n\n")
   return(all_df)
 }
 
@@ -1710,11 +1683,10 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
     connection <- add_gestation_df$src$con
   }
   
-  # FIXED: Collect and re-upload to avoid window function issues
-  # This function uses row_number() which can cause issues with DatabaseConnector
+  # Materialize in database to handle window functions
+  # Databricks and most databases support row_number() in SQL
   if (inherits(add_gestation_df, c("tbl_lazy", "tbl_sql"))) {
-    temp_data <- add_gestation_df %>% safe_collect()
-    add_gestation_df <- create_temp_table(temp_data, connection = connection)
+    add_gestation_df <- compute_table(add_gestation_df, connection = connection)
   }
   
   # Clean up episodes by removing duplicate episodes and reclassifying outcome-based episodes
@@ -1828,11 +1800,10 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
     connection <- clean_episodes_df$src$con
   }
   
-  # FIXED: Collect and re-upload to avoid window function issues
-  # This function uses lag() which can cause issues with DatabaseConnector
+  # Materialize in database to handle window functions
+  # Databricks and most databases support lag() in SQL
   if (inherits(clean_episodes_df, c("tbl_lazy", "tbl_sql"))) {
-    temp_data <- clean_episodes_df %>% safe_collect()
-    clean_episodes_df <- create_temp_table(temp_data, connection = connection)
+    clean_episodes_df <- compute_table(clean_episodes_df, connection = connection)
   }
   
   # Identify episodes that overlap and keep only the latter episode if the previous episode is PREG.
