@@ -286,35 +286,40 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   final_abortion_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
-    c("AB", "SA")
+    c("AB", "SA"),
+    connection = connection
   ) %>%
     compute_table(connection = connection)
   
   final_delivery_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
-    "DELIV"
+    "DELIV",
+    connection = connection
   ) %>%
     compute_table(connection = connection)
   
   final_ectopic_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
-    "ECT"
+    "ECT",
+    connection = connection
   ) %>%
     compute_table(connection = connection)
   
   final_stillbirth_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
-    "SB"
+    "SB",
+    connection = connection
   ) %>%
     compute_table(connection = connection)
   
   final_livebirth_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
-    "LB"
+    "LB",
+    connection = connection
   ) %>%
     compute_table(connection = connection)
   
@@ -322,29 +327,33 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   add_stillbirth_df <- add_stillbirth(
     final_stillbirth_visits_df,
     final_livebirth_visits_df,
-    Matcho_outcome_limits
+    Matcho_outcome_limits,
+    connection = connection
   )
   
   add_ectopic_df <- add_ectopic(
     add_stillbirth_df,
     Matcho_outcome_limits,
-    final_ectopic_visits_df
+    final_ectopic_visits_df,
+    connection = connection
   )
   
   add_abortion_df <- add_abortion(
     add_ectopic_df,
     Matcho_outcome_limits,
-    final_abortion_visits_df
+    final_abortion_visits_df,
+    connection = connection
   )
   
   add_delivery_df <- add_delivery(
     add_abortion_df,
     Matcho_outcome_limits,
-    final_delivery_visits_df
+    final_delivery_visits_df,
+    connection = connection
   )
   
   # Calculate start dates
-  calculate_start_df <- calculate_start(add_delivery_df, Matcho_term_durations) %>%
+  calculate_start_df <- calculate_start(add_delivery_df, Matcho_term_durations, connection = connection) %>%
     compute_table(connection = connection)
   
   # Gestation-based episodes
@@ -381,13 +390,13 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   }
   
   # Combine episodes
-  add_gestation_df <- add_gestation(calculate_start_df, get_min_max_gestation_df)
-  clean_episodes_df <- clean_episodes(add_gestation_df)
-  remove_overlaps_df <- remove_overlaps(clean_episodes_df)
+  add_gestation_df <- add_gestation(calculate_start_df, get_min_max_gestation_df, connection = connection)
+  clean_episodes_df <- clean_episodes(add_gestation_df, connection = connection)
+  remove_overlaps_df <- remove_overlaps(clean_episodes_df, connection = connection)
   final_episodes_df <- final_episodes(remove_overlaps_df)
   
   # Add episode length
-  HIP_episodes_df <- final_episodes_with_length(final_episodes_df, gestation_visits_df) %>%
+  HIP_episodes_df <- final_episodes_with_length(final_episodes_df, gestation_visits_df, connection = connection) %>%
     compute_table(connection = connection)
   
   return(list(
