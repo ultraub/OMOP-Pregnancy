@@ -300,7 +300,17 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   
   # The database will handle pagination automatically
   # Batch collection to avoid network timeouts in Databricks
-  if (inherits(patients_with_preg_concepts, "tbl_spark")) {
+  
+  # Extract the connection and check its type for proper Databricks detection
+  dbms <- if (!is.null(connection)) {
+    attr(connection, "dbms", exact = TRUE)
+  } else if (inherits(patients_with_preg_concepts, c("tbl_lazy", "tbl_sql"))) {
+    attr(patients_with_preg_concepts$src$con, "dbms", exact = TRUE)
+  } else {
+    NULL
+  }
+  
+  if (!is.null(dbms) && dbms %in% c("spark", "databricks")) {
     # For Databricks, collect in batches to avoid network timeouts
     
     # First, get unique person IDs
