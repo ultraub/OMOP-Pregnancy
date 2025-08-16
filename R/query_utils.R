@@ -122,6 +122,19 @@ create_temp_table <- function(connection,
       # Spark doesn't support true temp tables, so we create regular tables
       # with a unique prefix to avoid conflicts
       
+      # Pre-process data for Spark: handle NA values properly
+      # Spark may interpret NA differently than R
+      if ("gest_value" %in% names(data)) {
+        # Convert any 0 values to NA for gest_value (0 is not a valid gestational week)
+        data$gest_value[data$gest_value == 0] <- NA
+        # Ensure numeric type
+        data$gest_value <- as.numeric(data$gest_value)
+      }
+      if ("value_as_number" %in% names(data)) {
+        # Ensure numeric type for value_as_number
+        data$value_as_number <- as.numeric(data$value_as_number)
+      }
+      
       # Get the schema from connection attributes - try multiple sources
       schema <- attr(connection, "resultsDatabaseSchema", exact = TRUE)
       if (is.null(schema)) {
@@ -703,4 +716,82 @@ safe_collect <- function(lazy_query, n_max = NULL, use_temp_table = TRUE) {
       return(collect(lazy_query))
     }
   }
+}
+
+#' Verify data integrity after upload to database
+#'
+#' Checks that critical columns have proper NULL/non-NULL values,
+#' especially for HIP_concepts and similar reference tables.
+#'
+#' @param table_ref Database table reference (from create_temp_table)
+#' @param table_name Name of the table for logging
+#'
+#' @return List with verification results
+#' @export
+verify_table_upload <- function(table_ref, table_name = "table") {
+  
+  cat(paste0("\n[VERIFY] Checking integrity of ", table_name, "...\n"))
+  
+  # Get total row count
+  total_count <- safe_count(table_ref)
+  cat(paste0("  Total rows: ", 
+             ifelse(is.na(total_count), "unable to count", as.character(total_count)), 
+             "\n"))
+  
+  # Check columns
+  col_names <- colnames(table_ref)
+  cat(paste0("  Columns: ", paste(col_names, collapse = ", "), "\n"))
+  
+  # For HIP_concepts specifically, check gest_value
+  if ("gest_value" %in% col_names) {
+    # Count non-NULL gest_value
+    non_null_count <- table_ref %>%
+      filter(!is.na(gest_value)) %>%
+      safe_count()
+    
+    # Count NULL gest_value
+    null_count <- table_ref %>%
+      filter(is.na(gest_value)) %>%
+      safe_count()
+    
+    cat(paste0("  gest_value: ", 
+               ifelse(is.na(non_null_count), "?", as.character(non_null_count)), 
+               " non-NULL, ",
+               ifelse(is.na(null_count), "?", as.character(null_count)),
+               " NULL\n"))
+    
+    # Sample some values
+    if (!is.na(non_null_count) && non_null_count > 0) {
+      sample_data <- tryCatch({
+        table_ref %>%
+          filter(!is.na(gest_value)) %>%
+          head(5) %>%
+          safe_collect()
+      }, error = function(e) {
+        NULL
+      })
+      
+      if (!is.null(sample_data) && nrow(sample_data) > 0) {
+        cat("  Sample gest_value values: ", 
+            paste(sample_data$gest_value, collapse = ", "), "\n")
+      }
+    }
+  }
+  
+  # Check value_as_number if present
+  if ("value_as_number" %in% col_names) {
+    non_null_value <- table_ref %>%
+      filter(!is.na(value_as_number)) %>%
+      safe_count()
+    
+    cat(paste0("  value_as_number: ", 
+               ifelse(is.na(non_null_value), "?", as.character(non_null_value)), 
+               " non-NULL\n"))
+  }
+  
+  return(list(
+    total_rows = total_count,
+    columns = col_names,
+    table_name = table_name
+  ))
 }

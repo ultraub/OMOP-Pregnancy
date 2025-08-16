@@ -111,6 +111,10 @@ run_hipps <- function(connectionDetails = NULL,
   # Create temp tables for concept sets
   message("Creating temporary tables for concept sets...")
   HIP_concepts <- create_temp_table(con, concept_sets$HIP_concepts)
+  
+  # Verify HIP_concepts was uploaded correctly
+  verify_table_upload(HIP_concepts, "HIP_concepts")
+  
   PPS_concepts <- create_temp_table(con, concept_sets$PPS_concepts)
   Matcho_outcome_limits <- concept_sets$Matcho_outcome_limits  # Keep local
   Matcho_term_durations <- create_temp_table(con, concept_sets$Matcho_term_durations)
@@ -315,9 +319,37 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
     compute_table()
   
   # Gestation-based episodes
-  gestation_visits_df <- gestation_visits(initial_pregnant_cohort_df)
-  gestation_episodes_df <- gestation_episodes(gestation_visits_df)
+  gestation_visits_df <- gestation_visits(initial_pregnant_cohort_df, connection = connection)
+  gestation_episodes_df <- gestation_episodes(gestation_visits_df, connection = connection)
   get_min_max_gestation_df <- get_min_max_gestation(gestation_episodes_df)
+  
+  # Check if we have any gestation data
+  gest_count <- safe_count(get_min_max_gestation_df)
+  if (is.na(gest_count) || gest_count == 0) {
+    cat("[WARNING] No gestation-based episodes found. Using outcome-based dating only.\n")
+    # Create empty gestation data frame with required structure
+    if (inherits(calculate_start_df, c("tbl_lazy", "tbl_sql"))) {
+      # For database queries, create empty structure
+      get_min_max_gestation_df <- calculate_start_df %>%
+        head(0) %>%
+        mutate(
+          min_gestation_age_in_weeks = NA_real_,
+          max_gestation_age_in_weeks = NA_real_,
+          first_gest_week = NA_real_,
+          last_gest_week = NA_real_
+        )
+    } else {
+      # For local data, create empty data frame
+      get_min_max_gestation_df <- data.frame(
+        person_id = integer(),
+        episode = integer(),
+        min_gestation_age_in_weeks = numeric(),
+        max_gestation_age_in_weeks = numeric(),
+        first_gest_week = numeric(),
+        last_gest_week = numeric()
+      )
+    }
+  }
   
   # Combine episodes
   add_gestation_df <- add_gestation(calculate_start_df, get_min_max_gestation_df)

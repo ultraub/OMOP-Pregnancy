@@ -300,6 +300,12 @@ load_concept_sets <- function(concept_dir = NULL, format = "auto") {
     
     if (file.exists(hip_file)) {
       concept_sets$HIP_concepts <- readr::read_csv(hip_file, show_col_types = FALSE)
+      # Fix NA handling for Databricks - convert "NA" strings to proper R NA values
+      # The CSV has "NA" as strings which need to be proper NULL/NA for database upload
+      if ("gest_value" %in% names(concept_sets$HIP_concepts)) {
+        # Ensure gest_value is numeric and NA strings become proper NA
+        concept_sets$HIP_concepts$gest_value <- as.numeric(concept_sets$HIP_concepts$gest_value)
+      }
     }
     if (file.exists(pps_file)) {
       concept_sets$PPS_concepts <- readr::read_csv(pps_file, show_col_types = FALSE) %>%

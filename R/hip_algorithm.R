@@ -126,6 +126,28 @@ initial_pregnant_cohort <- function(procedure_occurrence_tbl, measurement_tbl,
   all_dfs <- list(measurement_df, procedure_df, observation_df, condition_df)
   union_df <- reduce(all_dfs, union_all)
   
+  # Debug: Check data integrity after union
+  if (inherits(union_df, c("tbl_lazy", "tbl_sql"))) {
+    # For database queries, check counts
+    total_count <- safe_count(union_df)
+    cat("[DEBUG] initial_pregnant_cohort: Total records after union:", 
+        ifelse(is.na(total_count), "unable to count", as.character(total_count)), "\n")
+    
+    # Check how many records have non-NULL gest_value
+    gest_count <- union_df %>% 
+      filter(!is.na(gest_value)) %>% 
+      safe_count()
+    cat("[DEBUG] initial_pregnant_cohort: Records with non-NULL gest_value:", 
+        ifelse(is.na(gest_count), "unable to count", as.character(gest_count)), "\n")
+    
+    # Check how many records have non-NULL value_as_number
+    value_count <- union_df %>% 
+      filter(!is.na(value_as_number)) %>% 
+      safe_count()
+    cat("[DEBUG] initial_pregnant_cohort: Records with non-NULL value_as_number:", 
+        ifelse(is.na(value_count), "unable to count", as.character(value_count)), "\n")
+  }
+  
   # Get gender concept ID from config or use default
   if (is.null(config)) {
     # Use default OMOP standard concept for male
@@ -667,8 +689,20 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL, connecti
     )
   }
   
+  # Debug: Check input data
+  input_count <- safe_count(initial_pregnant_cohort_df)
+  cat("[DEBUG] gestation_visits: Input has", 
+      ifelse(is.na(input_count), "unknown", as.character(input_count)), "total records\n")
+  
   # Get records with gestation period from HIP_concepts (where gest_value is populated)
-  gest_df <- initial_pregnant_cohort_df %>% filter(!is.na(gest_value))
+  # For Databricks, we need to handle NULL values carefully
+  gest_df <- initial_pregnant_cohort_df %>% 
+    filter(!is.na(gest_value) & gest_value > 0 & gest_value <= max_gestational_weeks)
+  
+  gest_count <- safe_count(gest_df)
+  cat("[DEBUG] gestation_visits: Found", 
+      ifelse(is.na(gest_count), "unknown", as.character(gest_count)), 
+      "records with populated gest_value\n")
   
   # Get records with gestational age in weeks from measurement table
   # This is crucial: for gestational age concepts that have NA in gest_value (HIP_concepts),
@@ -676,12 +710,19 @@ gestation_visits <- function(initial_pregnant_cohort_df, config = NULL, connecti
   other_gest_df <- initial_pregnant_cohort_df %>%
     filter(
       concept_id %in% gestational_age_concepts,
-      is.na(gest_value),  # Only get records where gest_value is NA to avoid duplicates
+      # Handle both NULL and 0 for gest_value
+      (is.na(gest_value) | gest_value == 0),
       !is.na(value_as_number),
       # also filter out 0 -- this is an error
-      value_as_number > 0, value_as_number <= max_gestational_weeks
+      value_as_number > 0, 
+      value_as_number <= max_gestational_weeks
     ) %>%
     mutate(gest_value = as.integer(value_as_number))
+  
+  other_count <- safe_count(other_gest_df)
+  cat("[DEBUG] gestation_visits: Found", 
+      ifelse(is.na(other_count), "unknown", as.character(other_count)), 
+      "records with value_as_number for gestational age\n")
   
   # Combine tables - this ensures we get both:
   # 1. Records with gest_value from HIP_concepts
