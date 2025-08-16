@@ -260,13 +260,12 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
       month_of_birth = if_else(is.na(month_of_birth), 1, month_of_birth)
     ) %>%
     mutate(
-      # Use cross-platform SQL functions
-      date_of_birth = sql_date_from_parts("year_of_birth", "month_of_birth", "day_of_birth", connection)
+      # Use standard date construction that dbplyr can translate
+      date_of_birth = make_date(year_of_birth, month_of_birth, day_of_birth)
     ) %>%
     mutate(
-      # Use cross-platform date difference
-      date_diff = sql_date_diff("date_of_birth", "domain_concept_start_date", "day", connection),
-      age = date_diff / 365
+      # Use standard date arithmetic that dbplyr can translate
+      age = as.numeric(domain_concept_start_date - date_of_birth) / 365
     ) %>%
     # women of reproductive age
     filter(
@@ -325,8 +324,8 @@ get_episode_max_min_dates <- function(get_PPS_episodes_df, connection = NULL) {
     ) %>%
     ungroup() %>%
     mutate(
-      # Use sql_date_add for cross-platform date arithmetic
-      episode_max_date_plus_two_months = sql_date_add("episode_max_date", 2, "month", connection)
+      # Use simple date arithmetic - dbplyr will translate appropriately
+      episode_max_date_plus_two_months = episode_max_date + months(2)
     ) %>%
     group_by(person_id, person_episode_number) %>%
     ungroup()
