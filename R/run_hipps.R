@@ -181,7 +181,8 @@ run_hipps <- function(connectionDetails = NULL,
     hip_episodes = hip_results$episodes,
     pps_episodes = pps_results$episodes,
     initial_pregnant_cohort = hip_results$initial_cohort,
-    config = config
+    config = config,
+    connection = con
   )
   
   # Calculate estimated start dates
@@ -195,7 +196,8 @@ run_hipps <- function(connectionDetails = NULL,
     procedure_occurrence_tbl = procedure_occurrence_tbl,
     PPS_concepts = PPS_concepts,
     Matcho_term_durations = Matcho_term_durations,
-    config = config
+    config = config,
+    connection = con
   )
   
   # Compute final results
@@ -278,7 +280,7 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
     config = config,
     connection = connection
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Get outcome visits
   final_abortion_visits_df <- final_visits(
@@ -286,35 +288,35 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
     Matcho_outcome_limits,
     c("AB", "SA")
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   final_delivery_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "DELIV"
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   final_ectopic_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "ECT"
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   final_stillbirth_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "SB"
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   final_livebirth_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "LB"
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Add episodes hierarchically
   add_stillbirth_df <- add_stillbirth(
@@ -343,7 +345,7 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   
   # Calculate start dates
   calculate_start_df <- calculate_start(add_delivery_df, Matcho_term_durations) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Gestation-based episodes
   gestation_visits_df <- gestation_visits(initial_pregnant_cohort_df, connection = connection)
@@ -386,7 +388,7 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   
   # Add episode length
   HIP_episodes_df <- final_episodes_with_length(final_episodes_df, gestation_visits_df) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   return(list(
     episodes = HIP_episodes_df,
@@ -482,7 +484,7 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
   
   # Get episode date ranges
   PPS_episodes_df <- get_episode_max_min_dates(get_PPS_episodes_df, connection) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   return(list(
     episodes = PPS_episodes_df,
@@ -502,7 +504,8 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
 merge_episodes <- function(hip_episodes,
                          pps_episodes,
                          initial_pregnant_cohort,
-                         config) {
+                         config,
+                         connection = NULL) {
   
   # Check for NULL PPS episodes
   if (is.null(pps_episodes) || is.null(pps_episodes$episodes)) {
@@ -538,7 +541,7 @@ merge_episodes <- function(hip_episodes,
   final_merged_episode_detailed_df <- final_merged_episode_detailed(
     final_merged_episodes_no_duplicates_df
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   return(final_merged_episode_detailed_df)
 }
@@ -565,7 +568,8 @@ calculate_esd <- function(merged_episodes,
                         procedure_occurrence_tbl,
                         PPS_concepts,
                         Matcho_term_durations,
-                        config) {
+                        config,
+                        connection = NULL) {
   
   # Get timing concepts
   get_timing_concepts_df <- get_timing_concepts(
@@ -577,7 +581,7 @@ calculate_esd <- function(merged_episodes,
     merged_episodes,
     PPS_concepts,
     config = config,
-    connection = con
+    connection = connection
   )
   
   # Get episodes with gestational timing info
@@ -591,7 +595,7 @@ calculate_esd <- function(merged_episodes,
     merged_episodes,
     Matcho_term_durations
   ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   return(final_episodes)
 }
