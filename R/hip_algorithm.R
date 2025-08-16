@@ -1110,12 +1110,13 @@ get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
       as.character(gestation_episodes_df$lazy_query$x)
     }, error = function(e) "")
     
-    is_temp_table <- grepl("temp_|#temp", query_str, ignore.case = TRUE)
+    is_temp_table <- any(grepl("temp_|#temp", query_str, ignore.case = TRUE))
     
     # Also check if this came from gestation_episodes which already materialized
-    is_from_gestation_episodes <- grepl("gestation_episodes: Successfully materialized", 
-                                       capture.output(print(gestation_episodes_df)), 
-                                       ignore.case = TRUE)
+    # Use any() to ensure we get a single logical value, not a vector
+    is_from_gestation_episodes <- any(grepl("gestation_episodes: Successfully materialized", 
+                                            capture.output(print(gestation_episodes_df)), 
+                                            ignore.case = TRUE))
     
     if (is_temp_table || is_from_gestation_episodes) {
       cat("[DEBUG] get_min_max_gestation: Input is already materialized, skipping collection\n")
