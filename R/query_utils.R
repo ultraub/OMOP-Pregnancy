@@ -205,7 +205,13 @@ create_temp_table <- function(connection,
       full_sql_ref <- paste(catalog, schema_name, temp_table_name, sep = ".")
       
       # Use sql() to create a SQL literal that will be used as-is in queries
-      return(dplyr::tbl(connection, dbplyr::sql(full_sql_ref)))
+      table_ref <- dplyr::tbl(connection, dbplyr::sql(full_sql_ref))
+      
+      # Store the actual table name as an attribute for later retrieval
+      attr(table_ref, "table_name") <- full_sql_ref
+      attr(table_ref, "spark_table") <- TRUE
+      
+      return(table_ref)
       
     } else {
       # Default fallback
@@ -527,6 +533,80 @@ date_diff <- function(date1, date2, unit, connection = NULL) {
   return(sql_date_diff(date1, date2, units, connection))
 }
 
+#' Extract actual table name from a lazy table reference
+#'
+#' For Spark/Databricks, we need the actual table name without dbplyr's
+#' complex SQL wrapping to avoid JDBC BackgroundFetcher errors.
+#'
+#' @param table_ref A tbl_sql or lazy table reference
+#'
+#' @return The actual table name as a string, or NULL if not found
+get_spark_table_name <- function(table_ref) {
+  
+  # If it's already a string, return it
+  if (is.character(table_ref)) {
+    return(table_ref)
+  }
+  
+  # Try to extract from different possible locations
+  if (inherits(table_ref, "tbl_sql") || inherits(table_ref, "tbl_lazy")) {
+    
+    # Method 1: Check if table name is stored as attribute
+    table_name <- attr(table_ref, "table_name", exact = TRUE)
+    if (!is.null(table_name)) {
+      return(table_name)
+    }
+    
+    # Method 2: Try to get from src
+    if (!is.null(table_ref$src)) {
+      if (!is.null(table_ref$src$table)) {
+        return(table_ref$src$table)
+      }
+      # Check for stored table name in src
+      if (!is.null(table_ref$src$table_name)) {
+        return(table_ref$src$table_name)
+      }
+    }
+    
+    # Method 3: Extract from lazy_query
+    if (!is.null(table_ref$lazy_query) && !is.null(table_ref$lazy_query$x)) {
+      # This might be a complex SQL object
+      table_sql <- as.character(table_ref$lazy_query$x)
+      
+      # If it's a simple table name (no SELECT), return it
+      if (!grepl("SELECT", table_sql, ignore.case = TRUE)) {
+        return(table_sql)
+      }
+      
+      # Try to extract table name from FROM clause
+      from_match <- regexpr("FROM\\s+([^\\s\\(]+)", table_sql, ignore.case = TRUE, perl = TRUE)
+      if (from_match > 0) {
+        from_text <- regmatches(table_sql, from_match)
+        table_name <- gsub("^FROM\\s+", "", from_text, ignore.case = TRUE)
+        return(table_name)
+      }
+    }
+    
+    # Method 4: Try sql_render and parse
+    tryCatch({
+      sql_text <- as.character(dbplyr::sql_render(table_ref))
+      # Look for the actual table name in the SQL
+      # Pattern: FROM catalog.schema.table or FROM table
+      matches <- regmatches(sql_text, 
+                          gregexpr("FROM\\s+`?([^`\\s\\(]+\\.?[^`\\s\\(]+\\.?[^`\\s\\(]+)`?", 
+                                  sql_text, ignore.case = TRUE, perl = TRUE))
+      if (length(matches[[1]]) > 0) {
+        table_name <- gsub("^FROM\\s+`?|`?$", "", matches[[1]][1], ignore.case = TRUE)
+        return(table_name)
+      }
+    }, error = function(e) {
+      # Continue to next method
+    })
+  }
+  
+  return(NULL)
+}
+
 #' Execute query using DatabaseConnector for better Spark support
 #'
 #' Helper function that uses DatabaseConnector::querySql instead of DBI::dbGetQuery
@@ -592,6 +672,80 @@ dc_query <- function(connection, sql) {
   }
 }
 
+#' Spark-specific count function that avoids JDBC BackgroundFetcher errors
+#'
+#' Uses simple direct queries on table names instead of complex dbplyr SQL
+#'
+#' @param connection Database connection
+#' @param table_ref Table reference or table name
+#'
+#' @return Row count or NA if all methods fail
+spark_safe_count <- function(connection, table_ref) {
+  
+  # Get the actual table name
+  table_name <- get_spark_table_name(table_ref)
+  
+  if (is.null(table_name)) {
+    warning("Could not extract table name from reference")
+    return(NA_real_)
+  }
+  
+  # Method 1: Direct COUNT on table name (no subqueries)
+  tryCatch({
+    count_sql <- paste0("SELECT COUNT(*) AS cnt FROM ", table_name)
+    
+    # Use DatabaseConnector::executeSql for better Spark compatibility
+    result <- DatabaseConnector::querySql(connection, count_sql)
+    
+    if (!is.null(result) && nrow(result) > 0) {
+      # Handle different column name cases
+      if ("CNT" %in% names(result)) {
+        return(as.numeric(result$CNT))
+      } else if ("cnt" %in% names(result)) {
+        return(as.numeric(result$cnt))
+      } else if (ncol(result) > 0) {
+        return(as.numeric(result[[1]]))
+      }
+    }
+  }, error = function(e) {
+    # Continue to next method
+  })
+  
+  # Method 2: Try with backticks for table name (Spark sometimes needs this)
+  tryCatch({
+    # Split table name into parts and wrap each in backticks
+    parts <- strsplit(table_name, "\\.")[[1]]
+    quoted_name <- paste0("`", parts, "`", collapse = ".")
+    count_sql <- paste0("SELECT COUNT(*) FROM ", quoted_name)
+    
+    result <- DatabaseConnector::querySql(connection, count_sql)
+    
+    if (!is.null(result) && nrow(result) > 0) {
+      return(as.numeric(result[[1]]))
+    }
+  }, error = function(e) {
+    # Continue to next method
+  })
+  
+  # Method 3: Check if table exists (at least verify it's there)
+  tryCatch({
+    # Just try to select 1 row to verify table accessibility
+    test_sql <- paste0("SELECT 1 FROM ", table_name, " LIMIT 1")
+    result <- DatabaseConnector::querySql(connection, test_sql)
+    
+    if (!is.null(result)) {
+      # Table exists and is accessible, but we can't get exact count
+      # Return -1 as a flag that table exists but count failed
+      return(-1)
+    }
+  }, error = function(e) {
+    # Table might not exist or be accessible
+  })
+  
+  # All methods failed
+  return(NA_real_)
+}
+
 #' Safe count operation for Spark/Databricks
 #'
 #' Gets row count from a lazy query without collecting all data.
@@ -614,38 +768,19 @@ safe_count <- function(lazy_query) {
   # Get the DBMS type
   dbms <- attr(connection, "dbms", exact = TRUE)
   
-  # For Spark/Databricks, use multiple fallback strategies with DatabaseConnector
+  # For Spark/Databricks, use the specialized Spark count function
   if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
-    # First, try the simplest possible count if it's a direct table reference
-    if (inherits(lazy_query, "tbl_sql") && !is.null(lazy_query$lazy_query)) {
-      # Try to extract table name for direct count
-      tryCatch({
-        # Get the table reference
-        table_info <- lazy_query$lazy_query
-        if (!is.null(table_info$x)) {
-          table_name <- as.character(table_info$x)
-          # Simple COUNT(*) on the table
-          count_sql <- paste0("SELECT COUNT(*) AS n FROM ", table_name)
-          
-          # Use DatabaseConnector directly
-          result <- tryCatch({
-            DatabaseConnector::querySql(connection, count_sql)
-          }, error = function(e) {
-            NULL
-          })
-          
-          if (!is.null(result) && nrow(result) > 0) {
-            # DatabaseConnector returns uppercase columns
-            if ("N" %in% names(result)) {
-              return(as.numeric(result$N))
-            } else if ("n" %in% names(result)) {
-              return(as.numeric(result$n))
-            }
-          }
-        }
-      }, error = function(e) {
-        # Continue to other strategies
-      })
+    # Use the Spark-specific count that extracts table names properly
+    result <- spark_safe_count(connection, lazy_query)
+    
+    # If we got a valid count (including -1 for "exists but can't count"), return it
+    if (!is.na(result)) {
+      if (result == -1) {
+        # Table exists but exact count failed - return a warning and NA
+        warning("Table exists but could not get exact count from Spark")
+        return(NA_real_)
+      }
+      return(result)
     }
     
     # Strategy 1: Try direct SQL COUNT using DatabaseConnector
@@ -876,11 +1011,32 @@ verify_table_upload <- function(table_ref, table_name = "table") {
   
   cat(paste0("\n[VERIFY] Checking integrity of ", table_name, "...\n"))
   
-  # Get total row count
-  total_count <- safe_count(table_ref)
-  cat(paste0("  Total rows: ", 
-             ifelse(is.na(total_count), "unable to count", as.character(total_count)), 
-             "\n"))
+  # Extract connection for Spark check
+  connection <- NULL
+  if (inherits(table_ref, c("tbl_lazy", "tbl_sql"))) {
+    connection <- table_ref$src$con
+  }
+  
+  # Get the DBMS type
+  dbms <- NULL
+  if (!is.null(connection)) {
+    dbms <- attr(connection, "dbms", exact = TRUE)
+  }
+  
+  # For Spark/Databricks, use special counting approach
+  if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
+    # Use the Spark-specific count function directly
+    total_count <- spark_safe_count(connection, table_ref)
+    cat(paste0("  Total rows: ", 
+               ifelse(is.na(total_count), "unable to count", as.character(total_count)), 
+               "\n"))
+  } else {
+    # Get total row count using safe_count for non-Spark
+    total_count <- safe_count(table_ref)
+    cat(paste0("  Total rows: ", 
+               ifelse(is.na(total_count), "unable to count", as.character(total_count)), 
+               "\n"))
+  }
   
   # Check columns
   col_names <- colnames(table_ref)
@@ -888,21 +1044,51 @@ verify_table_upload <- function(table_ref, table_name = "table") {
   
   # For HIP_concepts specifically, check gest_value
   if ("gest_value" %in% col_names) {
-    # Count non-NULL gest_value
-    non_null_count <- table_ref %>%
-      filter(!is.na(gest_value)) %>%
-      safe_count()
-    
-    # Count NULL gest_value
-    null_count <- table_ref %>%
-      filter(is.na(gest_value)) %>%
-      safe_count()
-    
-    cat(paste0("  gest_value: ", 
-               ifelse(is.na(non_null_count), "?", as.character(non_null_count)), 
-               " non-NULL, ",
-               ifelse(is.na(null_count), "?", as.character(null_count)),
-               " NULL\n"))
+    # For Spark, try a simpler approach
+    if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
+      # Try to get the actual table name and query directly
+      actual_table <- get_spark_table_name(table_ref)
+      if (!is.null(actual_table)) {
+        tryCatch({
+          # Query for non-NULL count
+          non_null_sql <- paste0("SELECT COUNT(*) AS cnt FROM ", actual_table, " WHERE gest_value IS NOT NULL")
+          result <- DatabaseConnector::querySql(connection, non_null_sql)
+          non_null_count <- ifelse(!is.null(result) && nrow(result) > 0, as.numeric(result[[1]]), NA)
+          
+          # Query for NULL count
+          null_sql <- paste0("SELECT COUNT(*) AS cnt FROM ", actual_table, " WHERE gest_value IS NULL")
+          result <- DatabaseConnector::querySql(connection, null_sql)
+          null_count <- ifelse(!is.null(result) && nrow(result) > 0, as.numeric(result[[1]]), NA)
+          
+          cat(paste0("  gest_value: ", 
+                     ifelse(is.na(non_null_count), "?", as.character(non_null_count)), 
+                     " non-NULL, ",
+                     ifelse(is.na(null_count), "?", as.character(null_count)),
+                     " NULL\n"))
+        }, error = function(e) {
+          cat("  gest_value: unable to count\n")
+        })
+      } else {
+        cat("  gest_value: unable to count (table name not found)\n")
+      }
+    } else {
+      # Standard approach for non-Spark
+      # Count non-NULL gest_value
+      non_null_count <- table_ref %>%
+        filter(!is.na(gest_value)) %>%
+        safe_count()
+      
+      # Count NULL gest_value
+      null_count <- table_ref %>%
+        filter(is.na(gest_value)) %>%
+        safe_count()
+      
+      cat(paste0("  gest_value: ", 
+                 ifelse(is.na(non_null_count), "?", as.character(non_null_count)), 
+                 " non-NULL, ",
+                 ifelse(is.na(null_count), "?", as.character(null_count)),
+                 " NULL\n"))
+    }
     
     # Sample some values
     if (!is.na(non_null_count) && non_null_count > 0) {
@@ -924,13 +1110,34 @@ verify_table_upload <- function(table_ref, table_name = "table") {
   
   # Check value_as_number if present
   if ("value_as_number" %in% col_names) {
-    non_null_value <- table_ref %>%
-      filter(!is.na(value_as_number)) %>%
-      safe_count()
-    
-    cat(paste0("  value_as_number: ", 
-               ifelse(is.na(non_null_value), "?", as.character(non_null_value)), 
-               " non-NULL\n"))
+    # For Spark, use direct SQL query
+    if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
+      actual_table <- get_spark_table_name(table_ref)
+      if (!is.null(actual_table)) {
+        tryCatch({
+          non_null_sql <- paste0("SELECT COUNT(*) AS cnt FROM ", actual_table, " WHERE value_as_number IS NOT NULL")
+          result <- DatabaseConnector::querySql(connection, non_null_sql)
+          non_null_value <- ifelse(!is.null(result) && nrow(result) > 0, as.numeric(result[[1]]), NA)
+          
+          cat(paste0("  value_as_number: ", 
+                     ifelse(is.na(non_null_value), "?", as.character(non_null_value)), 
+                     " non-NULL\n"))
+        }, error = function(e) {
+          cat("  value_as_number: unable to count\n")
+        })
+      } else {
+        cat("  value_as_number: unable to count (table name not found)\n")
+      }
+    } else {
+      # Standard approach for non-Spark
+      non_null_value <- table_ref %>%
+        filter(!is.na(value_as_number)) %>%
+        safe_count()
+      
+      cat(paste0("  value_as_number: ", 
+                 ifelse(is.na(non_null_value), "?", as.character(non_null_value)), 
+                 " non-NULL\n"))
+    }
   }
   
   return(list(
