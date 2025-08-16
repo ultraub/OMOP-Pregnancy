@@ -516,7 +516,9 @@ calculate_esd <- function(merged_episodes,
     measurement_tbl,
     procedure_occurrence_tbl,
     merged_episodes,
-    PPS_concepts
+    PPS_concepts,
+    config = config,
+    connection = con
   )
   
   # Get episodes with gestational timing info

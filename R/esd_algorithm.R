@@ -26,7 +26,8 @@ NULL
 #' @export
 get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observation_tbl,
                                 measurement_tbl, procedure_occurrence_tbl, 
-                                final_merged_episode_detailed_df, PPS_concepts, config = NULL) {
+                                final_merged_episode_detailed_df, PPS_concepts, config = NULL,
+                                connection = NULL) {
   # obtain the gestational timing <= 3 month concept information to use as additional 
   # information for precision category designation
   
@@ -105,11 +106,23 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     }
   }
   
+  # Extract connection if not provided and available from concept_tbl
+  if (is.null(connection) && inherits(concept_tbl, c("tbl_lazy", "tbl_sql"))) {
+    connection <- concept_tbl$src$con
+  }
+  
   # need to find concept names that contain 'gestation period' as well as the specific concepts
-  # Use SQL LIKE instead of str_detect for database compatibility
+  # Use SQL LIKE with proper translation for database compatibility
+  # Pre-compute the SQL expression for LIKE pattern matching
+  like_pattern_sql <- if (!is.null(connection)) {
+    sql_translate("LOWER(concept_name) LIKE '%gestation period%'", connection)
+  } else {
+    sql("LOWER(concept_name) LIKE '%gestation period%'")
+  }
+  
   concepts_to_search <- concept_tbl %>%
     filter(
-      sql("LOWER(concept_name) LIKE '%gestation period%'") |
+      !!like_pattern_sql |
         concept_id %in% c(
           observation_concept_list, measurement_concept_list, algo2_timing_concepts_id_list,
           est_date_of_delivery_concepts, est_date_of_conception_concepts,

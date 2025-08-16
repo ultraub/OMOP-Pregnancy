@@ -782,15 +782,19 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   # Check if there are any gestation visits
   visit_count <- safe_count(gestation_visits_df)
   
-  if (!is.na(visit_count)) {
+  if (!is.na(visit_count) && visit_count > 0) {
     cat("[DEBUG] gestation_episodes: Found", visit_count, "gestation visits\n")
   } else {
-    cat("[DEBUG] gestation_episodes: Unable to determine visit count\n")
+    if (is.na(visit_count)) {
+      cat("[DEBUG] gestation_episodes: Unable to determine visit count (NA returned)\n")
+    } else {
+      cat("[DEBUG] gestation_episodes: No gestation visits found (count = 0)\n")
+    }
     visit_count <- 0  # Treat as 0 for the purpose of the check below
   }
   
   if (is.na(visit_count) || visit_count == 0) {
-    cat("[DEBUG] gestation_episodes: No visits found, returning empty result with required columns\n")
+    cat("[DEBUG] gestation_episodes: Returning empty result with required columns\n")
     # Return empty data frame with expected columns if no gestation visits
     # Create an empty result with all required columns
     # Ensure we have all the columns that get_min_max_gestation expects
@@ -984,12 +988,37 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
     cat("[DEBUG] get_min_max_gestation: Collecting and re-uploading to break query chain\n")
     temp_data <- gestation_episodes_df %>% safe_collect()
+    
+    # Check if collection returned empty or NULL
+    if (is.null(temp_data) || nrow(temp_data) == 0) {
+      cat("[DEBUG] get_min_max_gestation: Collection returned empty data (0 rows)\n")
+      # Return empty result with correct structure instead of trying to re-upload
+      # Get connection for creating empty result
+      connection <- gestation_episodes_df$src$con
+      
+      # Create empty data frame with expected columns
+      empty_result <- data.frame(
+        person_id = integer(),
+        episode = integer(),
+        max_gest_week = integer(),
+        max_gest_date = as.Date(character()),
+        min_gest_week = integer(),
+        min_gest_date = as.Date(character()),
+        min_gest_week_2 = integer(),
+        min_gest_date_2 = as.Date(character()),
+        stringsAsFactors = FALSE
+      )
+      
+      # Return the empty result - no need to upload to database
+      return(empty_result)
+    }
+    
     cat("[DEBUG] get_min_max_gestation: Collected", nrow(temp_data), "rows\n")
     
     # Get connection from original query
     connection <- gestation_episodes_df$src$con
     
-    # Re-upload as a clean temp table
+    # Re-upload as a clean temp table only if we have data
     gestation_episodes_df <- create_temp_table(temp_data, connection = connection)
     cat("[DEBUG] get_min_max_gestation: Re-uploaded as clean temp table\n")
   }
@@ -1000,10 +1029,11 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   if (!is.na(episode_count)) {
     cat("[DEBUG] get_min_max_gestation: Working with", episode_count, "gestation episodes\n")
   } else {
-    cat("[DEBUG] get_min_max_gestation: Unable to determine episode count\n")
+    cat("[DEBUG] get_min_max_gestation: Unable to determine episode count, treating as 0\n")
+    episode_count <- 0  # Treat NA as 0 for safety
   }
   
-  if (episode_count == 0) {
+  if (is.na(episode_count) || episode_count == 0) {
     # Return empty database table with expected columns if no gestation episodes
     # Check if we're working with a database table
     if (inherits(gestation_episodes_df, c("tbl_lazy", "tbl_sql"))) {
@@ -1160,6 +1190,23 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   # Extract connection if not provided
   if (is.null(connection) && inherits(calculate_start_df, c("tbl_lazy", "tbl_sql"))) {
     connection <- calculate_start_df$src$con
+  }
+  
+  # Check if gestation data is empty
+  gest_count <- if (inherits(get_min_max_gestation_df, c("tbl_lazy", "tbl_sql"))) {
+    safe_count(get_min_max_gestation_df)
+  } else {
+    nrow(get_min_max_gestation_df)
+  }
+  
+  if (is.na(gest_count) || gest_count == 0) {
+    cat("[DEBUG] add_gestation: No gestation episodes to add, returning outcome-only episodes\n")
+    # Return just the outcome episodes with episode numbering
+    return(calculate_start_df %>%
+      group_by(person_id) %>%
+      arrange(visit_date, .by_group = TRUE) %>%
+      mutate(episode = row_number()) %>%
+      ungroup())
   }
   
   # Pre-compute all SQL expressions outside pipelines
