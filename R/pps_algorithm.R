@@ -136,6 +136,11 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
     connection <- patients_with_preg_concepts$src$con
   }
   
+  # Pre-compute SQL expressions for date differences to avoid translation issues
+  # These expressions will be used in the pipeline without passing the connection object
+  date_diff_expr <- sql_date_diff("domain_concept_start_date", "prev_date", "day", connection)
+  bridge_diff_expr <- sql_date_diff("next_date", "prev_date", "day", connection)
+  
   # Use window functions to assign episodes based on temporal patterns
   # This mirrors the logic from assign_episodes but runs in the database
   result <- patients_with_preg_concepts %>%
@@ -155,7 +160,7 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
       # Time difference in months from previous record
       delta_t = case_when(
         is.na(prev_date) ~ 0,
-        TRUE ~ as.numeric(sql_date_diff(domain_concept_start_date, prev_date, "day", connection)) / 30
+        TRUE ~ as.numeric(!!date_diff_expr) / 30
       ),
       
       # Check concept agreement with previous record
@@ -178,7 +183,7 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
       # This approximates the bridge logic from the original algorithm
       bridge_delta_t = case_when(
         is.na(prev_date) | is.na(next_date) ~ 999,
-        TRUE ~ as.numeric(sql_date_diff(next_date, prev_date, "day", connection)) / 30
+        TRUE ~ as.numeric(!!bridge_diff_expr) / 30
       ),
       
       bridge_max_delta = case_when(
@@ -218,6 +223,9 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
            -agreement_bridge, -agreement_t_c, -new_episode_flag) %>%
     ungroup()
   
+  # Pre-compute episode length SQL expression
+  episode_length_expr <- sql_date_diff("episode_max_date", "episode_min_date", "day", connection)
+  
   # Now filter episodes that are > 12 months and renumber
   # Calculate episode length and filter
   episodes_filtered <- result %>%
@@ -226,9 +234,7 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
       episode_min_date = min(domain_concept_start_date),
       episode_max_date = max(domain_concept_start_date),
       # Episode length in months
-      episode_length_months = as.numeric(
-        sql_date_diff(episode_max_date, episode_min_date, "day", connection)
-      ) / 30
+      episode_length_months = as.numeric(!!episode_length_expr) / 30
     ) %>%
     # Mark episodes > 12 months as invalid (set to 0)
     mutate(
