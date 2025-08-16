@@ -299,7 +299,10 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   #   person_dates_dict <- split(person_dates_df$list_col, person_dates_df$person_id)
   
   # The database will handle pagination automatically
-  person_dates_df <- collect(patients_with_preg_concepts) %>%
+  # Select only columns needed for assign_episodes to reduce data transfer
+  person_dates_df <- patients_with_preg_concepts %>%
+    select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
+    collect() %>%
     group_by(person_id) %>%
     arrange(domain_concept_start_date)
   
