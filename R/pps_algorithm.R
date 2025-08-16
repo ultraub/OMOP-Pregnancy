@@ -177,7 +177,11 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
       ),
       
       # Agreement check with previous record
-      agreement_prev = (delta_t >= min_expected_delta) & (delta_t <= max_expected_delta),
+      # Use case_when to return integers instead of boolean to avoid BIT datatype issues in Databricks
+      agreement_prev = case_when(
+        (delta_t >= min_expected_delta) & (delta_t <= max_expected_delta) ~ 1L,
+        TRUE ~ 0L
+      ),
       
       # Simplified bridge check: does next record agree with previous record?
       # This approximates the bridge logic from the original algorithm
@@ -196,11 +200,17 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
         TRUE ~ next_min_month - prev_max_month - 2
       ),
       
-      # Bridge agreement check
-      agreement_bridge = (bridge_delta_t >= bridge_min_delta) & (bridge_delta_t <= bridge_max_delta),
+      # Bridge agreement check - return integer to avoid BIT datatype
+      agreement_bridge = case_when(
+        (bridge_delta_t >= bridge_min_delta) & (bridge_delta_t <= bridge_max_delta) ~ 1L,
+        TRUE ~ 0L
+      ),
       
-      # Combined agreement (either direct or bridge)
-      agreement_t_c = agreement_prev | agreement_bridge,
+      # Combined agreement (either direct or bridge) - use integer logic
+      agreement_t_c = case_when(
+        agreement_prev == 1L | agreement_bridge == 1L ~ 1L,
+        TRUE ~ 0L
+      ),
       
       # New episode flag based on original logic:
       # - Start new episode if no agreement and delta_t > 1 month
@@ -208,7 +218,7 @@ assign_episodes_database <- function(patients_with_preg_concepts, connection = N
       new_episode_flag = case_when(
         is.na(prev_date) ~ 1L,  # First record is always new episode
         delta_t > 10 ~ 1L,       # Time gap > 10 months
-        (!agreement_t_c) & (delta_t > 1) ~ 1L,  # No agreement and gap > 1 month
+        (agreement_t_c == 0L) & (delta_t > 1) ~ 1L,  # No agreement and gap > 1 month
         TRUE ~ 0L
       ),
       
