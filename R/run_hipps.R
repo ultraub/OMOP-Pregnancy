@@ -359,7 +359,7 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   # Gestation-based episodes
   gestation_visits_df <- gestation_visits(initial_pregnant_cohort_df, connection = connection)
   gestation_episodes_df <- gestation_episodes(gestation_visits_df, connection = connection)
-  get_min_max_gestation_df <- get_min_max_gestation(gestation_episodes_df)
+  get_min_max_gestation_df <- get_min_max_gestation(gestation_episodes_df, connection = connection)
   
   # Check if we have any gestation data
   gest_count <- safe_count(get_min_max_gestation_df)
@@ -390,8 +390,8 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   }
   
   # Combine episodes
-  add_gestation_df <- add_gestation(calculate_start_df, get_min_max_gestation_df, connection = connection)
-  clean_episodes_df <- clean_episodes(add_gestation_df, connection = connection)
+  add_gestation_df <- add_gestation(calculate_start_df, get_min_max_gestation_df, buffer_days = 28, connection = connection)
+  clean_episodes_df <- clean_episodes(add_gestation_df, buffer_days = 28, connection = connection)
   remove_overlaps_df <- remove_overlaps(clean_episodes_df, connection = connection)
   final_episodes_df <- final_episodes(remove_overlaps_df)
   

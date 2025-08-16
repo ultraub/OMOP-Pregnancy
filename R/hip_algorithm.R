@@ -1026,7 +1026,7 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
 #'
 #' @return Episodes with min/max gestational ages
 #' @export
-get_min_max_gestation <- function(gestation_episodes_df) {
+get_min_max_gestation <- function(gestation_episodes_df, connection = NULL) {
   # Get the min and max gestational age in weeks and the corresponding visit
   # dates per pregnancy episode.
   #
@@ -1153,7 +1153,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   min_visits <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
     summarise(min_visit_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Then join back to get gest_week at that date
   new_first_df <- gestation_episodes_df %>%
@@ -1161,7 +1161,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
     filter(visit_date == min_visit_date) %>%
     group_by(person_id, episode) %>%
     summarise(first_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   ############ Min Gestation Week ############
   
@@ -1170,13 +1170,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   min_weeks <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
     summarise(min_gest_week = min(gest_week, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Then join back to get all records with that min week
   temp_min_df <- gestation_episodes_df %>%
     inner_join(min_weeks, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(gest_week == min_gest_week) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # get range of time when that gestational week was recorded
   # get first occurrence of min gestation week
@@ -1184,13 +1184,13 @@ get_min_max_gestation <- function(gestation_episodes_df) {
     mutate(min_gest_week = gest_week) %>%
     group_by(person_id, episode, min_gest_week) %>%
     summarize(min_gest_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # get last occurrence of min gestation week
   second_min_df <- temp_min_df %>%
     group_by(person_id, episode, gest_week) %>% # = min_gest_week
     summarize(min_gest_date_2 = max(visit_date, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   ############ End Visit Date ############
   
@@ -1200,7 +1200,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   max_visits <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
     summarise(max_visit_date = max(visit_date, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Then join back to get records at that date
   temp_end_df <- gestation_episodes_df %>%
@@ -1212,7 +1212,7 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   new_end_df <- temp_end_df %>%
     group_by(person_id, episode, end_gest_date) %>%
     summarize(end_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   ############ Max Gestation Week ############
   
@@ -1221,19 +1221,19 @@ get_min_max_gestation <- function(gestation_episodes_df) {
   max_weeks <- gestation_episodes_df %>%
     group_by(person_id, episode) %>%
     summarise(max_gest_week = max(gest_week, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Then join back to get all records with that max week
   temp_max_df <- gestation_episodes_df %>%
     inner_join(max_weeks, by = c("person_id", "episode"), suffix = c(".x", ".y")) %>%
     filter(gest_week == max_gest_week) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # get first occurrence of max gestation week
   new_max_df <- temp_max_df %>%
     group_by(person_id, episode, max_gest_week) %>%
     summarize(max_gest_date = min(visit_date, na.rm = TRUE), .groups = "drop") %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # max_gest_date can be later than min_gest_date_2 (only one GA but multiple dates)
   
@@ -1334,10 +1334,10 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   # CRITICAL: Materialize data before overlaps join to ensure it works correctly
   # The overlaps join may not translate properly with lazy queries
   if (inherits(calculate_start_df, c("tbl_lazy", "tbl_sql"))) {
-    calculate_start_df <- calculate_start_df %>% compute_table()
+    calculate_start_df <- calculate_start_df %>% compute_table(connection = connection)
   }
   if (inherits(get_min_max_gestation_df, c("tbl_lazy", "tbl_sql"))) {
-    get_min_max_gestation_df <- get_min_max_gestation_df %>% compute_table()
+    get_min_max_gestation_df <- get_min_max_gestation_df %>% compute_table(connection = connection)
   }
   
   # Debug: Check counts before join
@@ -1406,7 +1406,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     group_by(gest_id) %>%
     slice_min(order_by = abs(days_diff), n = 1, with_ties = FALSE) %>%
     ungroup() %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Debug: Check overlapping episodes count
   overlap_count <- safe_count(both_df)
@@ -1421,12 +1421,12 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   overlapping_visit_ids <- both_df %>% 
     select(visit_id) %>% 
     distinct() %>%
-    compute_table()
+    compute_table(connection = connection)
   
   overlapping_gest_ids <- both_df %>% 
     select(gest_id) %>% 
     distinct() %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # only outcome-based episodes
   # Pre-compute NULL casts for union compatibility
@@ -1452,7 +1452,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
   
   # Instead of selecting essential columns, ensure all dataframes have ALL columns
   # First, materialize the overlapping episodes
-  both_df_mat <- both_df %>% compute_table()
+  both_df_mat <- both_df %>% compute_table(connection = connection)
   
   # Add ALL missing columns from both_df to the other dataframes
   # This ensures union compatibility without losing any columns
@@ -1470,7 +1470,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       gest_at_outcome = !!null_int_sql,
       days_diff = !!null_int_sql
     ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # For gestation-only episodes: add all outcome-related columns as NULL
   just_gestation_df_full <- just_gestation_df %>%
@@ -1484,7 +1484,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
       gest_start_date_diff = !!null_int_sql,
       days_diff = !!null_int_sql
     ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Debug: Check component counts
   both_count <- safe_count(both_df_mat)
@@ -1531,7 +1531,7 @@ add_gestation <- function(calculate_start_df, get_min_max_gestation_df, buffer_d
     ungroup() %>%
     # recalculate since I overwrote
     mutate(days_diff = !!days_diff_recalc_sql) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # Debug: Check after union
   tryCatch({
@@ -1643,7 +1643,7 @@ clean_episodes <- function(add_gestation_df, buffer_days = 28, connection = NULL
       visit_date = max_gest_date,
       removed_outcome = 1
     ) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   # filter out these episodes from main table
   final_df <- final_df %>%
@@ -1855,7 +1855,7 @@ remove_overlaps <- function(clean_episodes_df, connection = NULL) {
   final_df <- final_df %>%
     filter(!(!is.na(max_gest_week) & !is.na(concept_name) & is_over_min == 0)) %>%
     union_all(temp_df) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   removed_count <- safe_count(final_df %>% filter(removed_outcome == 1))
   if (!is.na(removed_count)) {
@@ -1900,7 +1900,7 @@ final_episodes_with_length <- function(final_episodes_df, gestation_visits_df, c
   gest_df <- gestation_visits_df %>%
     select(person_id, gest_value, visit_date) %>%
     rename(gest_date = visit_date) %>%
-    compute_table()
+    compute_table(connection = connection)
   
   merged <- gest_df %>%
     right_join(df,
@@ -1914,7 +1914,7 @@ final_episodes_with_length <- function(final_episodes_df, gestation_visits_df, c
     slice_min(gest_date, n = 1) %>%
     # keep max gest_value if two or more gestation records share same date
     ungroup() %>%
-    compute_table() %>%
+    compute_table(connection = connection) %>%
     group_by(person_id, episode) %>%
     slice_max(gest_value, n = 1, with_ties = FALSE) %>%
     ungroup() %>%
