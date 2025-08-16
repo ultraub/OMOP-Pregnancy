@@ -31,19 +31,33 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   # obtain the gestational timing <= 3 month concept information to use as additional 
   # information for precision category designation
   
-  # Ensure we have a proper dataframe, not a lazy query
-  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
-    message("Computing merged episodes dataframe...")
-    pregnant_dates <- final_merged_episode_detailed_df %>% safe_collect()
-  } else {
-    pregnant_dates <- final_merged_episode_detailed_df
+  # Keep data in database as long as possible
+  pregnant_dates <- final_merged_episode_detailed_df
+  
+  # Get the connection early if available
+  if (is.null(connection)) {
+    if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+      connection <- final_merged_episode_detailed_df$src$con
+    } else if (inherits(concept_tbl, c("tbl_lazy", "tbl_sql"))) {
+      connection <- concept_tbl$src$con
+    }
   }
   
-  # Check if we have any data
-  if (is.null(pregnant_dates) || nrow(pregnant_dates) == 0) {
+  # Check if we have any data (works for both lazy and local)
+  row_count <- tryCatch({
+    if (inherits(pregnant_dates, c("tbl_lazy", "tbl_sql"))) {
+      pregnant_dates %>% tally() %>% pull(n)
+    } else {
+      nrow(pregnant_dates)
+    }
+  }, error = function(e) 0)
+  
+  if (row_count == 0) {
     warning("No episodes found in merged dataframe - returning empty result")
     return(data.frame())
   }
+  
+  message(sprintf("Processing %d episodes for ESD calculation...", row_count))
   
   # Ensure PPS_concepts is collected before pulling values
   if (inherits(PPS_concepts, c("tbl_lazy", "tbl_sql"))) {
@@ -215,27 +229,45 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   } else if ("person_episode_number" %in% col_names) {
     pregnant_dates <- pregnant_dates %>% mutate(episode_num = person_episode_number)
   } else {
-    pregnant_dates <- pregnant_dates %>% mutate(episode_num = row_number())
+    # Only use row_number() if data is local
+    if (inherits(pregnant_dates, c("tbl_lazy", "tbl_sql"))) {
+      # For lazy queries, add a sequential number during collection later
+      pregnant_dates <- pregnant_dates %>% mutate(episode_num = NA_integer_)
+    } else {
+      pregnant_dates <- pregnant_dates %>% mutate(episode_num = row_number())
+    }
   }
   
-  # Get the connection from the original lazy query if available
-  connection <- NULL
-  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
-    connection <- final_merged_episode_detailed_df$src$con
-  } else if (inherits(condition_occurrence_tbl, c("tbl_lazy", "tbl_sql"))) {
-    # Try to get connection from domain tables if not available from merged df
-    connection <- condition_occurrence_tbl$src$con
-  }
-  
+  # Connection was already extracted earlier, so just use it
   # Prepare the person_id_list dataframe
+  # If episode_num is NA (from lazy query), we need to handle it
   person_id_list_df <- pregnant_dates %>%
     select(person_id, start_date, recorded_episode_end = end_date, episode_number = episode_num) %>%
     filter(!is.na(start_date))
   
-  # Create temp table with proper parameter order if we have a connection
+  # If episode_number is NA and we have lazy data, materialize it to assign numbers
+  if (inherits(person_id_list_df, c("tbl_lazy", "tbl_sql"))) {
+    # Check if episode_number needs assignment
+    needs_episode_num <- tryCatch({
+      person_id_list_df %>%
+        head(1) %>%
+        collect() %>%
+        pull(episode_number) %>%
+        is.na()
+    }, error = function(e) FALSE)
+    
+    if (needs_episode_num) {
+      # Materialize and assign episode numbers
+      person_id_list_df <- person_id_list_df %>%
+        compute_table(connection = connection) %>%
+        mutate(episode_number = row_number())
+    }
+  }
+  
+  # Create temp table if we have a connection
   # Otherwise, the copy = TRUE in inner_join will handle it
   if (!is.null(connection)) {
-    person_id_list <- create_temp_table(connection, person_id_list_df)
+    person_id_list <- create_temp_table(person_id_list_df, connection = connection)
   } else {
     # If no connection available, just use the dataframe as-is
     # The copy = TRUE parameter in inner_join will handle uploading it
@@ -291,6 +323,7 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
     44
   }
   
+  # Need to collect here for string manipulations
   preg_related_concepts_local <- preg_related_concepts %>%
     left_join(algo2_timing_concepts_df, by = "domain_concept_id", suffix = c(".x", ".y")) %>%
     collect() %>%
@@ -461,9 +494,24 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
                                          final_merged_episode_detailed_df,
                                          Matcho_term_durations) {
   
-  # Ensure both dataframes are in the same location (local)
-  # If final_merged_episode_detailed_df is a database table, collect it
-  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+  # Check if data needs to be collected - only if episodes_with_gestational_timing_info_df is local
+  # and final_merged_episode_detailed_df is lazy
+  if (!inherits(episodes_with_gestational_timing_info_df, c("tbl_lazy", "tbl_sql")) &&
+      inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+    # Extract connection for database-specific handling
+    connection <- final_merged_episode_detailed_df$src$con
+    dbms <- attr(connection, "dbms", exact = TRUE)
+    
+    # Check dataset size to determine collection strategy
+    row_count <- tryCatch({
+      final_merged_episode_detailed_df %>% tally() %>% pull(n)
+    }, error = function(e) NA)
+    
+    if (!is.na(row_count) && row_count > 100000 && !is.null(dbms) && dbms != "sql server") {
+      warning(sprintf("Large dataset (%d rows) - consider keeping data in database", row_count))
+    }
+    
+    # Collect the data for the join
     final_merged_episode_detailed_df <- final_merged_episode_detailed_df %>% safe_collect()
   }
   
