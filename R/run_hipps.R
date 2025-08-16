@@ -112,6 +112,30 @@ run_hipps <- function(connectionDetails = NULL,
   message("Creating temporary tables for concept sets...")
   HIP_concepts <- create_temp_table(con, concept_sets$HIP_concepts)
   
+  # Debug: Test counting directly
+  if (attr(con, "dbms", exact = TRUE) %in% c("spark", "databricks")) {
+    cat("\n[DEBUG] Testing direct count on HIP_concepts...\n")
+    tryCatch({
+      # Try the most direct approach possible
+      table_sql <- dbplyr::sql_render(HIP_concepts)
+      cat("[DEBUG] Table SQL: ", substring(as.character(table_sql), 1, 100), "...\n")
+      
+      # Try DatabaseConnector directly
+      test_result <- DatabaseConnector::querySql(con, "SELECT COUNT(*) FROM (SELECT 1) AS test")
+      cat("[DEBUG] Test query succeeded, columns: ", paste(names(test_result), collapse = ", "), "\n")
+      
+      # Now try actual count
+      count_sql <- paste0("SELECT COUNT(*) AS cnt FROM (", as.character(table_sql), ") AS t")
+      count_result <- DatabaseConnector::querySql(con, count_sql)
+      cat("[DEBUG] Count result columns: ", paste(names(count_result), collapse = ", "), "\n")
+      if (!is.null(count_result) && nrow(count_result) > 0) {
+        cat("[DEBUG] HIP_concepts row count: ", count_result[[1]], "\n")
+      }
+    }, error = function(e) {
+      cat("[DEBUG] Direct count error: ", e$message, "\n")
+    })
+  }
+  
   # Verify HIP_concepts was uploaded correctly
   verify_table_upload(HIP_concepts, "HIP_concepts")
   

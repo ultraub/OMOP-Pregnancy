@@ -540,21 +540,56 @@ dc_query <- function(connection, sql) {
   # Ensure SQL is a character string
   sql_string <- as.character(sql)
   
-  # Use DatabaseConnector for better Spark support
-  tryCatch({
-    result <- DatabaseConnector::querySql(connection, sql_string)
-    # DatabaseConnector returns uppercase column names, convert to lowercase
-    names(result) <- tolower(names(result))
-    return(result)
-  }, error = function(e) {
-    # Fallback to DBI if DatabaseConnector fails (for non-OHDSI connections)
+  # Check if DatabaseConnector is available
+  if (!requireNamespace("DatabaseConnector", quietly = TRUE)) {
+    warning("DatabaseConnector not available, using DBI")
+    return(DBI::dbGetQuery(connection, sql_string))
+  }
+  
+  # Get the DBMS type
+  dbms <- attr(connection, "dbms", exact = TRUE)
+  
+  # For Spark/Databricks, ensure we use DatabaseConnector
+  if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
     tryCatch({
-      return(DBI::dbGetQuery(connection, sql_string))
-    }, error = function(e2) {
-      warning("Query failed with both DatabaseConnector and DBI: ", e2$message)
+      # For Spark, we need to ensure proper SQL formatting
+      # Remove any dbplyr SQL class wrapping
+      if (inherits(sql_string, "sql")) {
+        sql_string <- as.character(sql_string)
+      }
+      
+      result <- DatabaseConnector::querySql(connection, sql_string)
+      
+      # Check if result is valid
+      if (is.null(result) || !is.data.frame(result)) {
+        warning("DatabaseConnector returned invalid result")
+        return(NULL)
+      }
+      
+      # DatabaseConnector returns uppercase column names, convert to lowercase
+      names(result) <- tolower(names(result))
+      return(result)
+    }, error = function(e) {
+      warning("DatabaseConnector query failed for Spark: ", e$message)
+      # Don't fallback to DBI for Spark - it won't work
       return(NULL)
     })
-  })
+  } else {
+    # For non-Spark databases, try DatabaseConnector first, then DBI
+    tryCatch({
+      result <- DatabaseConnector::querySql(connection, sql_string)
+      names(result) <- tolower(names(result))
+      return(result)
+    }, error = function(e) {
+      # Fallback to DBI for non-Spark connections
+      tryCatch({
+        return(DBI::dbGetQuery(connection, sql_string))
+      }, error = function(e2) {
+        warning("Query failed with both DatabaseConnector and DBI: ", e2$message)
+        return(NULL)
+      })
+    })
+  }
 }
 
 #' Safe count operation for Spark/Databricks
@@ -581,17 +616,61 @@ safe_count <- function(lazy_query) {
   
   # For Spark/Databricks, use multiple fallback strategies with DatabaseConnector
   if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
+    # First, try the simplest possible count if it's a direct table reference
+    if (inherits(lazy_query, "tbl_sql") && !is.null(lazy_query$lazy_query)) {
+      # Try to extract table name for direct count
+      tryCatch({
+        # Get the table reference
+        table_info <- lazy_query$lazy_query
+        if (!is.null(table_info$x)) {
+          table_name <- as.character(table_info$x)
+          # Simple COUNT(*) on the table
+          count_sql <- paste0("SELECT COUNT(*) AS n FROM ", table_name)
+          
+          # Use DatabaseConnector directly
+          result <- tryCatch({
+            DatabaseConnector::querySql(connection, count_sql)
+          }, error = function(e) {
+            NULL
+          })
+          
+          if (!is.null(result) && nrow(result) > 0) {
+            # DatabaseConnector returns uppercase columns
+            if ("N" %in% names(result)) {
+              return(as.numeric(result$N))
+            } else if ("n" %in% names(result)) {
+              return(as.numeric(result$n))
+            }
+          }
+        }
+      }, error = function(e) {
+        # Continue to other strategies
+      })
+    }
+    
     # Strategy 1: Try direct SQL COUNT using DatabaseConnector
     tryCatch({
       count_query <- lazy_query %>% 
         summarise(n = n()) %>%
         dbplyr::sql_render()
       
+      # Debug: Log the SQL being executed
+      if (interactive()) {
+        cat("[DEBUG] safe_count Strategy 1 SQL: ", substring(as.character(count_query), 1, 100), "...\n")
+      }
+      
       result <- dc_query(connection, as.character(count_query))
       if (!is.null(result) && nrow(result) > 0) {
         return(as.numeric(result[[1]]))
+      } else {
+        if (interactive()) {
+          cat("[DEBUG] safe_count Strategy 1 returned NULL or empty\n")
+        }
       }
     }, error = function(e1) {
+      if (interactive()) {
+        cat("[DEBUG] safe_count Strategy 1 error: ", e1$message, "\n")
+      }
       # Continue to next strategy
     })
     
