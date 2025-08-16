@@ -76,94 +76,49 @@ connectionDetails <- createConnectionDetails(
 cdmDatabaseSchema = "omop.data"
 resultsDatabaseSchema = "rit_projects.preeclampsia_irb00501176"
 
-# Create the connection with error handling
-con <- tryCatch({
-  create_connection(
-    connectionDetails = connectionDetails,
-    cdmDatabaseSchema = cdmDatabaseSchema,
-    resultsDatabaseSchema = resultsDatabaseSchema
-  )
-}, error = function(e) {
-  message("Connection failed. Checking Arrow/JDBC configuration...")
-  message("Error: ", e$message)
-  
-  # Try alternative connection without some optimizations
-  jdbc_url_fallback <- paste0(
-    "jdbc:databricks://adb-4068548029743470.10.azuredatabricks.net:443;",
-    "httpPath=/sql/1.0/warehouses/ba264cbc36eb86d3"
-  )
-  
-  connectionDetails_fallback <- createConnectionDetails(
-    dbms = "spark",
-    connectionString = jdbc_url_fallback,
-    pathToDriver = pathToDriver,
-    user = "token",
-    password = Sys.getenv("DATABRICKS_TOKEN")
-  )
-  
-  create_connection(
-    connectionDetails = connectionDetails_fallback,
-    cdmDatabaseSchema = cdmDatabaseSchema,
-    resultsDatabaseSchema = resultsDatabaseSchema
-  )
-})
-
-# Test the connection
-message("Testing connection...")
-test_result <- tryCatch({
-  DatabaseConnector::querySql(con, "SELECT 1 as test")
-}, error = function(e) {
-  message("Simple query test failed: ", e$message)
-  NULL
-})
+# Create the connection - fail fast if it doesn't work
+message("Creating connection to Databricks...")
+con <- create_connection(
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = cdmDatabaseSchema,
+  resultsDatabaseSchema = resultsDatabaseSchema
+)
 
 # Re-enable warnings after connection
 options(warn = 0)
 
+# Test the connection - fail if test doesn't work
+message("Testing connection...")
+test_result <- DatabaseConnector::querySql(con, "SELECT 1 as test")
+
 if (!is.null(test_result)) {
-  message("Connection successful!")
+  message("✓ Connection successful!")
 } else {
-  message("Warning: Connection established but queries may fail")
+  stop("Connection test failed - query returned NULL")
 }
 
-# Run the HIPPS algorithm with additional error handling
-results <- tryCatch({
-  run_hipps(
-    connectionDetails = connectionDetails,
-    cdmDatabaseSchema = cdmDatabaseSchema,
-    resultsDatabaseSchema = resultsDatabaseSchema,
-    outputFolder = "output/",
-    saveIntermediateResults = TRUE  # Save intermediate results for debugging
-  )
-}, error = function(e) {
-  message("HIPPS algorithm failed: ", e$message)
-  
-  # If it fails due to Arrow issues, provide diagnostic information
-  if (grepl("Arrow|MemoryUtil", e$message)) {
-    message("\n=== Arrow Memory Error Detected ===")
-    message("This is a known issue with Databricks JDBC and Apache Arrow.")
-    message("Solutions:")
-    message("1. Ensure JVM parameters are set at the very beginning of the script")
-    message("2. Try restarting your R session and running the script again")
-    message("3. Consider using Databricks notebooks instead of remote JDBC")
-    message("4. Contact your Databricks admin to check server-side Arrow configuration")
-  }
-  
-  # Return error for debugging
-  e
-})
+# Run the HIPPS algorithm - no fallbacks, fail fast
+message("\n========================================")
+message("Starting HIPPS Algorithm")
+message("========================================")
 
-# If successful, display summary
-if (!inherits(results, "error")) {
-  message("HIPPS algorithm completed successfully!")
-  message("Results saved to: output/")
-  
-  # Display summary statistics if available
-  if (!is.null(results$summary)) {
-    print(results$summary)
-  }
-} else {
-  message("Algorithm failed. Check the error message above for details.")
+results <- run_hipps(
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = cdmDatabaseSchema,
+  resultsDatabaseSchema = resultsDatabaseSchema,
+  outputFolder = "output/",
+  saveIntermediateResults = TRUE
+)
+
+# If we get here, it was successful
+message("\n========================================")
+message("✓ HIPPS algorithm completed successfully!")
+message("========================================")
+message("Results saved to: output/")
+
+# Display summary statistics if available
+if (!is.null(results$summary)) {
+  print(results$summary)
 }
 
 # Clean up connection
