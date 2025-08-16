@@ -520,6 +520,13 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
     final_merged_episode_detailed_df <- final_merged_episode_detailed_df %>% safe_collect()
   }
   
+  # Ensure final_merged_episode_detailed_df is local for column name access
+  if (inherits(final_merged_episode_detailed_df, c("tbl_lazy", "tbl_sql"))) {
+    # This shouldn't happen after safe_collect() above, but just in case
+    warning("final_merged_episode_detailed_df is still lazy after safe_collect - collecting again")
+    final_merged_episode_detailed_df <- collect(final_merged_episode_detailed_df)
+  }
+  
   # Check which episode column exists in final_merged_episode_detailed_df
   col_names <- names(final_merged_episode_detailed_df)
   
@@ -549,6 +556,11 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
                 by = "person_id", suffix = c(".x", ".y"))
   }
   
+  # Ensure merged is local before checking column names
+  if (inherits(merged, c("tbl_lazy", "tbl_sql"))) {
+    merged <- collect(merged)
+  }
+  
   # Add term duration information
   # Check if final_category column exists, otherwise use category
   if ("final_category" %in% names(merged)) {
@@ -561,6 +573,11 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
     warning("No category column found for term duration join")
     merged_with_terms <- merged %>%
       mutate(max_term = 301, min_term = 140)  # Use default values
+  }
+  
+  # Ensure merged_with_terms is local before checking column names
+  if (inherits(merged_with_terms, c("tbl_lazy", "tbl_sql"))) {
+    merged_with_terms <- collect(merged_with_terms)
   }
   
   # Calculate final estimated start dates considering all information

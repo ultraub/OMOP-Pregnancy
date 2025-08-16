@@ -38,7 +38,16 @@ outcomes_per_episode <- function(PPS_episodes_df, get_PPS_episodes_df, initial_p
     return(data.frame())
   }
   
-  if (nrow(PPS_episodes_df) == 0) {
+  # Safe row count check for lazy queries
+  row_count <- if (inherits(PPS_episodes_df, c("tbl_lazy", "tbl_sql"))) {
+    tryCatch({
+      PPS_episodes_df %>% tally() %>% pull(n)
+    }, error = function(e) 0)
+  } else {
+    nrow(PPS_episodes_df)
+  }
+  
+  if (row_count == 0) {
     warning("PPS_episodes_df has no rows - returning empty data frame")
     return(data.frame())
   }
@@ -60,8 +69,22 @@ outcomes_per_episode <- function(PPS_episodes_df, get_PPS_episodes_df, initial_p
   # this then is added onto the concept date to get 'max_pregnancy_date'
   
   # Check if get_PPS_episodes_df is NULL or empty
-  if (is.null(get_PPS_episodes_df) || nrow(get_PPS_episodes_df) == 0) {
-    warning("get_PPS_episodes_df is NULL or empty - using basic pregnant_dates")
+  if (is.null(get_PPS_episodes_df)) {
+    warning("get_PPS_episodes_df is NULL - using basic pregnant_dates")
+    return(pregnant_dates)
+  }
+  
+  # Safe row count check for lazy queries
+  get_pps_row_count <- if (inherits(get_PPS_episodes_df, c("tbl_lazy", "tbl_sql"))) {
+    tryCatch({
+      get_PPS_episodes_df %>% tally() %>% pull(n)
+    }, error = function(e) 0)
+  } else {
+    nrow(get_PPS_episodes_df)
+  }
+  
+  if (get_pps_row_count == 0) {
+    warning("get_PPS_episodes_df is empty - using basic pregnant_dates")
     return(pregnant_dates)
   }
   
