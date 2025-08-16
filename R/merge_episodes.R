@@ -480,13 +480,20 @@ final_merged_episode_detailed <- function(final_merged_episodes_no_duplicates_df
       )
     )
   
-  # Check if pregnancy_start exists in the input data
-  # This is crucial for SQL Server which can't reference non-existent columns
-  has_pregnancy_start <- "pregnancy_start" %in% names(df)
-  
   # Rename columns to match what ESD algorithm expects
+  # We explicitly select columns using any_of() to handle missing columns gracefully
+  # This matches the All of Us implementation pattern
   df <- df %>%
+    select(any_of(c(
+      "algo1_id", "algo2_id", "person_id", "pregnancy_end", "pregnancy_start",
+      "first_gest_date", "category", "episode_min_date", "episode_max_date",
+      "algo1_dup", "algo2_dup", "algo2_category", "algo2_outcome_date",
+      "merged_episode_start", "merged_episode_end", "merged_episode_length",
+      "gest_date", "gest_flag", "episode_length", "episode_number"
+    ))) %>%
     mutate(
+      # Add pregnancy_start as NA if missing (for PPS-only episodes)
+      pregnancy_start = if ("pregnancy_start" %in% names(.)) pregnancy_start else NA_real_,
       # These renamings match the original All of Us algorithm
       HIP_end_date = pregnancy_end,
       HIP_outcome_category = category,
@@ -500,13 +507,6 @@ final_merged_episode_detailed <- function(final_merged_episodes_no_duplicates_df
       recorded_episode_length = coalesce(merged_episode_length,
                                          as.numeric(difftime(recorded_episode_end, recorded_episode_start, units = "days")) / 30.25)
     )
-  
-  # Add pregnancy_start column if it doesn't exist
-  # This ensures the column is always present for ESD algorithm
-  if (!has_pregnancy_start) {
-    df <- df %>%
-      mutate(pregnancy_start = NA_real_)
-  }
   
   # Add flags marking if episode was identified by either algorithm
   df <- df %>%
