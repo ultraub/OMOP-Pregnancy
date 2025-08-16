@@ -202,11 +202,8 @@ run_hipps <- function(connectionDetails = NULL,
   
   # Compute final results
   message("Computing final results...")
-  if (mode == "allofus") {
-    final_episodes_computed <- compute_table(final_episodes)
-  } else {
-    final_episodes_computed <- compute_table(final_episodes, connection = con)
-  }
+  # Always pass connection for consistency
+  final_episodes_computed <- compute_table(final_episodes, connection = con)
   
   # Collect results if needed
   if (saveIntermediateResults) {
@@ -279,8 +276,8 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
     HIP_concepts,
     config = config,
     connection = connection
-  ) %>%
-    compute_table(connection = connection)
+  )
+  initial_pregnant_cohort_df <- compute_table(initial_pregnant_cohort_df, connection = connection)
   
   # Get outcome visits
   final_abortion_visits_df <- final_visits(
@@ -288,40 +285,40 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
     Matcho_outcome_limits,
     c("AB", "SA"),
     connection = connection
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_abortion_visits_df <- compute_table(final_abortion_visits_df, connection = connection)
   
   final_delivery_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "DELIV",
     connection = connection
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_delivery_visits_df <- compute_table(final_delivery_visits_df, connection = connection)
   
   final_ectopic_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "ECT",
     connection = connection
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_ectopic_visits_df <- compute_table(final_ectopic_visits_df, connection = connection)
   
   final_stillbirth_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "SB",
     connection = connection
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_stillbirth_visits_df <- compute_table(final_stillbirth_visits_df, connection = connection)
   
   final_livebirth_visits_df <- final_visits(
     initial_pregnant_cohort_df,
     Matcho_outcome_limits,
     "LB",
     connection = connection
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_livebirth_visits_df <- compute_table(final_livebirth_visits_df, connection = connection)
   
   # Add episodes hierarchically
   add_stillbirth_df <- add_stillbirth(
@@ -353,8 +350,8 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   )
   
   # Calculate start dates
-  calculate_start_df <- calculate_start(add_delivery_df, Matcho_term_durations, connection = connection) %>%
-    compute_table(connection = connection)
+  calculate_start_df <- calculate_start(add_delivery_df, Matcho_term_durations, connection = connection)
+  calculate_start_df <- compute_table(calculate_start_df, connection = connection)
   
   # Gestation-based episodes
   gestation_visits_df <- gestation_visits(initial_pregnant_cohort_df, connection = connection)
@@ -396,8 +393,8 @@ run_hip_algorithm <- function(procedure_occurrence_tbl,
   final_episodes_df <- final_episodes(remove_overlaps_df)
   
   # Add episode length
-  HIP_episodes_df <- final_episodes_with_length(final_episodes_df, gestation_visits_df, connection = connection) %>%
-    compute_table(connection = connection)
+  HIP_episodes_df <- final_episodes_with_length(final_episodes_df, gestation_visits_df, connection = connection)
+  HIP_episodes_df <- compute_table(HIP_episodes_df, connection = connection)
   
   return(list(
     episodes = HIP_episodes_df,
@@ -509,8 +506,8 @@ run_pps_algorithm <- function(condition_occurrence_tbl,
   )
   
   # Get episode date ranges
-  PPS_episodes_df <- get_episode_max_min_dates(get_PPS_episodes_df, connection) %>%
-    compute_table(connection = connection)
+  PPS_episodes_df <- get_episode_max_min_dates(get_PPS_episodes_df, connection)
+  PPS_episodes_df <- compute_table(PPS_episodes_df, connection = connection)
   
   return(list(
     episodes = PPS_episodes_df,
@@ -566,8 +563,8 @@ merge_episodes <- function(hip_episodes,
   # Add demographic details
   final_merged_episode_detailed_df <- final_merged_episode_detailed(
     final_merged_episodes_no_duplicates_df
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_merged_episode_detailed_df <- compute_table(final_merged_episode_detailed_df, connection = connection)
   
   return(final_merged_episode_detailed_df)
 }
@@ -620,8 +617,8 @@ calculate_esd <- function(merged_episodes,
     episodes_with_gestational_timing_info_df,
     merged_episodes,
     Matcho_term_durations
-  ) %>%
-    compute_table(connection = connection)
+  )
+  final_episodes <- compute_table(final_episodes, connection = connection)
   
   return(final_episodes)
 }
