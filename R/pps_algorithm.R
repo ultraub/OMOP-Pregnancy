@@ -299,12 +299,51 @@ get_PPS_episodes <- function(input_GT_concepts_df, PPS_concepts, person_tbl, con
   #   person_dates_dict <- split(person_dates_df$list_col, person_dates_df$person_id)
   
   # The database will handle pagination automatically
-  # Select only columns needed for assign_episodes to reduce data transfer
-  person_dates_df <- patients_with_preg_concepts %>%
-    select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
-    collect() %>%
-    group_by(person_id) %>%
-    arrange(domain_concept_start_date)
+  # Batch collection to avoid network timeouts in Databricks
+  if (inherits(patients_with_preg_concepts, "tbl_spark")) {
+    # For Databricks, collect in batches to avoid network timeouts
+    
+    # First, get unique person IDs
+    person_ids <- patients_with_preg_concepts %>%
+      select(person_id) %>%
+      distinct() %>%
+      collect() %>%
+      pull(person_id)
+    
+    # Process in batches of 500 persons
+    batch_size <- 500
+    person_dates_list <- list()
+    
+    message(sprintf("Processing %d persons in batches of %d...", 
+                    length(person_ids), batch_size))
+    
+    for (i in seq(1, length(person_ids), batch_size)) {
+      batch_end <- min(i + batch_size - 1, length(person_ids))
+      batch_ids <- person_ids[i:batch_end]
+      
+      message(sprintf("  Batch %d-%d of %d...", i, batch_end, length(person_ids)))
+      
+      batch_data <- patients_with_preg_concepts %>%
+        filter(person_id %in% batch_ids) %>%
+        select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
+        collect()
+      
+      person_dates_list[[length(person_dates_list) + 1]] <- batch_data
+    }
+    
+    # Combine all batches
+    person_dates_df <- bind_rows(person_dates_list) %>%
+      group_by(person_id) %>%
+      arrange(domain_concept_start_date)
+    
+  } else {
+    # For SQL Server and other databases, use standard collection
+    person_dates_df <- patients_with_preg_concepts %>%
+      select(person_id, domain_concept_start_date, domain_concept_id, min_month, max_month) %>%
+      collect() %>%
+      group_by(person_id) %>%
+      arrange(domain_concept_start_date)
+  }
   
   res <- person_dates_df %>%
     group_modify(assign_episodes)
