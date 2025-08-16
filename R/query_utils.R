@@ -682,6 +682,66 @@ dc_query <- function(connection, sql) {
 #' @return Row count or NA if all methods fail
 spark_safe_count <- function(connection, table_ref) {
   
+  # First check if this is a filtered query or simple table reference
+  is_filtered <- FALSE
+  if (inherits(table_ref, c("tbl_lazy", "tbl_sql"))) {
+    # Check if there are any operations applied (filter, select, etc.)
+    if (!is.null(table_ref$lazy_query$ops) && length(table_ref$lazy_query$ops) > 0) {
+      is_filtered <- TRUE
+    }
+  }
+  
+  # If it's a filtered query, we can't use simple table extraction
+  if (is_filtered) {
+    # For filtered queries, we need to use the full SQL rendering
+    # But simplify it as much as possible
+    tryCatch({
+      # Generate the count SQL
+      count_query <- table_ref %>%
+        summarise(n = n()) %>%
+        dbplyr::sql_render()
+      
+      # Use DatabaseConnector to execute
+      result <- DatabaseConnector::querySql(connection, as.character(count_query))
+      
+      if (!is.null(result) && nrow(result) > 0) {
+        # Handle different column name cases
+        if ("N" %in% names(result)) {
+          return(as.numeric(result$N))
+        } else if ("n" %in% names(result)) {
+          return(as.numeric(result$n))
+        } else if (ncol(result) > 0) {
+          return(as.numeric(result[[1]]))
+        }
+      }
+    }, error = function(e) {
+      # If the full query fails, try wrapping approach
+      tryCatch({
+        table_sql <- dbplyr::sql_render(table_ref)
+        # Simplify the SQL by removing unnecessary nesting
+        sql_str <- as.character(table_sql)
+        
+        # Try to extract just the core query without excessive nesting
+        # Look for the innermost SELECT statement
+        if (grepl("^SELECT.*FROM\\s*\\(SELECT", sql_str, ignore.case = TRUE)) {
+          # There's nesting, try to use it as-is but with COUNT
+          count_sql <- paste0("SELECT COUNT(*) AS n FROM (", sql_str, ") AS t")
+        } else {
+          # No excessive nesting, use directly
+          count_sql <- paste0("SELECT COUNT(*) AS n FROM (", sql_str, ") AS t")
+        }
+        
+        result <- DatabaseConnector::querySql(connection, count_sql)
+        if (!is.null(result) && nrow(result) > 0) {
+          return(as.numeric(result[[1]]))
+        }
+      }, error = function(e2) {
+        # Continue to simple table method
+      })
+    })
+  }
+  
+  # For simple table references, use the direct approach
   # Get the actual table name
   table_name <- get_spark_table_name(table_ref)
   
@@ -1050,6 +1110,13 @@ verify_table_upload <- function(table_ref, table_name = "table") {
       actual_table <- get_spark_table_name(table_ref)
       if (!is.null(actual_table)) {
         tryCatch({
+          # First, try to get some sample values to verify data
+          sample_sql <- paste0("SELECT gest_value FROM ", actual_table, " LIMIT 10")
+          sample_result <- DatabaseConnector::querySql(connection, sample_sql)
+          if (!is.null(sample_result) && nrow(sample_result) > 0) {
+            cat("  Sample gest_value data: ", paste(head(sample_result[[1]], 5), collapse = ", "), "\n")
+          }
+          
           # Query for non-NULL count
           non_null_sql <- paste0("SELECT COUNT(*) AS cnt FROM ", actual_table, " WHERE gest_value IS NOT NULL")
           result <- DatabaseConnector::querySql(connection, non_null_sql)
@@ -1065,8 +1132,23 @@ verify_table_upload <- function(table_ref, table_name = "table") {
                      " non-NULL, ",
                      ifelse(is.na(null_count), "?", as.character(null_count)),
                      " NULL\n"))
+          
+          # If both counts failed, try a different approach
+          if (is.na(non_null_count) && is.na(null_count)) {
+            # Try getting distinct values
+            distinct_sql <- paste0("SELECT DISTINCT gest_value FROM ", actual_table, " LIMIT 20")
+            distinct_result <- DatabaseConnector::querySql(connection, distinct_sql)
+            if (!is.null(distinct_result) && nrow(distinct_result) > 0) {
+              null_present <- any(is.na(distinct_result[[1]]))
+              non_null_present <- any(!is.na(distinct_result[[1]]))
+              cat(paste0("  gest_value values detected: ", 
+                        ifelse(non_null_present, "some non-NULL", "no non-NULL"),
+                        ", ",
+                        ifelse(null_present, "some NULL", "no NULL"), "\n"))
+            }
+          }
         }, error = function(e) {
-          cat("  gest_value: unable to count\n")
+          cat("  gest_value: unable to count (", substring(e$message, 1, 50), "...)\n")
         })
       } else {
         cat("  gest_value: unable to count (table name not found)\n")
