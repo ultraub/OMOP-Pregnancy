@@ -1118,6 +1118,10 @@ verify_table_upload <- function(table_ref, table_name = "table") {
   
   # For HIP_concepts specifically, check gest_value
   if ("gest_value" %in% col_names) {
+    # Initialize variables to avoid "object not found" errors
+    non_null_count <- NA
+    null_count <- NA
+    
     # For Spark, try a simpler approach
     if (!is.null(dbms) && (dbms == "spark" || dbms == "databricks")) {
       # Try to get the actual table name and query directly
