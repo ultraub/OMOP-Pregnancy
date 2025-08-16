@@ -249,6 +249,20 @@ compute_table <- function(lazy_query,
                         name = NULL,
                         temporary = TRUE) {
   
+  # If the input is already a data.frame, just return it as-is
+  # This handles cases where data is already computed/collected
+  if (is.data.frame(lazy_query)) {
+    return(lazy_query)
+  }
+  
+  # Check if it's a lazy query
+  if (!inherits(lazy_query, c("tbl_lazy", "tbl_sql", "tbl"))) {
+    # If it's not a recognized table type, try to return as-is
+    warning("compute_table received non-lazy query object of class: ", 
+            paste(class(lazy_query), collapse = ", "))
+    return(lazy_query)
+  }
+  
   # Extract connection from lazy query if not provided
   if (is.null(connection)) {
     connection <- lazy_query$src$con
