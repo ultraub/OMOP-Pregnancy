@@ -179,7 +179,7 @@ run_hipps <- function(connectionDetails = NULL,
   message("Merging HIP and PPS episodes...")
   merged_episodes <- merge_episodes(
     hip_episodes = hip_results$episodes,
-    pps_episodes = pps_results$episodes,
+    pps_episodes = pps_results,
     initial_pregnant_cohort = hip_results$initial_cohort,
     config = config,
     connection = con
