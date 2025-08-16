@@ -18,6 +18,11 @@ options(java.parameters = c(
 library(rJava)
 .jinit()
 
+# Suppress StatusLogger warnings (these are harmless but noisy)
+# The warnings about unrecognized format specifiers don't affect functionality
+options(warn = -1)  # Temporarily suppress warnings during connection
+Sys.setenv(LOG4J_LEVEL = "ERROR")  # Set log4j to only show errors
+
 # Install the package from GitHub (with all recent fixes)
 devtools::install_github("ultraub/OMOP-Pregnancy")
 
@@ -51,18 +56,19 @@ Sys.setenv(DATABRICKS_ENABLE_ARROW = "1")
 jdbc_url <- paste0(
   "jdbc:databricks://adb-4068548029743470.10.azuredatabricks.net:443;",
   "httpPath=/sql/1.0/warehouses/ba264cbc36eb86d3;",
-  "UseNativeQuery=0;",     # Disable native query optimization (keep this)
+  "AuthMech=3;",            # Token authentication method
+  "UseNativeQuery=0;",      # Disable native query optimization (keep this)
   "EnableArrow=1;",         # ENABLE Arrow for efficient columnar transfer
-  "LowLatency=0"           # Keep low latency mode disabled for stability
+  "UID=token;",             # User ID for token auth
+  "PWD=", Sys.getenv("DATABRICKS_TOKEN")  # Token directly in URL
 )
 
 # Create connection details using the optimized JDBC URL
 connectionDetails <- createConnectionDetails(
   dbms = "spark",
   connectionString = jdbc_url,
-  pathToDriver = pathToDriver,
-  user = "token",           # Use "token" as username for Databricks
-  password = Sys.getenv("DATABRICKS_TOKEN")  # Store token in environment variable
+  pathToDriver = pathToDriver
+  # No user/password here since they're in the connection string
 )
 
 # Define database schemas
@@ -109,6 +115,9 @@ test_result <- tryCatch({
   message("Simple query test failed: ", e$message)
   NULL
 })
+
+# Re-enable warnings after connection
+options(warn = 0)
 
 if (!is.null(test_result)) {
   message("Connection successful!")
