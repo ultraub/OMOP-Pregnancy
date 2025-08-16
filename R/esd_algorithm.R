@@ -171,83 +171,13 @@ get_timing_concepts <- function(concept_tbl, condition_occurrence_tbl, observati
   }
   
   # add: change to pregnancy start rather than recorded episode start
-  # Handle different column names that might exist
-  # Check which columns are available
-  col_names <- colnames(pregnant_dates)
-  
-  # Debug: print available columns
-  message("Available columns in pregnant_dates: ", paste(col_names, collapse = ", "))
-  
-  # Find date columns (any column with 'date' in the name)
-  date_cols <- col_names[grepl("date", col_names, ignore.case = TRUE)]
-  
-  # Determine start date column
-  if ("pregnancy_start" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = pregnancy_start)
-  } else if ("estimated_start_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = estimated_start_date)
-  } else if ("episode_min_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = episode_min_date)
-  } else if ("merged_episode_start" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = merged_episode_start)
-  } else if ("visit_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = visit_date)
-  } else if ("final_outcome_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = final_outcome_date)
-  } else if (length(date_cols) > 0) {
-    warning(paste("No recognized start date column found - using", date_cols[1]))
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = !!sym(date_cols[1]))
-  } else {
-    # Create a dummy date if no date columns exist
-    warning("No date columns found - creating dummy dates")
-    pregnant_dates <- pregnant_dates %>% mutate(start_date = as.Date("2020-01-01"))
-  }
-  
-  # Determine end date column
-  if ("recorded_episode_end" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = recorded_episode_end)
-  } else if ("pregnancy_end" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = pregnancy_end)
-  } else if ("episode_max_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = episode_max_date)
-  } else if ("merged_episode_end" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = merged_episode_end)
-  } else if ("visit_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = visit_date)
-  } else if ("final_outcome_date" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = final_outcome_date)
-  } else if (length(date_cols) > 0) {
-    # Use the last date column if available
-    last_date_col <- date_cols[length(date_cols)]
-    warning(paste("No recognized end date column found - using", last_date_col))
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = !!sym(last_date_col))
-  } else {
-    warning("No recognized end date column found - using start_date")
-    pregnant_dates <- pregnant_dates %>% mutate(end_date = start_date)
-  }
-  
-  # Determine episode number column
-  if ("episode_number" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(episode_num = episode_number)
-  } else if ("episode" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(episode_num = episode)
-  } else if ("person_episode_number" %in% col_names) {
-    pregnant_dates <- pregnant_dates %>% mutate(episode_num = person_episode_number)
-  } else {
-    # Only use row_number() if data is local
-    if (inherits(pregnant_dates, c("tbl_lazy", "tbl_sql"))) {
-      # For lazy queries, add a sequential number during collection later
-      pregnant_dates <- pregnant_dates %>% mutate(episode_num = NA_integer_)
-    } else {
-      pregnant_dates <- pregnant_dates %>% mutate(episode_num = row_number())
-    }
-  }
+  # This follows the original All of Us algorithm approach exactly
   
   # Connection was already extracted earlier, so just use it
-  # Prepare the person_id_list dataframe
-  # If episode_num is NA (from lazy query), we need to handle it
+  # Prepare the person_id_list dataframe following the original All of Us approach
   person_id_list_df <- pregnant_dates %>%
-    select(person_id, start_date, recorded_episode_end = end_date, episode_number = episode_num) %>%
+    mutate(start_date = pmin(pregnancy_start, recorded_episode_start, na.rm = TRUE)) %>%
+    select(person_id, start_date, recorded_episode_end, episode_number) %>%
     filter(!is.na(start_date))
   
   # If episode_number is NA and we have lazy data, materialize it to assign numbers
@@ -527,87 +457,27 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
     final_merged_episode_detailed_df <- collect(final_merged_episode_detailed_df)
   }
   
-  # Check which episode column exists in final_merged_episode_detailed_df
-  col_names <- colnames(final_merged_episode_detailed_df)
-  
-  # Determine the correct episode column to join on
-  if ("episode_number" %in% col_names) {
-    # episode_number exists, use it directly
-    merged <- final_merged_episode_detailed_df %>%
-      left_join(episodes_with_gestational_timing_info_df,
-                by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
-  } else if ("episode" %in% col_names) {
-    # Use episode column, rename it for the join
-    merged <- final_merged_episode_detailed_df %>%
-      rename(episode_number = episode) %>%
-      left_join(episodes_with_gestational_timing_info_df,
-                by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
-  } else if ("person_episode_number" %in% col_names) {
-    # Use person_episode_number column
-    merged <- final_merged_episode_detailed_df %>%
-      rename(episode_number = person_episode_number) %>%
-      left_join(episodes_with_gestational_timing_info_df,
-                by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
-  } else {
-    # No episode column found - join only on person_id
-    warning("No episode column found in final_merged_episode_detailed_df - joining only on person_id")
-    merged <- final_merged_episode_detailed_df %>%
-      left_join(episodes_with_gestational_timing_info_df,
-                by = "person_id", suffix = c(".x", ".y"))
-  }
+  # Join on episode_number which should always exist from final_merged_episode_detailed
+  merged <- final_merged_episode_detailed_df %>%
+    left_join(episodes_with_gestational_timing_info_df,
+              by = c("person_id", "episode_number"), suffix = c(".x", ".y"))
   
   # Ensure merged is local before checking column names
   if (inherits(merged, c("tbl_lazy", "tbl_sql"))) {
     merged <- collect(merged)
   }
   
-  # Add term duration information
-  # Check if final_category column exists, otherwise use category
-  if ("final_category" %in% colnames(merged)) {
-    merged_with_terms <- merged %>%
-      left_join(Matcho_term_durations, by = c("final_category" = "category"), suffix = c(".x", ".y"))
-  } else if ("category" %in% colnames(merged)) {
-    merged_with_terms <- merged %>%
-      left_join(Matcho_term_durations, by = "category", suffix = c(".x", ".y"))
-  } else {
-    warning("No category column found for term duration join")
-    merged_with_terms <- merged %>%
-      mutate(max_term = 301, min_term = 140)  # Use default values
-  }
+  # Add term duration information using final_category from final_merged_episode_detailed
+  merged_with_terms <- merged %>%
+    left_join(Matcho_term_durations, by = c("final_category" = "category"), suffix = c(".x", ".y"))
   
   # Ensure merged_with_terms is local before checking column names
   if (inherits(merged_with_terms, c("tbl_lazy", "tbl_sql"))) {
     merged_with_terms <- collect(merged_with_terms)
   }
   
-  # Calculate final estimated start dates considering all information
-  # Check which columns exist and add missing ones with default values
-  col_names <- colnames(merged_with_terms)
-  
-  # Ensure required columns exist
-  if (!"final_outcome_date" %in% col_names) {
-    if ("visit_date" %in% col_names) {
-      merged_with_terms <- merged_with_terms %>% mutate(final_outcome_date = visit_date)
-    } else {
-      merged_with_terms <- merged_with_terms %>% mutate(final_outcome_date = as.Date(NA))
-    }
-  }
-  
-  if (!"estimated_start_date" %in% col_names) {
-    merged_with_terms <- merged_with_terms %>% mutate(estimated_start_date = as.Date(NA))
-  }
-  
-  if (!"pregnancy_start" %in% col_names) {
-    merged_with_terms <- merged_with_terms %>% mutate(pregnancy_start = as.Date(NA))
-  }
-  
-  if (!"max_term" %in% col_names) {
-    merged_with_terms <- merged_with_terms %>% mutate(max_term = 301)
-  }
-  
-  if (!"min_term" %in% col_names) {
-    merged_with_terms <- merged_with_terms %>% mutate(min_term = 140)
-  }
+  # Calculate final estimated start dates
+  # All required columns should be present from final_merged_episode_detailed and the join
   
   final_episodes <- merged_with_terms %>%
     mutate(
@@ -631,19 +501,13 @@ merged_episodes_with_metadata <- function(episodes_with_gestational_timing_info_
           gestational_age_at_outcome <= max_term/7 ~ TRUE,
         TRUE ~ FALSE
       ),
-      # Add quality indicator - check if precision_category exists
-      episode_quality = if ("precision_category" %in% names(.)) {
-        case_when(
-          precision_category == "High" & gestational_age_valid == TRUE ~ "High",
-          precision_category == "Medium" | gestational_age_valid == TRUE ~ "Medium",
-          TRUE ~ "Low"
-        )
-      } else {
-        case_when(
-          gestational_age_valid == TRUE ~ "Medium",
-          TRUE ~ "Low"
-        )
-      }
+      # Add quality indicator based on precision_category from timing concepts
+      episode_quality = case_when(
+        !is.na(precision_category) & precision_category == "High" & gestational_age_valid == TRUE ~ "High",
+        !is.na(precision_category) & (precision_category == "Medium" | gestational_age_valid == TRUE) ~ "Medium",
+        gestational_age_valid == TRUE ~ "Medium",
+        TRUE ~ "Low"
+      )
     )
   
   return(final_episodes)

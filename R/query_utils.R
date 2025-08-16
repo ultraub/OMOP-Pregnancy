@@ -34,17 +34,31 @@ create_temp_table <- function(connection,
                             table_name = NULL,
                             resultsDatabaseSchema = NULL) {
   
-  # Check for empty data frame
-  if (is.null(data) || nrow(data) == 0) {
-    warning("create_temp_table: Received empty data frame (", 
-            ifelse(is.null(data), "NULL", paste0(nrow(data), " rows")), 
-            "). Returning empty local data frame.")
-    # Return empty data frame instead of trying to create empty table
-    if (!is.null(data)) {
-      return(data)  # Return the empty data frame with its structure
-    } else {
-      return(data.frame())  # Return generic empty data frame
-    }
+  # Check for empty data frame - handle both lazy and local data
+  if (is.null(data)) {
+    warning("create_temp_table: Received NULL data. Returning empty data frame.")
+    return(data.frame())
+  }
+  
+  # Check if data is empty based on its type
+  is_empty <- if (inherits(data, c("tbl_lazy", "tbl_sql"))) {
+    # For lazy queries, use tally to check row count
+    row_count <- tryCatch({
+      data %>% tally() %>% pull(n)
+    }, error = function(e) {
+      # If tally fails, assume not empty and let downstream handle it
+      NA
+    })
+    # Only consider empty if we got a definitive 0
+    isTRUE(row_count == 0)
+  } else {
+    # For local data frames, use nrow
+    nrow(data) == 0
+  }
+  
+  if (is_empty) {
+    warning("create_temp_table: Received empty data frame. Returning as-is.")
+    return(data)  # Return the empty data frame with its structure
   }
   
   mode <- attr(connection, "mode", exact = TRUE)

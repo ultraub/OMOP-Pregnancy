@@ -456,11 +456,10 @@ final_merged_episodes_no_duplicates <- function(final_merged_episodes_df) {
 #' @return Episodes with demographic details
 #' @export
 final_merged_episode_detailed <- function(final_merged_episodes_no_duplicates_df) {
-  # Add (some) demographic details
-  # This function would typically add age, race, ethnicity, etc.
-  # Implementation depends on available demographic data
+  # Add demographic details and create expected column names for ESD algorithm
+  # This matches the original All of Us implementation
   
-  final_merged_episodes_no_duplicates_df %>%
+  df <- final_merged_episodes_no_duplicates_df %>%
     mutate(
       # Add calculated fields
       final_category = coalesce(category, algo2_category),
@@ -470,6 +469,50 @@ final_merged_episode_detailed <- function(final_merged_episodes_no_duplicates_df
         !is.na(algo1_id) ~ "HIP",
         !is.na(algo2_id) ~ "PPS",
         TRUE ~ "Unknown"
+      ),
+      # ADD: Assign PPS episodes without outcomes to PREG (from original)
+      algo2_category = if_else(
+        !is.na(algo2_id) & is.na(algo2_category), "PREG", algo2_category
+      ),
+      algo2_outcome_date = if_else(
+        !is.na(algo2_id) & is.na(algo2_outcome_date),
+        episode_max_date, algo2_outcome_date
       )
     )
+  
+  # Rename columns to match what ESD algorithm expects
+  df <- df %>%
+    mutate(
+      # These renamings match the original All of Us algorithm
+      HIP_end_date = pregnancy_end,
+      HIP_outcome_category = category,
+      PPS_outcome_category = algo2_category,
+      PPS_end_date = algo2_outcome_date,
+      # Create the critical columns that ESD algorithm needs
+      recorded_episode_start = coalesce(merged_episode_start, 
+                                        pmin(first_gest_date, episode_min_date, pregnancy_end, na.rm = TRUE)),
+      recorded_episode_end = coalesce(merged_episode_end,
+                                      pmax(episode_max_date, pregnancy_end, na.rm = TRUE)),
+      recorded_episode_length = coalesce(merged_episode_length,
+                                         as.numeric(difftime(recorded_episode_end, recorded_episode_start, units = "days")) / 30.25)
+    )
+  
+  # Add flags marking if episode was identified by either algorithm
+  df <- df %>%
+    mutate(
+      HIP_flag = if_else(!is.na(algo1_id), 1, 0),
+      PPS_flag = if_else(!is.na(algo2_id), 1, 0),
+      # Add PPS outcome category for those without them
+      PPS_outcome_category = if_else(PPS_flag == 1 & is.na(PPS_outcome_category), "PREG",
+                                     PPS_outcome_category)
+    )
+  
+  # Renumber episodes after merging
+  final_df <- df %>%
+    group_by(person_id) %>%
+    arrange(recorded_episode_start) %>%
+    mutate(episode_number = row_number()) %>%
+    ungroup()
+  
+  return(final_df)
 }
