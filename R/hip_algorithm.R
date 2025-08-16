@@ -1000,8 +1000,8 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   final_cols <- colnames(df)
   cat("[DEBUG] gestation_episodes: Final columns before selection:", paste(final_cols, collapse=", "), "\n")
   
-  # CRITICAL FIX for SQL Server: Force materialization BEFORE selection
-  # This prevents SQL Server from referencing columns (like 'day_diff') that won't be in final SELECT
+  # HYBRID FIX for SQL Server: Select columns FIRST, then materialize the simple result
+  # This avoids trying to materialize complex window functions while preventing day_diff reference errors
   if (inherits(df, c("tbl_lazy", "tbl_sql"))) {
     # Get connection
     conn <- if (!is.null(connection)) {
@@ -1012,29 +1012,47 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
       NULL
     }
     
-    cat("[DEBUG] gestation_episodes: Materializing full result BEFORE selection to avoid SQL Server issues\n")
+    # First, select only the needed columns
+    # This resolves all complex SQL into just 4 simple columns
+    cat("[DEBUG] gestation_episodes: Selecting required columns first\n")
+    result <- df %>%
+      select(person_id, visit_date, gest_week, episode)
     
-    # Materialize the full result WITH all columns first
-    df <- tryCatch({
-      compute_table(df, connection = conn)
+    # Now materialize just these 4 simple columns
+    # SQL Server can handle this because it's not complex
+    cat("[DEBUG] gestation_episodes: Materializing simplified 4-column result\n")
+    result <- tryCatch({
+      compute_table(result, connection = conn)
     }, error = function(e) {
-      cat("[DEBUG] gestation_episodes: compute_table failed, trying safe_collect:", e$message, "\n")
-      # If compute fails, try collecting and re-uploading
-      df_local <- df %>% safe_collect()
-      if (!is.null(df_local) && nrow(df_local) > 0) {
-        create_temp_table(df_local, connection = conn)
+      cat("[DEBUG] gestation_episodes: compute_table failed, trying local collection:", e$message, "\n")
+      # If even simple materialization fails, collect locally
+      result_local <- tryCatch({
+        result %>% collect()
+      }, error = function(e2) {
+        cat("[DEBUG] gestation_episodes: Direct collection also failed:", e2$message, "\n")
+        # Last resort: try collecting the original df and selecting locally
+        df_local <- df %>% collect()
+        if (!is.null(df_local) && nrow(df_local) > 0) {
+          df_local %>% select(person_id, visit_date, gest_week, episode)
+        } else {
+          stop("Failed to collect gestation episodes: ", e2$message)
+        }
+      })
+      
+      if (!is.null(result_local) && nrow(result_local) > 0) {
+        cat("[DEBUG] gestation_episodes: Re-uploading", nrow(result_local), "rows as temp table\n")
+        create_temp_table(result_local, connection = conn)
       } else {
-        stop("Failed to materialize gestation episodes")
+        stop("Failed to materialize gestation episodes: ", e$message)
       }
     })
     
-    cat("[DEBUG] gestation_episodes: Successfully materialized intermediate result\n")
+    cat("[DEBUG] gestation_episodes: Successfully materialized result\n")
+  } else {
+    # For local data frames, just select the columns
+    result <- df %>%
+      select(person_id, visit_date, gest_week, episode)
   }
-  
-  # NOW select only the required columns from the materialized table
-  # This is a simple SELECT from a clean temp table, no complex SQL
-  result <- df %>%
-    select(person_id, visit_date, gest_week, episode)
   
   # Debug: Verify we have the required columns
   result_cols <- colnames(result)
