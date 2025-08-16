@@ -1000,8 +1000,39 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   final_cols <- colnames(df)
   cat("[DEBUG] gestation_episodes: Final columns before selection:", paste(final_cols, collapse=", "), "\n")
   
-  # Select only the required columns for get_min_max_gestation
-  # Make sure we have the essential columns
+  # CRITICAL FIX for SQL Server: Force materialization BEFORE selection
+  # This prevents SQL Server from referencing columns (like 'day_diff') that won't be in final SELECT
+  if (inherits(df, c("tbl_lazy", "tbl_sql"))) {
+    # Get connection
+    conn <- if (!is.null(connection)) {
+      connection
+    } else if (!is.null(df$src$con)) {
+      df$src$con
+    } else {
+      NULL
+    }
+    
+    cat("[DEBUG] gestation_episodes: Materializing full result BEFORE selection to avoid SQL Server issues\n")
+    
+    # Materialize the full result WITH all columns first
+    df <- tryCatch({
+      compute_table(df, connection = conn)
+    }, error = function(e) {
+      cat("[DEBUG] gestation_episodes: compute_table failed, trying safe_collect:", e$message, "\n")
+      # If compute fails, try collecting and re-uploading
+      df_local <- df %>% safe_collect()
+      if (!is.null(df_local) && nrow(df_local) > 0) {
+        create_temp_table(df_local, connection = conn)
+      } else {
+        stop("Failed to materialize gestation episodes")
+      }
+    })
+    
+    cat("[DEBUG] gestation_episodes: Successfully materialized intermediate result\n")
+  }
+  
+  # NOW select only the required columns from the materialized table
+  # This is a simple SELECT from a clean temp table, no complex SQL
   result <- df %>%
     select(person_id, visit_date, gest_week, episode)
   
@@ -1009,50 +1040,12 @@ gestation_episodes <- function(gestation_visits_df, min_days = 70, buffer_days =
   result_cols <- colnames(result)
   cat("[DEBUG] gestation_episodes: Returning columns:", paste(result_cols, collapse=", "), "\n")
   
-  # CRITICAL FIX for SQL Server: Force materialization to break complex SQL chain
-  # This prevents dbplyr from generating invalid SQL with column references to 
-  # intermediate columns like 'day_diff' that are not in the final SELECT
-  if (inherits(result, c("tbl_lazy", "tbl_sql"))) {
-    # Extract connection before collection
-    conn <- if (!is.null(connection)) {
-      connection
-    } else if (!is.null(result$src$con)) {
-      result$src$con
-    } else {
-      NULL
-    }
-    
-    # Collect the simplified result
-    result_local <- result %>% safe_collect()
-    
-    if (!is.null(result_local) && nrow(result_local) > 0) {
-      cat("[DEBUG] gestation_episodes: Materializing", nrow(result_local), "rows to break SQL chain\n")
-      
-      # If we have a connection, re-upload as clean temp table
-      if (!is.null(conn)) {
-        result <- create_temp_table(result_local, connection = conn)
-        cat("[DEBUG] gestation_episodes: Re-uploaded as clean temp table\n")
-      } else {
-        # Just use the local data frame if no connection available
-        result <- result_local
-        cat("[DEBUG] gestation_episodes: Using local data frame (no connection available)\n")
-      }
-      
-      # Update count after materialization
-      result_count <- nrow(result_local)
-      cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
-    } else {
-      cat("[DEBUG] gestation_episodes: No data to materialize\n")
-      result_count <- 0
-    }
+  # Final count for debugging
+  result_count <- safe_count(result)
+  if (!is.na(result_count)) {
+    cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
   } else {
-    # For local data frames, just get the count
-    result_count <- safe_count(result)
-    if (!is.na(result_count)) {
-      cat("[DEBUG] gestation_episodes: Returning", result_count, "rows\n")
-    } else {
-      cat("[DEBUG] gestation_episodes: Unable to determine row count\n")
-    }
+    cat("[DEBUG] gestation_episodes: Unable to determine row count\n")
   }
   
   return(result)
