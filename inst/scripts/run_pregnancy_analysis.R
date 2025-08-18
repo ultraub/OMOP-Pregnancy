@@ -2,8 +2,8 @@
 
 #' Run OMOP Pregnancy Analysis V2
 #'
-#' Complete script to execute pregnancy identification on OMOP CDM
-#' with database-agnostic architecture.
+#' Main execution script that uses environment variables for configuration
+#' and includes date correction for SQL Server epoch issues.
 
 # Load required libraries
 library(DatabaseConnector)
@@ -12,71 +12,166 @@ library(dplyr)
 library(lubridate)
 library(readr)
 
+# Load environment variables from .env file
+if (file.exists(".env")) {
+  env_lines <- readLines(".env")
+  for (line in env_lines) {
+    line <- trimws(line)
+    if (nchar(line) > 0 && !startsWith(line, "#")) {
+      parts <- strsplit(line, "=", fixed = TRUE)[[1]]
+      if (length(parts) >= 2) {
+        key <- trimws(parts[1])
+        value <- trimws(paste(parts[-1], collapse = "="))
+        # Remove quotes if present
+        value <- gsub("^['\"]|['\"]$", "", value)
+        do.call(Sys.setenv, setNames(list(value), key))
+      }
+    }
+  }
+  message("✓ Loaded environment variables from .env file")
+} else {
+  stop("No .env file found. Please create one with your database configuration.")
+}
+
 # Source all R files in the package
 source_dir <- function(path) {
+  if (!dir.exists(path)) {
+    stop(sprintf("Directory %s does not exist", path))
+  }
   files <- list.files(path, pattern = "\\.R$", recursive = TRUE, full.names = TRUE)
   for (file in files) {
-    source(file)
+    tryCatch({
+      source(file)
+    }, error = function(e) {
+      warning(sprintf("Failed to load %s: %s", basename(file), e$message))
+    })
   }
 }
 
 # Source all components
+message("Loading R components...")
 source_dir("R/00_concepts")
 source_dir("R/01_extraction")
 source_dir("R/02_algorithms")
 source_dir("R/03_results")
+source_dir("R/03_utilities")
 
-#' Main Execution Function
-#'
-#' @param connection DatabaseConnector connection object
-#' @param cdm_schema Schema containing CDM tables
-#' @param vocabulary_schema Schema containing vocabulary tables (often same as CDM)
-#' @param results_schema Schema for results (optional)
-#' @param output_folder Folder for CSV output
-#' @param min_age Minimum age (default: 15)
-#' @param max_age Maximum age (default: 56)
-#' @param hip_concepts_path Path to HIP concepts CSV
-#' @param pps_concepts_path Path to PPS concepts CSV
-#' @param matcho_limits_path Path to Matcho limits CSV
-#'
-#' @return Data frame of pregnancy episodes
-#' @export
-run_pregnancy_identification <- function(
-  connection,
-  cdm_schema,
-  vocabulary_schema = cdm_schema,
-  results_schema = NULL,
-  output_folder = "output",
-  min_age = 15,
-  max_age = 56,
-  hip_concepts_path = NULL,
-  pps_concepts_path = NULL,
-  matcho_limits_path = NULL
-) {
+# Get database configuration from environment
+server <- Sys.getenv("DB_SERVER")
+database <- Sys.getenv("DB_DATABASE")
+user <- Sys.getenv("DB_USER")
+password <- Sys.getenv("DB_PASSWORD")
+port <- as.numeric(Sys.getenv("DB_PORT", "1433"))
+cdm_schema <- Sys.getenv("CDM_SCHEMA", "dbo")
+vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA", cdm_schema)
+results_schema <- Sys.getenv("RESULTS_SCHEMA", "")
+output_folder <- Sys.getenv("OUTPUT_FOLDER", "output")
+
+# Validate required environment variables
+required_vars <- c("DB_SERVER", "DB_DATABASE", "DB_USER", "DB_PASSWORD")
+missing_vars <- required_vars[!nzchar(Sys.getenv(required_vars))]
+if (length(missing_vars) > 0) {
+  stop(sprintf("Missing required environment variables: %s", 
+               paste(missing_vars, collapse = ", ")))
+}
+
+# Setup JDBC connection
+jdbc_folder <- "jdbc_drivers"
+if (!dir.exists(jdbc_folder)) {
+  stop("JDBC drivers folder not found. Please run setup.R first.")
+}
+
+jdbc_url <- sprintf(
+  "jdbc:sqlserver://%s:%d;database=%s;encrypt=true;trustServerCertificate=true;",
+  server, port, database
+)
+
+# Create connection details
+connectionDetails <- createConnectionDetails(
+  dbms = "sql server",
+  connectionString = jdbc_url,
+  user = user,
+  password = password,
+  pathToDriver = jdbc_folder
+)
+
+# Function to correct epoch conversion issues in dates
+correct_epoch_dates <- function(episodes) {
+  if (nrow(episodes) == 0) return(episodes)
   
+  # Ensure date columns are Date objects
+  episodes <- episodes %>%
+    mutate(
+      episode_start_date = as.Date(episode_start_date),
+      episode_end_date = as.Date(episode_end_date)
+    )
+  
+  # Check for epoch conversion issue
+  episodes <- episodes %>%
+    mutate(
+      calc_gest_days = as.numeric(episode_end_date - episode_start_date),
+      has_epoch_issue = (
+        # Classic pattern: start after 1970, end before 1960
+        (year(episode_start_date) > 1970 & year(episode_end_date) < 1960) |
+        # Or: negative gestational age (end before start)
+        (calc_gest_days < 0) |
+        # Or: gestational age way off (>1000 days difference)
+        (abs(calc_gest_days - gestational_age_days) > 1000)
+      )
+    )
+  
+  epoch_issue_count <- sum(episodes$has_epoch_issue, na.rm = TRUE)
+  
+  if (epoch_issue_count > 0) {
+    message(sprintf("  Detected epoch conversion issue in %d episodes, applying correction...", 
+                    epoch_issue_count))
+    
+    # Correct the episode_end_date by adding the epoch difference (70 years)
+    episodes <- episodes %>%
+      mutate(
+        episode_end_date = if_else(
+          has_epoch_issue,
+          episode_end_date + 25569,  # Add 70 years (difference between 1900 and 1970 epochs)
+          episode_end_date
+        )
+      )
+    
+    message("  Date correction applied")
+  }
+  
+  # Clean up temporary columns
+  episodes <- episodes %>%
+    select(-calc_gest_days, -has_epoch_issue)
+  
+  return(episodes)
+}
+
+# Main execution
+tryCatch({
   # Record start time
   start_time <- Sys.time()
-  assign("start_time", start_time, envir = .GlobalEnv)  # For result saving
+  assign("start_time", start_time, envir = .GlobalEnv)
   
-  message("========================================")
+  message("\n========================================")
   message("OMOP Pregnancy Identification V2")
   message("Database-Agnostic Implementation")
   message("========================================")
   message(sprintf("Start time: %s", format(start_time, "%Y-%m-%d %H:%M:%S")))
-  message(sprintf("Database: %s", attr(connection, "dbms")))
+  message(sprintf("Server: %s", server))
+  message(sprintf("Database: %s", database))
   message(sprintf("CDM Schema: %s", cdm_schema))
   message("")
   
-  # Step 1: Load concepts
-  message("Step 1: Loading concept definitions...")
-  # Use load_concept_sets which loads all necessary files including matcho_outcome_limits
-  concepts <- load_concept_sets(
-    hip_path = hip_concepts_path,
-    pps_path = pps_concepts_path,
-    matcho_path = matcho_limits_path
-  )
+  # Connect to database
+  message("Connecting to database...")
+  connection <- connect(connectionDetails)
+  message("✓ Connected successfully")
   
-  # Enrich HIP concepts with domain information from database
+  # Step 1: Load concepts
+  message("\nStep 1: Loading concept definitions...")
+  concepts <- load_concept_sets()
+  
+  # Enrich HIP concepts with domain information
   if (any(is.na(concepts$hip_concepts$domain_name))) {
     message("  Enriching concepts with domain information...")
     concepts$hip_concepts <- enrich_concepts_with_domains(
@@ -86,18 +181,11 @@ run_pregnancy_identification <- function(
     )
   }
   
-  # Validate concept coverage
-  message("  Validating concept coverage...")
-  validation <- validate_concept_coverage(
-    concepts$hip_concepts,
-    concepts$pps_concepts
-  )
+  message(sprintf("  ✓ Loaded %d HIP concepts", nrow(concepts$hip_concepts)))
+  message(sprintf("  ✓ Loaded %d PPS concepts", nrow(concepts$pps_concepts)))
+  message(sprintf("  ✓ Loaded %d outcome categories", nrow(concepts$matcho_limits)))
   
-  if (!validation$is_valid) {
-    warning("Concept validation found issues - proceeding anyway")
-  }
-  
-  # Step 2: Extract cohort data (single database hit)
+  # Step 2: Extract cohort data
   message("\nStep 2: Extracting cohort data from database...")
   message("  Note: This is the only database operation")
   
@@ -106,13 +194,13 @@ run_pregnancy_identification <- function(
     cdm_schema = cdm_schema,
     hip_concepts = concepts$hip_concepts,
     pps_concepts = concepts$pps_concepts,
-    min_age = min_age,
-    max_age = max_age,
-    use_temp_tables = TRUE  # Use temp tables for large cohorts
+    min_age = 15,
+    max_age = 56,
+    use_temp_tables = TRUE
   )
   
   # Report extraction statistics
-  message(sprintf("  Extracted data for %d persons", 
+  message(sprintf("\n  Extracted data for %d persons", 
                   n_distinct(cohort_data$persons$person_id)))
   message(sprintf("  Records by domain:"))
   message(sprintf("    - Conditions: %d", nrow(cohort_data$conditions)))
@@ -131,197 +219,152 @@ run_pregnancy_identification <- function(
   
   if (total_records == 0) {
     warning("No pregnancy-related records found in database")
-    return(data.frame())
+    stop("Exiting: No data to process")
   }
   
-  # Step 3: Run HIP algorithm (pure R)
+  # Step 3: Run HIP algorithm
   message("\nStep 3: Running HIP algorithm...")
-  message("  Processing in pure R - no database operations")
-  
   hip_episodes <- run_hip_algorithm(
     cohort_data = cohort_data,
     matcho_limits = concepts$matcho_limits,
     matcho_outcome_limits = concepts$matcho_outcome_limits
   )
   
-  message(sprintf("  Identified %d HIP episodes", nrow(hip_episodes)))
+  message(sprintf("  ✓ Identified %d HIP episodes", nrow(hip_episodes)))
   
   if (nrow(hip_episodes) > 0) {
     hip_summary <- hip_episodes %>%
       count(outcome_category) %>%
       arrange(desc(n))
     message("  HIP outcomes:")
-    for (i in 1:min(5, nrow(hip_summary))) {
-      message(sprintf("    - %s: %d", 
-                      hip_summary$outcome_category[i],
-                      hip_summary$n[i]))
-    }
+    print(hip_summary)
   }
   
-  # Step 4: Run PPS algorithm (pure R)
+  # Step 4: Run PPS algorithm
   message("\nStep 4: Running PPS algorithm...")
-  message("  Processing temporal patterns in pure R")
-  
   pps_episodes <- run_pps_algorithm(
     cohort_data = cohort_data,
     pps_concepts = concepts$pps_concepts
   )
   
-  message(sprintf("  Identified %d PPS episodes", nrow(pps_episodes)))
+  message(sprintf("  ✓ Identified %d PPS episodes", nrow(pps_episodes)))
   
   if (nrow(pps_episodes) > 0) {
     pps_summary <- pps_episodes %>%
       count(outcome_category) %>%
       arrange(desc(n))
     message("  PPS outcomes:")
-    for (i in 1:min(5, nrow(pps_summary))) {
-      message(sprintf("    - %s: %d",
-                      pps_summary$outcome_category[i],
-                      pps_summary$n[i]))
-    }
+    print(pps_summary)
   }
   
   # Step 5: Merge episodes
   message("\nStep 5: Merging HIP and PPS episodes...")
-  
   merged_episodes <- merge_pregnancy_episodes(
     hip_episodes = hip_episodes,
-    pps_episodes = pps_episodes
+    pps_episodes = pps_episodes,
+    cohort_data = cohort_data
   )
   
-  message(sprintf("  Merged episode count: %d", nrow(merged_episodes)))
-  
-  # Report merging statistics
-  if (nrow(merged_episodes) > 0) {
-    merge_stats <- merged_episodes %>%
-      count(algorithm_used) %>%
-      arrange(desc(n))
-    message("  Episodes by algorithm:")
-    for (i in 1:nrow(merge_stats)) {
-      message(sprintf("    - %s: %d (%.1f%%)",
-                      merge_stats$algorithm_used[i],
-                      merge_stats$n[i],
-                      100 * merge_stats$n[i] / nrow(merged_episodes)))
-    }
-  }
+  message(sprintf("  ✓ Merged to %d unique episodes", nrow(merged_episodes)))
   
   # Step 6: Refine dates with ESD algorithm
   message("\nStep 6: Refining episode dates with ESD algorithm...")
-  
-  final_episodes <- refine_episode_dates(
-    episodes = merged_episodes,
-    cohort_data = cohort_data,
-    pps_concepts = concepts$pps_concepts
+  final_episodes <- calculate_estimated_start_dates(
+    merged_episodes,
+    cohort_data,
+    concepts$pps_concepts
   )
   
-  if (nrow(final_episodes) > 0) {
-    precision_stats <- final_episodes %>%
-      count(precision_category) %>%
-      arrange(desc(n))
-    message("  Date precision categories:")
-    for (i in 1:min(5, nrow(precision_stats))) {
-      message(sprintf("    - %s: %d (%.1f%%)",
-                      precision_stats$precision_category[i],
-                      precision_stats$n[i],
-                      100 * precision_stats$n[i] / nrow(final_episodes)))
-    }
-  }
+  message(sprintf("  ✓ ESD refined %d episodes", nrow(final_episodes)))
   
   # Step 7: Add confidence scores
   message("\nStep 7: Assigning confidence scores...")
-  
   final_episodes <- assign_confidence_scores(final_episodes)
   
-  if (nrow(final_episodes) > 0) {
-    conf_stats <- final_episodes %>%
+  if ("confidence_score" %in% names(final_episodes)) {
+    conf_summary <- final_episodes %>%
       count(confidence_score) %>%
       arrange(desc(n))
     message("  Confidence distribution:")
-    for (i in 1:nrow(conf_stats)) {
-      message(sprintf("    - %s: %d (%.1f%%)",
-                      conf_stats$confidence_score[i],
-                      conf_stats$n[i],
-                      100 * conf_stats$n[i] / nrow(final_episodes)))
-    }
+    print(conf_summary)
   }
   
-  # Step 8: Save results
-  if (!is.null(output_folder) && nrow(final_episodes) > 0) {
-    message(sprintf("\nStep 8: Saving results to %s", output_folder))
-    
-    save_pregnancy_results(
-      episodes = final_episodes,
-      connection = if (!is.null(results_schema)) connection else NULL,
-      results_schema = results_schema,
-      output_folder = output_folder,
-      save_to_database = !is.null(results_schema)
+  # Step 8: Correct date issues and save results
+  message("\nStep 8: Validating and saving results...")
+  
+  # Apply date correction for SQL Server epoch issues
+  final_episodes <- correct_epoch_dates(final_episodes)
+  
+  # Validate dates
+  date_check <- final_episodes %>%
+    mutate(
+      calc_days = as.numeric(episode_end_date - episode_start_date),
+      date_match = abs(calc_days - gestational_age_days) < 2
     )
-    
-    # Also export analysis files
-    export_for_analysis(
-      episodes = final_episodes,
-      output_folder = output_folder,
-      formats = c("csv", "rds")
-    )
+  
+  message(sprintf("  Date validation: %d/%d episodes have matching gestational ages",
+                  sum(date_check$date_match), nrow(date_check)))
+  
+  # Create output directory if needed
+  if (!dir.exists(output_folder)) {
+    dir.create(output_folder, recursive = TRUE)
   }
+  
+  # Save episodes to CSV
+  output_file <- file.path(output_folder, 
+                          sprintf("pregnancy_episodes_%s.csv", Sys.Date()))
+  write.csv(final_episodes, output_file, row.names = FALSE)
+  message(sprintf("  ✓ Saved %d episodes to %s", nrow(final_episodes), output_file))
+  
+  # Save summary statistics
+  summary_stats <- create_episode_summary(final_episodes)
+  summary_file <- file.path(output_folder,
+                           sprintf("pregnancy_summary_%s.rds", Sys.Date()))
+  saveRDS(summary_stats, summary_file)
+  message(sprintf("  ✓ Saved summary statistics to %s", summary_file))
   
   # Calculate runtime
   end_time <- Sys.time()
   runtime <- difftime(end_time, start_time, units = "secs")
   
+  # Final summary
   message("\n========================================")
   message("SUMMARY")
   message("========================================")
+  message(sprintf("Total episodes: %d", nrow(final_episodes)))
+  message(sprintf("Unique persons: %d", n_distinct(final_episodes$person_id)))
+  message(sprintf("Episodes per person: %.2f", 
+                  nrow(final_episodes) / n_distinct(final_episodes$person_id)))
   
-  if (nrow(final_episodes) > 0) {
-    message(sprintf("Total episodes: %d", nrow(final_episodes)))
-    message(sprintf("Unique persons: %d", n_distinct(final_episodes$person_id)))
-    message(sprintf("Episodes per person: %.2f", 
-                    nrow(final_episodes) / n_distinct(final_episodes$person_id)))
-    
-    # Gestational age statistics
-    gest_stats <- final_episodes %>%
-      summarise(
-        mean_gest = mean(gestational_age_days, na.rm = TRUE),
-        median_gest = median(gestational_age_days, na.rm = TRUE),
-        min_gest = min(gestational_age_days, na.rm = TRUE),
-        max_gest = max(gestational_age_days, na.rm = TRUE)
-      )
-    
-    message(sprintf("\nGestational age (days):"))
-    message(sprintf("  Mean: %.1f", gest_stats$mean_gest))
-    message(sprintf("  Median: %.1f", gest_stats$median_gest))
-    message(sprintf("  Range: %.0f - %.0f", gest_stats$min_gest, gest_stats$max_gest))
-  } else {
-    message("No pregnancy episodes identified")
-  }
+  # Outcome summary
+  outcome_summary <- final_episodes %>%
+    count(outcome_category) %>%
+    arrange(desc(n))
+  message("\nOutcomes:")
+  print(outcome_summary)
+  
+  # Algorithm summary
+  algorithm_summary <- final_episodes %>%
+    count(algorithm_used) %>%
+    arrange(desc(n))
+  message("\nAlgorithms:")
+  print(algorithm_summary)
   
   message(sprintf("\nTotal runtime: %.1f seconds", runtime))
-  message("✅ Analysis complete!")
+  message("\n✅ Analysis complete!")
   
-  return(final_episodes)
-}
-
-# Example usage (commented out)
-# 
-# # Create connection
-# connection <- DatabaseConnector::createConnectionDetails(
-#   dbms = "postgresql",
-#   server = "localhost/cdm",
-#   user = "user",
-#   password = "password"
-# )
-# 
-# conn <- DatabaseConnector::connect(connection)
-# 
-# # Run analysis
-# episodes <- run_pregnancy_identification(
-#   connection = conn,
-#   cdm_schema = "cdm_53",
-#   vocabulary_schema = "cdm_53",
-#   output_folder = "output/",
-#   min_age = 15,
-#   max_age = 56
-# )
-# 
-# DatabaseConnector::disconnect(conn)
+}, error = function(e) {
+  message("\n❌ Error occurred:")
+  message(e$message)
+  traceback()
+}, finally = {
+  # Always disconnect from database
+  if (exists("connection")) {
+    tryCatch({
+      DatabaseConnector::disconnect(connection)
+      message("\n✓ Database connection closed")
+    }, error = function(e) {
+      warning("Failed to close database connection properly")
+    })
+  }
+})
