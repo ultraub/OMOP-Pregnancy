@@ -66,7 +66,7 @@ NULL
 #' )
 #' }
 create_omop_connection <- function(
-  dbms,
+  dbms = NULL,
   server = NULL,
   database = NULL,
   port = NULL,
@@ -78,8 +78,93 @@ create_omop_connection <- function(
   cdm_schema = NULL,
   vocabulary_schema = NULL,
   results_schema = NULL,
-  extraSettings = NULL
+  extraSettings = NULL,
+  use_env = TRUE
 ) {
+  
+  # If use_env is TRUE, load from environment variables (SQL_ prefix for compatibility)
+  if (use_env) {
+    # Try SQL_ prefix first (for backward compatibility), then DB_ prefix
+    if (is.null(dbms)) {
+      dbms <- Sys.getenv("SQL_DBMS")
+      if (dbms == "") dbms <- Sys.getenv("DB_TYPE")
+      if (dbms == "") dbms <- Sys.getenv("OMOP_ENV")
+      if (dbms == "") dbms <- "sql server"  # Default
+    }
+    
+    if (is.null(server)) {
+      server <- Sys.getenv("SQL_SERVER")
+      if (server == "") server <- Sys.getenv("DB_SERVER")
+    }
+    
+    if (is.null(database)) {
+      database <- Sys.getenv("SQL_DATABASE")
+      if (database == "") database <- Sys.getenv("DB_DATABASE")
+    }
+    
+    if (is.null(port)) {
+      port_str <- Sys.getenv("SQL_PORT")
+      if (port_str == "") port_str <- Sys.getenv("DB_PORT")
+      if (port_str != "") port <- as.numeric(port_str)
+    }
+    
+    if (is.null(user) && !use_windows_auth) {
+      user <- Sys.getenv("SQL_USER")
+      if (user == "") user <- Sys.getenv("DB_USER")
+    }
+    
+    if (is.null(password) && !use_windows_auth) {
+      password <- Sys.getenv("SQL_PASSWORD")
+      if (password == "") password <- Sys.getenv("DB_PASSWORD")
+    }
+    
+    if (is.null(pathToDriver)) {
+      pathToDriver <- Sys.getenv("SQL_JDBC_PATH")
+      if (pathToDriver == "") pathToDriver <- Sys.getenv("JDBC_DRIVER_PATH")
+      if (pathToDriver == "") pathToDriver <- "jdbc_drivers"
+    }
+    
+    if (is.null(cdm_schema)) {
+      cdm_schema <- Sys.getenv("SQL_CDM_SCHEMA")
+      if (cdm_schema == "") cdm_schema <- Sys.getenv("CDM_SCHEMA")
+      if (cdm_schema == "") cdm_schema <- "dbo"
+    }
+    
+    if (is.null(vocabulary_schema)) {
+      vocabulary_schema <- Sys.getenv("SQL_VOCABULARY_SCHEMA")
+      if (vocabulary_schema == "") vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA")
+    }
+    
+    if (is.null(results_schema)) {
+      results_schema <- Sys.getenv("SQL_RESULTS_SCHEMA")
+      if (results_schema == "") results_schema <- Sys.getenv("RESULTS_SCHEMA")
+    }
+    
+    # Check for Windows auth flag in environment
+    env_windows_auth <- Sys.getenv("USE_WINDOWS_AUTH", "false")
+    if (tolower(env_windows_auth) %in% c("true", "1", "yes")) {
+      use_windows_auth <- TRUE
+    }
+    
+    # Handle separate database configuration (previous version compatibility)
+    cdm_database <- Sys.getenv("SQL_CDM_DATABASE")
+    results_database <- Sys.getenv("SQL_RESULTS_DATABASE")
+    
+    if (cdm_database != "" && cdm_schema != "" && !grepl("\\.", cdm_schema)) {
+      cdm_schema <- paste0(cdm_database, ".", cdm_schema)
+    }
+    if (cdm_database != "" && vocabulary_schema != "" && !grepl("\\.", vocabulary_schema)) {
+      vocabulary_schema <- paste0(cdm_database, ".", vocabulary_schema)
+    }
+    if (results_database != "" && results_schema != "" && !grepl("\\.", results_schema)) {
+      results_schema <- paste0(results_database, ".", results_schema)
+    }
+  }
+  
+  # Validate required parameters
+  if (is.null(server) || server == "") {
+    stop("Server is required. Set SQL_SERVER in .env or provide server parameter.")
+  }
   
   # Normalize dbms name
   dbms <- tolower(dbms)
@@ -316,55 +401,9 @@ create_connection_from_env <- function(env_file = ".env") {
     message("✓ Loaded environment variables from ", env_file)
   }
   
-  # Get database configuration from environment
-  dbms <- Sys.getenv("DB_TYPE", "sql server")
-  server <- Sys.getenv("DB_SERVER")
-  database <- Sys.getenv("DB_DATABASE")
-  port <- as.numeric(Sys.getenv("DB_PORT", "0"))
-  if (port == 0) port <- NULL
-  
-  # Authentication
-  use_windows_auth <- tolower(Sys.getenv("USE_WINDOWS_AUTH", "false")) %in% c("true", "1", "yes")
-  user <- Sys.getenv("DB_USER")
-  password <- Sys.getenv("DB_PASSWORD")
-  
-  # Schemas
-  cdm_schema <- Sys.getenv("CDM_SCHEMA", "dbo")
-  vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA", cdm_schema)
-  results_schema <- Sys.getenv("RESULTS_SCHEMA", "")
-  if (results_schema == "") results_schema <- NULL
-  
-  # Additional settings
-  extra_settings <- Sys.getenv("DB_EXTRA_SETTINGS", "")
-  if (extra_settings == "") extra_settings <- NULL
-  
-  # JDBC driver path
-  jdbc_folder <- Sys.getenv("JDBC_DRIVER_PATH", "jdbc_drivers")
-  
-  # Validate required variables
-  if (server == "" || database == "") {
-    stop("DB_SERVER and DB_DATABASE must be set in environment or .env file")
-  }
-  
-  if (!use_windows_auth && (user == "" || password == "")) {
-    stop("DB_USER and DB_PASSWORD required when not using Windows authentication")
-  }
-  
-  # Create connection
-  create_omop_connection(
-    dbms = dbms,
-    server = server,
-    database = database,
-    port = port,
-    user = if (use_windows_auth) NULL else user,
-    password = if (use_windows_auth) NULL else password,
-    use_windows_auth = use_windows_auth,
-    pathToDriver = jdbc_folder,
-    cdm_schema = cdm_schema,
-    vocabulary_schema = vocabulary_schema,
-    results_schema = results_schema,
-    extraSettings = extra_settings
-  )
+  # Create connection using the main function with use_env=TRUE
+  # This will automatically pick up SQL_ or DB_ prefixed variables
+  create_omop_connection(use_env = TRUE)
 }
 
 #' Load environment variables from file

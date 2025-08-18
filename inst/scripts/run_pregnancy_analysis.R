@@ -68,13 +68,29 @@ source_dir("R/03_results")
 source_dir("R/03_utilities")
 
 # Get database configuration from environment
-dbms <- tolower(Sys.getenv("DB_TYPE", "sql server"))
-server <- Sys.getenv("DB_SERVER")
-database <- Sys.getenv("DB_DATABASE")
-cdm_schema <- Sys.getenv("CDM_SCHEMA", "dbo")
-vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA", cdm_schema)
-results_schema <- Sys.getenv("RESULTS_SCHEMA", "")
+# Support both SQL_ prefix (for compatibility) and DB_ prefix
+dbms <- Sys.getenv("SQL_DBMS")
+if (dbms == "") dbms <- Sys.getenv("DB_TYPE")
+if (dbms == "") dbms <- Sys.getenv("OMOP_ENV")
+if (dbms == "") dbms <- "sql server"
+dbms <- tolower(dbms)
+
+server <- Sys.getenv("SQL_SERVER")
+if (server == "") server <- Sys.getenv("DB_SERVER")
+
+database <- Sys.getenv("SQL_DATABASE")
+if (database == "") database <- Sys.getenv("DB_DATABASE")
+
+cdm_schema <- Sys.getenv("SQL_CDM_SCHEMA")
+if (cdm_schema == "") cdm_schema <- Sys.getenv("CDM_SCHEMA", "dbo")
+
+vocabulary_schema <- Sys.getenv("SQL_VOCABULARY_SCHEMA")
+if (vocabulary_schema == "") vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA", cdm_schema)
+
+results_schema <- Sys.getenv("SQL_RESULTS_SCHEMA")
+if (results_schema == "") results_schema <- Sys.getenv("RESULTS_SCHEMA", "")
 if (results_schema == "") results_schema <- NULL
+
 output_folder <- Sys.getenv("OUTPUT_FOLDER", "output")
 
 # Check if using Windows authentication
@@ -151,10 +167,16 @@ tryCatch({
   message("Connecting to database...")
   connection <- create_connection_from_env(".env")
   
-  # Store schema information
-  cdm_schema <- attr(connection, "cdm_schema")
-  vocabulary_schema <- attr(connection, "vocabulary_schema")
-  results_schema <- attr(connection, "results_schema")
+  # Get schema information from connection attributes (may include cross-database setup)
+  if (!is.null(attr(connection, "cdm_schema"))) {
+    cdm_schema <- attr(connection, "cdm_schema")
+  }
+  if (!is.null(attr(connection, "vocabulary_schema"))) {
+    vocabulary_schema <- attr(connection, "vocabulary_schema")
+  }
+  if (!is.null(attr(connection, "results_schema"))) {
+    results_schema <- attr(connection, "results_schema")
+  }
   
   message("✓ Connected successfully")
   message(sprintf("  Database type: %s", attr(connection, "dbms")))
