@@ -87,8 +87,8 @@ add_episode_windows <- function(episodes, source) {
       ),
       
       # Create expanded window for overlap detection
-      window_start = pmin(episode_start_date, lookback_date),
-      window_end = pmax(episode_end_date, lookahead_date)
+      window_start = as.Date(pmin(episode_start_date, lookback_date)),
+      window_end = as.Date(pmax(episode_end_date, lookahead_date))
     ) %>%
     ungroup()
   
@@ -159,13 +159,13 @@ identify_episode_overlaps <- function(hip_episodes, pps_episodes) {
     ) %>%
     mutate(
       # Calculate overlap metrics
-      core_overlap_start = pmax(hip_start, pps_start),
-      core_overlap_end = pmin(hip_end, pps_end),
+      core_overlap_start = as.Date(pmax(hip_start, pps_start)),
+      core_overlap_end = as.Date(pmin(hip_end, pps_end)),
       core_overlap_days = pmax(0, as.numeric(core_overlap_end - core_overlap_start + 1)),
       
       # Calculate window overlap
-      window_overlap_start = pmax(hip_window_start, pps_window_start),
-      window_overlap_end = pmin(hip_window_end, pps_window_end),
+      window_overlap_start = as.Date(pmax(hip_window_start, pps_window_start)),
+      window_overlap_end = as.Date(pmin(hip_window_end, pps_window_end)),
       window_overlap_days = as.numeric(window_overlap_end - window_overlap_start + 1),
       
       # Calculate proportion of overlap
@@ -227,8 +227,8 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
     filter(keep_source == "MERGE") %>%
     mutate(
       # Take best information from both
-      episode_start_date = pmin(hip_start, pps_start),
-      episode_end_date = pmax(hip_end, pps_end),
+      episode_start_date = as.Date(pmin(hip_start, pps_start)),
+      episode_end_date = as.Date(pmax(hip_end, pps_end)),
       
       # Use better outcome (lower hierarchy number)
       outcome_category = ifelse(hip_priority <= pps_priority, hip_outcome, pps_outcome),

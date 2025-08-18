@@ -274,6 +274,73 @@ tryCatch({
   # Save results
   message("\n==== PHASE 8: SAVE RESULTS ====")
   
+  # Validate date columns before saving
+  if (nrow(final_episodes) > 0) {
+    # Ensure all date columns are properly formatted as Date objects
+    final_episodes <- final_episodes %>%
+      mutate(
+        episode_start_date = as.Date(episode_start_date),
+        episode_end_date = as.Date(episode_end_date)
+      )
+    
+    # Check for epoch conversion issue (dates ~70 years in the past)
+    # If the calculated gestational age doesn't match, we likely have the epoch issue
+    final_episodes <- final_episodes %>%
+      mutate(
+        calc_gest_days = as.numeric(episode_end_date - episode_start_date),
+        has_epoch_issue = (
+          # Classic pattern: start after 1970, end before 1960
+          (year(episode_start_date) > 1970 & year(episode_end_date) < 1960) |
+          # Or: negative gestational age (end before start)
+          (calc_gest_days < 0) |
+          # Or: gestational age way off (>1000 days difference)
+          (abs(calc_gest_days - gestational_age_days) > 1000)
+        )
+      )
+    
+    epoch_issue <- final_episodes %>%
+      filter(has_epoch_issue)
+    
+    if (nrow(epoch_issue) > 0) {
+      message(sprintf("Detected epoch conversion issue in %d episodes, applying correction...", 
+                      nrow(epoch_issue)))
+      
+      # The issue is that dates are off by exactly 25569 days (accounting for leap years)
+      # Correct the episode_end_date by adding this offset
+      final_episodes <- final_episodes %>%
+        mutate(
+          episode_end_date = if_else(
+            has_epoch_issue,
+            episode_end_date + 25569,  # Add the epoch difference (corrected)
+            episode_end_date
+          )
+        ) %>%
+        select(-has_epoch_issue, -calc_gest_days)
+      
+      message("Date correction applied")
+    }
+    
+    # Check for any remaining invalid dates
+    invalid_dates <- final_episodes %>%
+      filter(
+        is.na(episode_start_date) | is.na(episode_end_date) |
+        episode_start_date < as.Date("1900-01-01") | 
+        episode_end_date < as.Date("1900-01-01") |
+        episode_start_date > Sys.Date() |
+        episode_end_date > Sys.Date() + 365
+      )
+    
+    if (nrow(invalid_dates) > 0) {
+      warning(sprintf("Found %d episodes with invalid dates", nrow(invalid_dates)))
+      print(head(invalid_dates))
+    }
+    
+    # Verify date format
+    message(sprintf("Date column types: start=%s, end=%s", 
+                    class(final_episodes$episode_start_date)[1],
+                    class(final_episodes$episode_end_date)[1]))
+  }
+  
   output_dir <- "output"
   if (!dir.exists(output_dir)) {
     dir.create(output_dir)

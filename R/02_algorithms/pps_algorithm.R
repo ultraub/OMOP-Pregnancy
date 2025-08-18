@@ -134,8 +134,8 @@ assign_person_episodes <- function(personlist) {
   valid_episodes <- personlist %>%
     group_by(person_episode_number) %>%
     mutate(
-      episode_start = min(event_date),
-      episode_end = max(event_date),
+      episode_start = as.Date(min(event_date)),
+      episode_end = as.Date(max(event_date)),
       episode_length_months = as.numeric(episode_end - episode_start) / 30.44,
       is_valid = episode_length_months <= 12
     ) %>%
@@ -219,8 +219,8 @@ calculate_pps_boundaries <- function(episodes_raw) {
     group_by(person_id, person_episode_number) %>%
     summarise(
       # Episode boundaries
-      episode_min_date = min(event_date),
-      episode_max_date = max(event_date),
+      episode_min_date = as.Date(min(event_date)),
+      episode_max_date = as.Date(max(event_date)),
       
       # Gestational timing info
       earliest_ga_min = min(min_month, na.rm = TRUE),
@@ -341,15 +341,15 @@ validate_pps_episodes <- function(episodes) {
   validated <- episodes %>%
     mutate(
       # Calculate estimated start date
-      episode_start_date = case_when(
+      episode_start_date = as.Date(case_when(
         # Use gestational timing if available
-        !is.na(earliest_ga_min) ~ episode_min_date - (earliest_ga_min * 30),
+        !is.na(earliest_ga_min) ~ as.Date(episode_min_date) - (earliest_ga_min * 30),
         # Otherwise assume start is 3 months before first concept
-        TRUE ~ episode_min_date - 90
-      ),
+        TRUE ~ as.Date(episode_min_date) - 90
+      )),
       
       # End date is outcome date
-      episode_end_date = outcome_date,
+      episode_end_date = as.Date(outcome_date),
       
       # Calculate gestational age
       gestational_age_days = as.numeric(episode_end_date - episode_start_date)
