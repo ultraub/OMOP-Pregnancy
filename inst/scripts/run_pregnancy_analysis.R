@@ -14,7 +14,7 @@ library(readr)
 
 # Load environment variables from .env file
 if (file.exists(".env")) {
-  env_lines <- readLines(".env")
+  env_lines <- readLines(".env", warn = FALSE)
   for (line in env_lines) {
     line <- trimws(line)
     if (nchar(line) > 0 && !startsWith(line, "#")) {
@@ -30,7 +30,17 @@ if (file.exists(".env")) {
   }
   message("✓ Loaded environment variables from .env file")
 } else {
-  stop("No .env file found. Please create one with your database configuration.")
+  # Check for template files
+  templates <- list.files("inst/templates", pattern = "^\\.env", full.names = TRUE)
+  if (length(templates) > 0) {
+    message("No .env file found. Available templates:")
+    for (tmpl in templates) {
+      message("  - ", basename(tmpl))
+    }
+    stop("Copy an appropriate template to .env and update with your settings")
+  } else {
+    stop("No .env file found. Please create one with your database configuration.")
+  }
 }
 
 # Source all R files in the package
@@ -50,6 +60,7 @@ source_dir <- function(path) {
 
 # Source all components
 message("Loading R components...")
+source_dir("R/00_connection")
 source_dir("R/00_concepts")
 source_dir("R/01_extraction")
 source_dir("R/02_algorithms")
@@ -57,43 +68,17 @@ source_dir("R/03_results")
 source_dir("R/03_utilities")
 
 # Get database configuration from environment
+dbms <- tolower(Sys.getenv("DB_TYPE", "sql server"))
 server <- Sys.getenv("DB_SERVER")
 database <- Sys.getenv("DB_DATABASE")
-user <- Sys.getenv("DB_USER")
-password <- Sys.getenv("DB_PASSWORD")
-port <- as.numeric(Sys.getenv("DB_PORT", "1433"))
 cdm_schema <- Sys.getenv("CDM_SCHEMA", "dbo")
 vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA", cdm_schema)
 results_schema <- Sys.getenv("RESULTS_SCHEMA", "")
+if (results_schema == "") results_schema <- NULL
 output_folder <- Sys.getenv("OUTPUT_FOLDER", "output")
 
-# Validate required environment variables
-required_vars <- c("DB_SERVER", "DB_DATABASE", "DB_USER", "DB_PASSWORD")
-missing_vars <- required_vars[!nzchar(Sys.getenv(required_vars))]
-if (length(missing_vars) > 0) {
-  stop(sprintf("Missing required environment variables: %s", 
-               paste(missing_vars, collapse = ", ")))
-}
-
-# Setup JDBC connection
-jdbc_folder <- "jdbc_drivers"
-if (!dir.exists(jdbc_folder)) {
-  stop("JDBC drivers folder not found. Please run setup.R first.")
-}
-
-jdbc_url <- sprintf(
-  "jdbc:sqlserver://%s:%d;database=%s;encrypt=true;trustServerCertificate=true;",
-  server, port, database
-)
-
-# Create connection details
-connectionDetails <- createConnectionDetails(
-  dbms = "sql server",
-  connectionString = jdbc_url,
-  user = user,
-  password = password,
-  pathToDriver = jdbc_folder
-)
+# Check if using Windows authentication
+use_windows_auth <- tolower(Sys.getenv("USE_WINDOWS_AUTH", "false")) %in% c("true", "1", "yes")
 
 # Function to correct epoch conversion issues in dates
 correct_epoch_dates <- function(episodes) {
@@ -162,10 +147,18 @@ tryCatch({
   message(sprintf("CDM Schema: %s", cdm_schema))
   message("")
   
-  # Connect to database
+  # Connect to database using new flexible connection system
   message("Connecting to database...")
-  connection <- connect(connectionDetails)
+  connection <- create_connection_from_env(".env")
+  
+  # Store schema information
+  cdm_schema <- attr(connection, "cdm_schema")
+  vocabulary_schema <- attr(connection, "vocabulary_schema")
+  results_schema <- attr(connection, "results_schema")
+  
   message("✓ Connected successfully")
+  message(sprintf("  Database type: %s", attr(connection, "dbms")))
+  message(sprintf("  CDM schema: %s", cdm_schema))
   
   # Step 1: Load concepts
   message("\nStep 1: Loading concept definitions...")
