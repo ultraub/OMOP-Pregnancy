@@ -1,0 +1,941 @@
+concept_id,concept_name,category,gest_value
+4185780,"Gestation period, 21 weeks",PREG,21
+444098,"Gestation period, 40 weeks",PREG,40
+4277749,"Gestation period, 17 weeks",PREG,17
+4049621,"Gestation period, 16 weeks",PREG,16
+4220085,"Gestation period, 2 weeks",PREG,2
+441678,"Gestation period, 33 weeks",PREG,33
+439922,"Gestation period, 24 weeks",PREG,24
+4245908,"Gestation period, 9 weeks",PREG,9
+4097608,"Gestation period, 18 weeks",PREG,18
+4336226,"Gestation period, 23 weeks",PREG,23
+4197245,"Gestation period, 12 weeks",PREG,12
+442769,"Gestation period, 41 weeks",PREG,41
+434484,"Gestation period, 30 weeks",PREG,30
+4283690,"Gestation period, 15 weeks",PREG,15
+444417,"Gestation period, 29 weeks",PREG,29
+4174506,"Gestation period, 11 weeks",PREG,11
+435655,"Gestation period, 39 weeks",PREG,39
+438543,"Gestation period, 36 weeks",PREG,36
+435640,"Gestation period, 25 weeks",PREG,25
+443871,"Gestation period, 38 weeks",PREG,38
+444023,"Gestation period, 26 weeks",PREG,26
+442355,"Gestation period, 37 weeks",PREG,37
+4248725,"Gestation period, 14 weeks",PREG,14
+4266517,"Gestation period, 13 weeks",PREG,13
+4242241,"Gestation period, 10 weeks",PREG,10
+444267,"Gestation period, 35 weeks",PREG,35
+432430,"Gestation period, 27 weeks",PREG,27
+4181751,"Gestation period, 19 weeks",PREG,19
+4274955,"Gestation period, 22 weeks",PREG,22
+433864,"Gestation period, 31 weeks",PREG,31
+443874,"Gestation period, 34 weeks",PREG,34
+444067,"Gestation period, 42 weeks",PREG,42
+442558,"Gestation period, 32 weeks",PREG,32
+444461,"Gestation period, 28 weeks",PREG,28
+4051642,"Gestation period, 20 weeks",PREG,20
+4290009,"Gestation period, 5 weeks",PREG,5
+4326232,"Gestation period, 3 weeks",PREG,3
+4270513,"Gestation period, 7 weeks",PREG,7
+4313026,"Gestation period, 6 weeks",PREG,6
+4195157,"Gestation period, 4 weeks",PREG,4
+4132434,"Gestation period, 8 weeks",PREG,8
+4337360,"Gestation period, 1 week",PREG,1
+3048230,Gestational age in weeks,PREG,NA
+3002209,Gestational age Estimated,PREG,NA
+3012266,Gestational age,PREG,NA
+3174212,Premature 28 week quadruplet,LB,NA
+4008884,Premature birth of newborn sextuplets,LB,NA
+4014295,Single live birth,LB,NA
+4014296,Twins - both live born,LB,NA
+4014455,Twins - one still and one live born,LB,NA
+4014456,Triplets - all live born,LB,NA
+4015421,Triplets - two live and one stillborn,LB,NA
+4015422,Triplets - one live and two stillborn,LB,NA
+4029786,Premature birth of newborn twins,LB,NA
+4049333,"Term birth of identical twins, both living",LB,NA
+4052512,Term birth of newborn male,LB,NA
+4054968,Term birth of newborn,LB,NA
+4066292,Term birth of multiple newborns,LB,NA
+4069200,Premature birth of multiple newborns,LB,NA
+4082863,Premature birth of newborn quintuplets,LB,NA
+4092289,Livebirth,LB,NA
+4094046,Triplet birth,LB,NA
+4097427,"Premature birth of fraternal twins, both living",LB,NA
+4101844,Twin birth,LB,NA
+4107401,Premature birth of newborn triplets,LB,NA
+4142021,"Premature birth of identical twins, both living",LB,NA
+4145125,Premature birth of newborn quadruplets,LB,NA
+4147043,"Premature birth of fraternal twins, one living, one stillborn",LB,NA
+4163851,Multiple birth,LB,NA
+4172135,Premature birth of newborn male,LB,NA
+4178275,Term birth of newborn twins,LB,NA
+4193224,Term birth of newborn quadruplets,LB,NA
+4199146,Term birth of newborn sextuplets,LB,NA
+4227728,"Term birth of fraternal twins, both living",LB,NA
+4241228,Premature birth of newborn female,LB,NA
+4243026,"Term birth of identical twins, one living, one stillborn",LB,NA
+4246654,Term birth of newborn female,LB,NA
+4272248,Premature birth of newborn,LB,NA
+4307237,Term birth of newborn triplets,LB,NA
+4310910,"Premature birth of identical twins, one living, one stillborn",LB,NA
+4330570,"Term birth of fraternal twins, one living, one stillborn",LB,NA
+4336090,Term birth of newborn quintuplets,LB,NA
+42535052,Twin live born in hospital by vaginal delivery,LB,NA
+45757165,"Triplets, some live born",LB,NA
+45757166,"Quadruplets, all live born",LB,NA
+45757167,"Quintuplets, all live born",LB,NA
+45757168,"Quintuplets, some live born",LB,NA
+45757169,"Sextuplets, some live born",LB,NA
+45765500,Quadruplet birth,LB,NA
+45765501,Quintuplet birth,LB,NA
+45765502,Sextuplet birth,LB,NA
+45772082,"Sextuplets, all live born",LB,NA
+45773428,"Quadruplets, some live born",LB,NA
+42539377,Quadruplets with all four stillborn,SB,NA
+42538806,Sextuplets with all six stillborn,SB,NA
+42538805,Quintuplets with all five stillborn,SB,NA
+4306288,"Term birth of fraternal twins, both stillborn",SB,NA
+4242724,"Premature birth of identical twins, both stillborn",SB,NA
+4222915,"Premature birth of fraternal twins, both stillborn",SB,NA
+4203001,Term birth of stillborn twins,SB,NA
+4192641,"Term birth of identical twins, both stillborn",SB,NA
+4184594,Premature birth of stillborn twins,SB,NA
+4015163,Triplets - three stillborn,SB,NA
+4015162,Twins - both stillborn,SB,NA
+45773593,Intrapartum stillbirth,SB,NA
+37017027,Antepartum stillbirth,SB,NA
+4321563,Stillbirth of mature female,SB,NA
+4301269,Stillbirth of mature male,SB,NA
+4300979,Stillbirth of premature male,SB,NA
+4287409,Stillbirth of immature female,SB,NA
+4261819,Stillbirth of immature male,SB,NA
+4217655,"Stillbirth of immature fetus, sex undetermined",SB,NA
+4103876,Stillbirth of premature female,SB,NA
+4034159,Fresh stillbirth,SB,NA
+4028787,Macerated stillbirth,SB,NA
+4014454,Single stillbirth,SB,NA
+443463,Stillbirth - unknown if fetal death intrapartum or prior to labor,SB,NA
+4063309,Intrauterine death with antenatal problem,SB,NA
+4060687,Intrauterine death - delivered,SB,NA
+42539267,Multiple liveborn in hospital by vaginal delivery,LB,NA
+42539210,Triplet liveborn in hospital by cesarean section,LB,NA
+40483521,Single liveborn born in hospital by cesarean section,LB,NA
+40483126,Liveborn born in hospital by cesarean section,LB,NA
+40483101,Twin liveborn born in hospital by cesarean section,LB,NA
+40483084,Twin liveborn born in hospital,LB,NA
+40482735,Liveborn born in hospital,LB,NA
+36717637,Twin liveborn born outside hospital,LB,NA
+36713469,Multiple liveborn other than twins born outside hospital,LB,NA
+36713468,Multiple liveborn other than twins born in hospital,LB,NA
+36713467,Singleton liveborn unspecified as to place of birth,LB,NA
+36713466,Singleton liveborn born outside hospital,LB,NA
+36713465,Singleton liveborn born in hospital,LB,NA
+36713074,Single liveborn born in hospital by vaginal delivery,LB,NA
+192379,Legal termination of pregnancy complicated by damage to pelvic organ and/or tissues,AB,NA
+193532,Incomplete legal termination of pregnancy with genital tract or pelvic infection,AB,NA
+193821,Illegal termination of pregnancy complicated by embolism,AB,NA
+195595,Legal termination of pregnancy complicated by renal failure,AB,NA
+195600,Illegal termination of pregnancy complicated by renal failure,AB,NA
+195870,Complete illegal termination of pregnancy with genital tract or pelvic infection,AB,NA
+196754,Complete legal termination of pregnancy with genital tract or pelvic infection,AB,NA
+197333,Legal termination of pregnancy complicated by shock,AB,NA
+434095,Incomplete legal termination of pregnancy with metabolic disorder,AB,NA
+434096,Complete illegal termination of pregnancy with delayed or excessive hemorrhage,AB,NA
+434705,Incomplete legal termination of pregnancy with damage to pelvic organs or tissues,AB,NA
+435008,Complete legal termination of pregnancy with renal failure,AB,NA
+435017,Complete legal termination of pregnancy with metabolic disorder,AB,NA
+435868,Incomplete legal termination of pregnancy,AB,NA
+435869,Illegal termination of pregnancy,AB,NA
+435871,Complete illegal termination of pregnancy with renal failure,AB,NA
+436169,Illegal termination of pregnancy with complication,AB,NA
+436228,Fetal death due to termination of pregnancy,AB,NA
+436474,Legal termination of pregnancy complicated by metabolic disorder,AB,NA
+436747,Legal termination of pregnancy without complication,AB,NA
+437929,Incomplete illegal termination of pregnancy with delayed or excessive hemorrhage,AB,NA
+437934,Complete legal termination of pregnancy with shock,AB,NA
+438196,Complete legal termination of pregnancy with delayed or excessive hemorrhage,AB,NA
+438487,Incomplete illegal termination of pregnancy with embolism,AB,NA
+439310,"Illegal termination of pregnancy, complete",AB,NA
+439316,Complete illegal termination of pregnancy with embolism,AB,NA
+439317,Complete illegal termination of pregnancy with shock,AB,NA
+439318,Complete illegal termination of pregnancy with metabolic disorder,AB,NA
+439319,Complete illegal termination of pregnancy with damage to pelvic organs or tissues,AB,NA
+439320,Incomplete illegal termination of pregnancy with shock,AB,NA
+439321,Incomplete illegal termination of pregnancy with metabolic disorder,AB,NA
+439322,Incomplete illegal termination of pregnancy with renal failure,AB,NA
+439323,Incomplete illegal termination of pregnancy with damage to pelvic organs or tissues,AB,NA
+439324,Incomplete illegal termination of pregnancy with genital tract or pelvic infection,AB,NA
+439325,"Illegal termination of pregnancy, incomplete",AB,NA
+439327,Complete legal termination of pregnancy with embolism,AB,NA
+439329,Incomplete legal termination of pregnancy with embolism,AB,NA
+439330,Incomplete legal termination of pregnancy with shock,AB,NA
+439331,Incomplete legal termination of pregnancy with renal failure,AB,NA
+439400,Illegal termination of pregnancy complicated by genital-pelvic infection,AB,NA
+439883,Legal termination of pregnancy complicated by genital-pelvic infection,AB,NA
+440453,Incomplete legal termination of pregnancy with delayed or excessive hemorrhage,AB,NA
+441073,Complete legal termination of pregnancy,AB,NA
+441349,Legal termination of pregnancy with complication,AB,NA
+441911,Complete legal termination of pregnancy with damage to pelvic organs or tissues,AB,NA
+441915,Illegal termination of pregnancy without complication,AB,NA
+442346,Legal termination of pregnancy complicated by embolism,AB,NA
+442596,Illegal termination of pregnancy complicated by shock,AB,NA
+443705,Illegal termination of pregnancy complicated by metabolic disorder,AB,NA
+444048,Illegal termination of pregnancy complicated by damage to pelvic organs and/or tissues,AB,NA
+444077,Legal termination of pregnancy,AB,NA
+2004489,Dilation and curettage for termination of pregnancy,AB,NA
+2101812,Anesthesia for induced abortion procedures,AB,NA
+2110329,"Induced abortion, by dilation and curettage",AB,NA
+2110330,"Induced abortion, by dilation and evacuation",AB,NA
+2110331,"Induced abortion, by 1 or more intra-amniotic injections (amniocentesis-injections), including hospital admission and visits, delivery of fetus and secundines",AB,NA
+2110332,"Induced abortion, by 1 or more intra-amniotic injections (amniocentesis-injections), including hospital admission and visits, delivery of fetus and secundines; with dilation and curettage and/or evacuation",AB,NA
+2110333,"Induced abortion, by 1 or more intra-amniotic injections (amniocentesis-injections), including hospital admission and visits, delivery of fetus and secundines; with hysterotomy (failed intra-amniotic injection)",AB,NA
+2110334,"Induced abortion, by 1 or more vaginal suppositories (eg, prostaglandin) with or without cervical dilation (eg, laminaria), including hospital admission and visits, delivery of fetus and secundines",AB,NA
+2110335,"Induced abortion, by 1 or more vaginal suppositories (eg, prostaglandin) with or without cervical dilation (eg, laminaria), including hospital admission and visits, delivery of fetus and secundines; with dilation and curettage and/or evacuation",AB,NA
+2110336,"Induced abortion, by 1 or more vaginal suppositories (eg, prostaglandin) with or without cervical dilation (eg, laminaria), including hospital admission and visits, delivery of fetus and secundines; with hysterotomy (failed medical evacuation)",AB,NA
+2721146,"Induced abortion, 17 to 24 weeks",AB,NA
+2784555,"Abortion of Products of Conception, Open Approach",AB,NA
+2784556,"Abortion of Products of Conception, Percutaneous Approach",AB,NA
+2784557,"Abortion of Products of Conception, Percutaneous Endoscopic Approach",AB,NA
+2784558,"Abortion of Products of Conception, Vacuum, Via Natural or Artificial Opening",AB,NA
+2784559,"Abortion of Products of Conception, Laminaria, Via Natural or Artificial Opening",AB,NA
+2784560,"Abortion of Products of Conception, Abortifacient, Via Natural or Artificial Opening",AB,NA
+2784561,"Abortion of Products of Conception, Via Natural or Artificial Opening",AB,NA
+2784562,"Abortion of Products of Conception, Via Natural or Artificial Opening Endoscopic",AB,NA
+4009642,Legal termination of pregnancy with air embolism,AB,NA
+4023781,Illegal termination of pregnancy with endometritis,AB,NA
+4025639,Legal termination of pregnancy with cardiac arrest and/or failure,AB,NA
+4025828,Illegal termination of pregnancy with laceration of periurethral tissue,AB,NA
+4030009,Therapeutic termination of pregnancy by insertion of laminaria,AB,NA
+4034753,Illegal termination of pregnancy with sepsis,AB,NA
+4045581,Legal termination of pregnancy with laceration of uterus,AB,NA
+4046510,Legal termination of pregnancy with intravascular hemolysis,AB,NA
+4049453,Legal termination of pregnancy with parametritis,AB,NA
+4051784,Illegal termination of pregnancy with perforation of bowel,AB,NA
+4058932,Legal termination of pregnancy with postoperative shock,AB,NA
+4066227,Illegal termination of pregnancy with blood-clot embolism,AB,NA
+4066994,Illegal termination of pregnancy with laceration of bowel,AB,NA
+4068253,Legal termination of pregnancy with perforation of uterus,AB,NA
+4070939,Legal termination of pregnancy with renal tubular necrosis,AB,NA
+4074301,Insertion of prostaglandin abortifacient suppository,AB,NA
+4077275,Illegal termination of pregnancy with laceration of cervix,AB,NA
+4077454,Legal termination of pregnancy with cerebral anoxia,AB,NA
+4081422,Elective termination of pregnancy,AB,NA
+4082412,Hysterotomy and termination of pregnancy,AB,NA
+4094081,Legal termination of pregnancy with pelvic peritonitis,AB,NA
+4098441,Legal termination of pregnancy with amniotic fluid embolism,AB,NA
+4101477,Illegal termination of pregnancy with electrolyte imbalance,AB,NA
+4103148,Illegal termination of pregnancy with perforation of vagina,AB,NA
+4105063,Legal termination of pregnancy with septic shock,AB,NA
+4105762,Illegal termination of pregnancy with laceration of broad ligament,AB,NA
+4106892,Legal termination of pregnancy with septic embolism,AB,NA
+4107907,Illegal termination of pregnancy with fat embolism,AB,NA
+4112315,Insertion of abortifacient suppository,AB,NA
+4113503,"Readmission for retained products of conception, legal termination of pregnancy",AB,NA
+4114271,"Readmission for retained products of conception, illegal termination of pregnancy",AB,NA
+4115153,Medical termination of pregnancy,AB,NA
+4119975,Operative termination of pregnancy,AB,NA
+4121775,Injection of amnion for termination of pregnancy,AB,NA
+4138267,Illegal termination of pregnancy with afibrinogenemia,AB,NA
+4140509,Illegal termination of pregnancy with urinary tract infection,AB,NA
+4143018,Illegal termination of pregnancy with postoperative shock,AB,NA
+4143190,Illegal termination of pregnancy with acute renal failure,AB,NA
+4147533,Legal termination of pregnancy with afibrinogenemia,AB,NA
+4150823,Self-induced termination of pregnancy,AB,NA
+4168396,Dilation of cervix uteri and curettage for termination of pregnancy,AB,NA
+4178578,Legal termination of pregnancy with pulmonary embolism,AB,NA
+4180859,Illegal termination of pregnancy with laceration of bladder,AB,NA
+4181114,Legal termination of pregnancy with acute renal failure,AB,NA
+4182549,Illegal termination of pregnancy with cardiac arrest AND/OR failure,AB,NA
+4183557,Illegal termination of pregnancy with uremia,AB,NA
+4183680,Legal termination of pregnancy with laceration of bowel,AB,NA
+4184150,Legal termination of pregnancy with perforation of bowel,AB,NA
+4185440,Illegal termination of pregnancy with air embolism,AB,NA
+4188764,Legal termination of pregnancy with sepsis,AB,NA
+4189561,Therapeutic termination of pregnancy by aspiration curettage,AB,NA
+4195243,Illegal termination of pregnancy with perforation of broad ligament,AB,NA
+4195297,Illegal termination of pregnancy with renal tubular necrosis,AB,NA
+4197681,Legal termination of pregnancy with salpingo-oophoritis,AB,NA
+4197900,Illegal termination of pregnancy with perforation of bladder,AB,NA
+4198404,Legal termination of pregnancy with perforation of broad ligament,AB,NA
+4200986,Induced termination of pregnancy following intra-amniotic injection with hysterotomy,AB,NA
+4204206,Legal termination of pregnancy with salpingitis,AB,NA
+4204231,Legal termination of pregnancy with laceration of vagina,AB,NA
+4204840,Therapeutic termination of pregnancy,AB,NA
+4206453,Illegal termination of pregnancy with pulmonary embolism,AB,NA
+4212346,Legal termination of pregnancy with acute necrosis of liver,AB,NA
+4212941,Aspiration curettage of uterus for termination of pregnancy,AB,NA
+4214233,Legal termination of pregnancy with electrolyte imbalance,AB,NA
+4216436,Legal termination of pregnancy with laceration of broad ligament,AB,NA
+4219608,Illegal termination of pregnancy with septic shock,AB,NA
+4223627,Illegal termination of pregnancy with cerebral anoxia,AB,NA
+4224143,Illegal termination of pregnancy with perforation of cervix,AB,NA
+4225572,Legal termination of pregnancy with uremia,AB,NA
+4229716,Illegal termination of pregnancy with laceration of uterus,AB,NA
+4231060,Termination of pregnancy contraindicated,AB,NA
+4234979,Illegal termination of pregnancy with pelvic peritonitis,AB,NA
+4236326,Illegal termination of pregnancy with acute necrosis of liver,AB,NA
+4239192,Illegal termination of pregnancy with perforation of periurethral tissue,AB,NA
+4239693,Termination of pregnancy on demand,AB,NA
+4240605,Termination of pregnancy,AB,NA
+4243658,Legal termination of pregnancy with laceration of bladder,AB,NA
+4245041,Legal termination of pregnancy with urinary tract infection,AB,NA
+4249728,Illegal termination of pregnancy with laceration of vagina,AB,NA
+4257043,Extra-amniotic termination of pregnancy,AB,NA
+4264914,Illegal termination of pregnancy with defibrination syndrome,AB,NA
+4266243,Illegal termination of pregnancy with oliguria,AB,NA
+4269450,Legal termination of pregnancy with oliguria,AB,NA
+4271203,Legal termination of pregnancy with perforation of bladder,AB,NA
+4280224,Legal termination of pregnancy with defibrination syndrome,AB,NA
+4292089,Legal termination of pregnancy with blood-clot embolism,AB,NA
+4294829,Legal termination of pregnancy with endometritis,AB,NA
+4296459,Legal termination of pregnancy with perforation of periurethral tissue,AB,NA
+4296872,Illegal termination of pregnancy with perforation of uterus,AB,NA
+4297250,Termination of pregnancy,AB,NA
+4299609,Therapeutic termination of pregnancy procedure,AB,NA
+4303980,Illegal termination of pregnancy with amniotic fluid embolism,AB,NA
+4305348,Illegal termination of pregnancy with parametritis,AB,NA
+4312358,Legal termination of pregnancy with perforation of cervix,AB,NA
+4313005,Illegal termination of pregnancy with salpingo-oophoritis,AB,NA
+4318662,Illegal termination of pregnancy with salpingitis,AB,NA
+4323434,Illegal termination of pregnancy with intravascular hemolysis,AB,NA
+4324672,Legal termination of pregnancy with laceration of periurethral tissue,AB,NA
+4324695,Legal termination of pregnancy with laceration of cervix,AB,NA
+4324965,Illegal termination of pregnancy with septic embolism,AB,NA
+4327321,Legal termination of pregnancy with perforation of vagina,AB,NA
+4328084,Legal termination of pregnancy with fat embolism,AB,NA
+37018340,Induced termination of pregnancy,AB,NA
+37206226,Excessive hemorrhage due to and following induced termination of pregnancy,AB,NA
+37206227,Secondary hemorrhage due to and following induced termination of pregnancy,AB,NA
+37206228,Secondary hemorrhage due to and following illegally induced termination of pregnancy,AB,NA
+37206229,Secondary hemorrhage due to and following legally induced termination of pregnancy,AB,NA
+37206230,Excessive hemorrhage due to and following legally induced termination of pregnancy,AB,NA
+37206231,Excessive hemorrhage due to and following illegally induced termination of pregnancy,AB,NA
+40487510,Medical termination of pregnancy using prostaglandin,AB,NA
+43020954,Termination of pregnancy after first trimester,AB,NA
+43530907,Termination of pregnancy with complication,AB,NA
+43530908,Induced termination of pregnancy complicated by damage to pelvic organs and/or tissues,AB,NA
+43530910,Induced termination of pregnancy complicated by genital-pelvic infection,AB,NA
+43530911,Induced termination of pregnancy complicated by metabolic disorder,AB,NA
+43530912,Induced termination of pregnancy complicated by renal failure,AB,NA
+43530913,Induced termination of pregnancy complicated by acute necrosis of liver,AB,NA
+43530914,Induced termination of pregnancy complicated by acute renal failure,AB,NA
+43530915,Induced termination of pregnancy complicated by afibrinogenemia,AB,NA
+43530916,Induced termination of pregnancy complicated by air embolism,AB,NA
+43530917,Induced termination of pregnancy complicated by blood-clot embolism,AB,NA
+43530918,Induced termination of pregnancy complicated by cardiac arrest and/or failure,AB,NA
+43530919,Induced termination of pregnancy complicated by cerebral anoxia,AB,NA
+43530920,Induced termination of pregnancy complicated by defibrination syndrome,AB,NA
+43530921,Induced termination of pregnancy complicated by endometritis,AB,NA
+43530922,Induced termination of pregnancy complicated by fat embolism,AB,NA
+43530923,Induced termination of pregnancy complicated by intravascular hemolysis,AB,NA
+43530924,Induced termination of pregnancy complicated by laceration of bowel,AB,NA
+43530925,Induced termination of pregnancy complicated by laceration of broad ligament,AB,NA
+43530926,Induced termination of pregnancy complicated by laceration of uterus,AB,NA
+43530927,Induced termination of pregnancy complicated by laceration of vagina,AB,NA
+43530928,Induced termination of pregnancy complicated by acute renal failure with oliguria,AB,NA
+43530929,Induced termination of pregnancy complicated by parametritis,AB,NA
+43530930,Induced termination of pregnancy complicated by perforation of bowel,AB,NA
+43530931,Induced termination of pregnancy complicated by perforation of cervix,AB,NA
+43530932,Induced termination of pregnancy complicated by perforation of uterus,AB,NA
+43530933,Induced termination of pregnancy complicated by perforation of vagina,AB,NA
+43530934,Induced termination of pregnancy complicated by pulmonary embolism,AB,NA
+43530935,Induced termination of pregnancy complicated by renal tubular necrosis,AB,NA
+43530936,Induced termination of pregnancy complicated by salpingitis,AB,NA
+43530937,Induced termination of pregnancy complicated by salpingo-oophoritis,AB,NA
+43530939,Induced termination of pregnancy complicated by sepsis,AB,NA
+43530940,Induced termination of pregnancy complicated by septic embolism,AB,NA
+43530941,Induced termination of pregnancy complicated by septic shock,AB,NA
+43530943,Induced termination of pregnancy complicated by soap embolism,AB,NA
+43530944,Induced termination of pregnancy complicated by uremia,AB,NA
+43530945,Induced termination of pregnancy complicated by urinary tract infection,AB,NA
+43530946,Termination of pregnancy without complication,AB,NA
+43530947,Induced termination of pregnancy complicated by tetanus,AB,NA
+43530948,Induced termination of pregnancy complicated by pelvic disorder,AB,NA
+43530952,Induced termination of pregnancy complicated by laceration of bladder,AB,NA
+43530953,Induced termination of pregnancy complicated by laceration of periurethral tissue,AB,NA
+43530954,Induced termination of pregnancy complicated by perforation of bladder,AB,NA
+43530955,Induced termination of pregnancy complicated by perforation of broad ligament,AB,NA
+43530956,Induced termination of pregnancy complicated by perforation of periurethral tissue,AB,NA
+43530957,Induced termination of pregnancy complicated by bladder damage,AB,NA
+43530958,Induced termination of pregnancy complicated by bowel damage,AB,NA
+43530959,Induced termination of pregnancy complicated by broad ligament damage,AB,NA
+43530960,Induced termination of pregnancy complicated by cardiac arrest,AB,NA
+43530961,Induced termination of pregnancy complicated by cardiac failure,AB,NA
+43530962,Induced termination of pregnancy complicated by cervix damage,AB,NA
+43530964,Induced termination of pregnancy complicated by infectious disease,AB,NA
+43530965,Induced termination of pregnancy complicated by periurethral tissue damage,AB,NA
+43530966,Induced termination of pregnancy complicated by oliguria,AB,NA
+43530967,Induced termination of pregnancy complicated by uterus damage,AB,NA
+43530968,Induced termination of pregnancy complicated by vaginal damage,AB,NA
+43531709,Retained products of conception following induced termination of pregnancy,AB,NA
+43531710,Induced termination of pregnancy complicated by embolism,AB,NA
+43531711,Induced termination of pregnancy complicated by shock,AB,NA
+43531712,Induced termination of pregnancy complicated by amniotic fluid embolism,AB,NA
+43531713,Induced termination of pregnancy complicated by electrolyte imbalance,AB,NA
+43531714,Induced termination of pregnancy complicated by laceration of cervix,AB,NA
+43531715,Induced termination of pregnancy complicated by pelvic peritonitis,AB,NA
+43531716,Induced termination of pregnancy complicated by postoperative shock,AB,NA
+44513476,Other specified introduction of abortifacient into uterine cavity,AB,NA
+44784128,Induced termination of pregnancy under unsafe conditions,AB,NA
+44805020,Incomplete termination of pregnancy,AB,NA
+45763590,Induced termination of pregnancy in first trimester,AB,NA
+45763591,Induced termination of pregnancy in second trimester,AB,NA
+45768717,Incomplete induced termination of pregnancy,AB,NA
+45771353,Incomplete induced termination of pregnancy with complication,AB,NA
+45883489,Induced abortion,AB,NA
+44784482,Complete legal abortion with complication,AB,NA
+44784433,Complete legal abortion complicated by excessive hemorrhage,AB,NA
+44782485,Complete illegal abortion complicated by excessive hemorrhage,AB,NA
+37110280,Incomplete legal abortion without complication,AB,NA
+46274066,Cardiac arrest due to incomplete miscarriage,SA,NA
+46269813,Urinary tract infection due to incomplete miscarriage,SA,NA
+46269812,Cardiac arrest due to miscarriage,SA,NA
+46269746,Female genital tract infection due to complete miscarriage,SA,NA
+45876808,Miscarriage,SA,NA
+45757198,Sepsis due to incomplete miscarriage,SA,NA
+42537769,Disorder of vein following miscarriage,SA,NA
+42537759,Delayed hemorrhage due to and following miscarriage,SA,NA
+42535215,Incomplete spontaneous abortion due to hemorrhage,SA,NA
+40318618,Complete miscarriage,SA,NA
+40318617,Incomplete miscarriage,SA,NA
+4339107,Miscarriage with perforation of vagina,SA,NA
+4323612,Miscarriage due to Brucella abortus,SA,NA
+4313166,Miscarriage with pelvic peritonitis,SA,NA
+4311698,Miscarriage with laceration of vagina,SA,NA
+4310654,Miscarriage with perforation of bladder,SA,NA
+4309780,Miscarriage with laceration of broad ligament,SA,NA
+4302162,Miscarriage with laceration of uterus,SA,NA
+4285746,Miscarriage with sepsis,SA,NA
+4278107,Miscarriage with fat embolism,SA,NA
+4274315,Miscarriage with electrolyte imbalance,SA,NA
+4269081,Surgical treatment of miscarriage of any trimester,SA,NA
+4261327,Miscarriage with laceration of periurethral tissue,SA,NA
+4253804,Miscarriage with perforation of cervix,SA,NA
+4247270,Miscarriage with air embolism,SA,NA
+4244408,Inevitable miscarriage,SA,NA
+4244261,Miscarriage with septic embolism,SA,NA
+4238207,Listeria miscarriage,SA,NA
+4224646,Miscarriage in second trimester,SA,NA
+4224597,Miscarriage with acute necrosis of liver,SA,NA
+4221853,Miscarriage with parametritis,SA,NA
+4219469,Miscarriage with pulmonary embolism,SA,NA
+4217670,Miscarriage with oliguria,SA,NA
+4216342,Miscarriage with perforation of bowel,SA,NA
+4211863,Miscarriage with acute renal failure,SA,NA
+4209126,Miscarriage with blood-clot embolism,SA,NA
+4202200,Surgical treatment of missed miscarriage of second trimester,SA,NA
+4200070,Miscarriage with perforation of periurethral tissue,SA,NA
+4195406,Miscarriage with salpingitis,SA,NA
+4194113,Miscarriage with laceration of bladder,SA,NA
+4189350,Miscarriage with salpingo-oophoritis,SA,NA
+4180568,Miscarriage with intravascular hemolysis,SA,NA
+4179796,Miscarriage with defibrination syndrome,SA,NA
+4175137,Miscarriage with cardiac arrest and/or cardiac failure,SA,NA
+4170457,Miscarriage with heavy bleeding,SA,NA
+4170121,Retained products after miscarriage,SA,NA
+4168445,Miscarriage with postoperative shock,SA,NA
+4149423,Miscarriage with endometritis,SA,NA
+4146775,Incomplete inevitable miscarriage without complication,SA,NA
+4146774,Complete inevitable miscarriage without complication,SA,NA
+4146773,Inevitable miscarriage incomplete,SA,NA
+4146772,Inevitable miscarriage complete,SA,NA
+4130670,Miscarriage with laceration of cervix,SA,NA
+4114280,"Readmission for retained products of conception, spontaneous abortion",SA,NA
+4087135,Surgical treatment of missed miscarriage of first trimester,SA,NA
+4085627,Miscarriage with septic shock,SA,NA
+4078393,Miscarriage in first trimester,SA,NA
+4074867,Dilation of cervix uteri and curettage of uterus for removal of missed miscarriage,SA,NA
+4067106,Miscarriage,SA,NA
+4064536,Miscarriage with afibrinogenemia,SA,NA
+4051244,Miscarriage due to Leptospira,SA,NA
+4049891,Miscarriage with perforation of uterus,SA,NA
+4047775,Miscarriage with cerebral anoxia,SA,NA
+4041728,Miscarriage with laceration of bowel,SA,NA
+4033096,Miscarriage with urinary tract infection,SA,NA
+4031837,Miscarriage with perforation of broad ligament,SA,NA
+4006806,Miscarriage with uremia,SA,NA
+4003276,Miscarriage with amniotic fluid embolism,SA,NA
+4001856,Miscarriage with renal tubular necrosis,SA,NA
+2110327,"Treatment of missed abortion, completed surgically; second trimester",SA,NA
+2110326,"Treatment of missed abortion, completed surgically; first trimester",SA,NA
+2110325,"Treatment of incomplete abortion, any trimester, completed surgically",SA,NA
+2101811,Anesthesia for incomplete or missed abortion procedures,SA,NA
+441921,Complete inevitable miscarriage complicated by genital tract and pelvic infection,SA,NA
+441910,Complete miscarriage with damage to pelvic organs or tissues,SA,NA
+441632,Complete miscarriage with embolism,SA,NA
+441631,Incomplete miscarriage with shock,SA,NA
+441629,Complete inevitable miscarriage complicated by embolism,SA,NA
+441348,Miscarriage complicated by metabolic disorder,SA,NA
+440460,Incomplete miscarriage with delayed or excessive hemorrhage,SA,NA
+439688,Incomplete miscarriage with renal failure,SA,NA
+439085,Complete inevitable miscarriage complicated by delayed or excessive hemorrhage,SA,NA
+438805,Complete miscarriage with shock,SA,NA
+438211,Incomplete inevitable miscarriage complicated by delayed or excessive hemorrhage,SA,NA
+437933,Incomplete miscarriage with damage to pelvic organs or tissues,SA,NA
+437920,Miscarriage complicated by genital-pelvic infection,SA,NA
+437618,Incomplete inevitable miscarriage complicated by genital tract and pelvic infection,SA,NA
+437045,Incomplete miscarriage with embolism,SA,NA
+436748,Incomplete inevitable miscarriage complicated by embolism,SA,NA
+436742,Complete miscarriage with renal failure,SA,NA
+436176,Miscarriage without complication,SA,NA
+435318,Complete miscarriage with genital tract or pelvic infection,SA,NA
+435000,Complete miscarriage with metabolic disorder,SA,NA
+434413,Incomplete miscarriage with complication,SA,NA
+434094,Miscarriage with complication,SA,NA
+432689,Incomplete miscarriage with metabolic disorder,SA,NA
+432682,Complete miscarriage with delayed or excessive hemorrhage,SA,NA
+196746,Miscarriage complicated by shock,SA,NA
+195317,Incomplete miscarriage with genital tract or pelvic infection,SA,NA
+194704,Miscarriage complicated by embolism,SA,NA
+193820,Miscarriage complicated by renal failure,SA,NA
+192678,Miscarriage complicated by damage to pelvic organs and/or tissues,SA,NA
+76482,Missed miscarriage,SA,NA
+2110327,"Treatment of missed abortion, completed surgically; second trimester",SA,NA
+2110326,"Treatment of missed abortion, completed surgically; first trimester",SA,NA
+2110325,"Treatment of incomplete abortion, any trimester, completed surgically",SA,NA
+2101811,Anesthesia for incomplete or missed abortion procedures,SA,NA
+40482050,Chemical pregnancy,SA,NA
+193525,Abdominal pregnancy,ECT,NA
+4113682,Angular pregnancy,ECT,NA
+4152444,Antenatal ultrasound confirms ectopic pregnancy,ECT,NA
+45763635,Aspiration of ectopic pregnancy from cornu of fallopian tube,ECT,NA
+4300368,Aspiration of ectopic pregnancy from fallopian tube,ECT,NA
+4194693,Cervical pregnancy,ECT,NA
+4227267,Cornual pregnancy,ECT,NA
+42537767,Damage to pelvic organs and tissues following ectopic pregnancy,ECT,NA
+42537762,Delayed hemorrhage due to and following ectopic pregnancy,ECT,NA
+38001494,Ectopic pregnancy,ECT,NA
+437611,Ectopic pregnancy,ECT,NA
+37209653,Ectopic pregnancy of left ovary,ECT,NA
+37209654,Ectopic pregnancy of right ovary,ECT,NA
+42539701,Embolism due to and following ectopic pregnancy,ECT,NA
+37118254,Entire product of conception of ectopic pregnancy,ECT,NA
+42537763,Excessive hemorrhage due to and following ectopic pregnancy,ECT,NA
+40493226,Excision of fallopian tube and surgical removal of ectopic pregnancy,ECT,NA
+4306064,Fimbrial extraction of tubal pregnancy,ECT,NA
+42536561,Genital tract infection due to and following ectopic pregnancy,ECT,NA
+4149029,Intraligamentous pregnancy,ECT,NA
+37203955,Intramural ectopic pregnancy of myometrium,ECT,NA
+4066151,Intraperitoneal pregnancy,ECT,NA
+42872571,Laparoscopic excision of ruptured ectopic tubal pregnancy,ECT,NA
+4265032,Laparoscopic treatment of ectopic pregnancy with oophorectomy,ECT,NA
+4270068,Laparoscopic treatment of ectopic pregnancy with salpingectomy,ECT,NA
+2110300,Laparoscopic treatment of ectopic pregnancy; with salpingectomy and/or oophorectomy,ECT,NA
+2110299,Laparoscopic treatment of ectopic pregnancy; without salpingectomy and/or oophorectomy,ECT,NA
+3183328,Left ruptured ectopic pregnancy with hemoperitoneum,ECT,NA
+4112952,Membranous pregnancy,ECT,NA
+4113218,Mesenteric pregnancy,ECT,NA
+4243803,Mesometric pregnancy,ECT,NA
+200153,Ovarian pregnancy,ECT,NA
+4232708,Partial hysterectomy for removal of cornual ectopic pregnancy,ECT,NA
+42536560,Pelvic infection due to and following ectopic pregnancy,ECT,NA
+37209655,Pregnancy of left fallopian tube,ECT,NA
+37209658,Pregnancy of right fallopian tube,ECT,NA
+44792613,Products of ectopic pregnancy tissue specimen,ECT,NA
+4017620,Removal of ectopic cervical pregnancy by evacuation,ECT,NA
+4220384,Removal of ectopic fetus,ECT,NA
+4308664,Removal of ectopic fetus from abdominal cavity,ECT,NA
+4227423,Removal of ectopic fetus from fallopian tube without salpingectomy,ECT,NA
+4247895,Removal of ectopic fetus from ovary without oophorectomy,ECT,NA
+4339303,Removal of ectopic interstitial uterine pregnancy requiring total hysterectomy,ECT,NA
+4299185,Removal of ectopic pregnancy from fallopian tube,ECT,NA
+2004788,Removal of extratubal ectopic pregnancy,ECT,NA
+4300391,Removal of extrauterine ectopic fetus,ECT,NA
+4217304,Removal of intraligamentous ectopic pregnancy,ECT,NA
+45757120,Renal failure after ectopic pregnancy,ECT,NA
+2785345,"Resection of Products of Conception, Ectopic, Open Approach",ECT,NA
+2785346,"Resection of Products of Conception, Ectopic, Percutaneous Approach",ECT,NA
+2785347,"Resection of Products of Conception, Ectopic, Percutaneous Endoscopic Approach",ECT,NA
+2785348,"Resection of Products of Conception, Ectopic, Via Natural or Artificial Opening",ECT,NA
+2785349,"Resection of Products of Conception, Ectopic, Via Natural or Artificial Opening Endoscopic",ECT,NA
+4069106,Ruptured ectopic pregnancy,ECT,NA
+4113680,Ruptured tubal pregnancy,ECT,NA
+37209657,Ruptured tubal pregnancy of left fallopian tube,ECT,NA
+37209656,Ruptured tubal pregnancy of right fallopian tube,ECT,NA
+4165566,Salpingectomy for tubal ectopic pregnancy by abdominal approach,ECT,NA
+46269806,Salpingitis due to ectopic pregnancy,ECT,NA
+4174577,Secondary abdominal pregnancy,ECT,NA
+46269807,Sepsis due to ectopic pregnancy,ECT,NA
+46269808,Shock due to ectopic pregnancy,ECT,NA
+46270313,Structure of product of conception of ectopic pregnancy,ECT,NA
+2110295,Surgical treatment of ectopic pregnancy; abdominal pregnancy,ECT,NA
+2110298,"Surgical treatment of ectopic pregnancy; cervical, with evacuation",ECT,NA
+2110296,"Surgical treatment of ectopic pregnancy; interstitial, uterine pregnancy requiring total hysterectomy",ECT,NA
+2110297,"Surgical treatment of ectopic pregnancy; interstitial, uterine pregnancy with partial resection of uterus",ECT,NA
+2110293,"Surgical treatment of ectopic pregnancy; tubal or ovarian, requiring salpingectomy and/or oophorectomy, abdominal or vaginal approach",ECT,NA
+2110294,"Surgical treatment of ectopic pregnancy; tubal or ovarian, without salpingectomy and/or oophorectomy",ECT,NA
+4208611,Tissue specimen from ectopic pregnancy,ECT,NA
+199076,Tubal pregnancy,ECT,NA
+4129712,Unruptured tubal pregnancy,ECT,NA
+46269809,Urinary tract infection due to ectopic pregnancy,ECT,NA
+2784576,"Extraction of Products of Conception, Ectopic, Via Natural or Artificial Opening Endoscopic",ECT,NA
+2784575,"Extraction of Products of Conception, Ectopic, Via Natural or Artificial Opening",ECT,NA
+46273629,Delivery by cesarean section for footling breech presentation,DELIV,NA
+46273305,Delivery by cesarean section for flexed breech presentation,DELIV,NA
+46273304,Delivery by cesarean section for breech presentation,DELIV,NA
+45757174,Vacuum assisted vaginal delivery,DELIV,NA
+44513756,Other specified cephalic vaginal delivery with abnormal presentation of head at delivery without instrument,DELIV,NA
+44513752,Other specified vacuum delivery,DELIV,NA
+44513747,Other specified forceps cephalic delivery,DELIV,NA
+44513746,Low forceps cephalic delivery,DELIV,NA
+44513745,Mid forceps cephalic delivery NEC,DELIV,NA
+44513743,High forceps cephalic delivery NEC,DELIV,NA
+44513740,Other specified other breech delivery,DELIV,NA
+44513736,Other specified breech extraction delivery,DELIV,NA
+42539267,Multiple liveborn in hospital by vaginal delivery,DELIV,NA
+42535817,Mid vacuum delivery,DELIV,NA
+42535816,Outlet vacuum delivery,DELIV,NA
+37310404,Born by mid-cavity forceps delivery,DELIV,NA
+37310393,Born by low forceps delivery,DELIV,NA
+37310369,Born by high forceps delivery,DELIV,NA
+36713074,Single liveborn born in hospital by vaginal delivery,DELIV,NA
+4331179,"Vaginal delivery, medical personnel present",DELIV,NA
+4324549,Forceps delivery with rotation of fetal head,DELIV,NA
+4294827,Pinard maneuver,DELIV,NA
+4290245,Trial forceps delivery,DELIV,NA
+4266683,Mid forceps delivery,DELIV,NA
+4250441,Kristeller maneuver,DELIV,NA
+4250009,Born by breech delivery,DELIV,NA
+4244672,Frank breech delivery,DELIV,NA
+4240325,Bracht maneuver,DELIV,NA
+4234710,Delivery by Malstrom's extraction,DELIV,NA
+4234421,Partial breech delivery,DELIV,NA
+4232028,Delivery by Kielland rotation,DELIV,NA
+4231702,High forceps delivery,DELIV,NA
+4230533,Partial breech extraction,DELIV,NA
+4223638,Delivery by Malstrom's extraction with episiotomy,DELIV,NA
+4217642,Footling breech delivery,DELIV,NA
+4217586,Born by forceps delivery,DELIV,NA
+4213387,Breech extraction,DELIV,NA
+4205240,Spontaneous vertex delivery,DELIV,NA
+4204679,Total breech delivery with forceps to aftercoming head,DELIV,NA
+4189205,Delivery by vacuum extraction,DELIV,NA
+4175637,Premature pregnancy delivered,DELIV,NA
+4173513,Neville-Barnes forceps delivery,DELIV,NA
+4170626,Abnormal delivery,DELIV,NA
+4170152,Simpson's forceps delivery,DELIV,NA
+4167018,Vaginal delivery with forceps including postpartum care,DELIV,NA
+4166775,Brow delivery,DELIV,NA
+4166247,Total breech extraction,DELIV,NA
+4164221,Face delivery,DELIV,NA
+4156948,Delivered by low forceps delivery,DELIV,NA
+4154615,Deliveries by spontaneous breech delivery,DELIV,NA
+4153284,Delivered by mid-cavity forceps delivery,DELIV,NA
+4147974,Barton's forceps delivery,DELIV,NA
+4143647,Midforceps delivery without rotation,DELIV,NA
+4137400,"Breech presentation, no version",DELIV,NA
+4130319,Delivery of the after coming head,DELIV,NA
+4128031,Instrumental delivery,DELIV,NA
+4127705,Term pregnancy delivered,DELIV,NA
+4127251,Mauriceau Smellie Veit maneuver,DELIV,NA
+4127250,Lovset's maneuver,DELIV,NA
+4127249,Outlet forceps delivery,DELIV,NA
+4127248,Nonrotational forceps delivery,DELIV,NA
+4119050,Born after precipitate delivery,DELIV,NA
+4118904,Abnormal head presentation delivery,DELIV,NA
+4118903,Normal delivery - occipitoanterior,DELIV,NA
+4114637,Forceps delivery,DELIV,NA
+4114636,Breech extraction with internal podalic version,DELIV,NA
+4106406,Delivery by double application of forceps,DELIV,NA
+4103850,Prague maneuver,DELIV,NA
+4102595,Wigand-Martin maneuver,DELIV,NA
+4100410,Delivery by Scanzoni maneuver,DELIV,NA
+4096145,Delivery by vacuum extraction with episiotomy,DELIV,NA
+4093774,Mid forceps delivery with episiotomy,DELIV,NA
+4088084,Low forceps delivery,DELIV,NA
+4083524,Face to pubes birth,DELIV,NA
+4075735,Low forceps delivery with episiotomy,DELIV,NA
+4075191,Low vacuum delivery,DELIV,NA
+4075190,DeLee forceps cephalic delivery with rotation,DELIV,NA
+4075189,Midforceps cephalic delivery with rotation,DELIV,NA
+4075188,High forceps cephalic delivery with rotation,DELIV,NA
+4075187,Forceps cephalic delivery,DELIV,NA
+4075171,Vacuum delivery before full dilation of cervix,DELIV,NA
+4075170,High vacuum delivery,DELIV,NA
+4075169,Barton forceps cephalic delivery with rotation,DELIV,NA
+4075168,Assisted breech delivery,DELIV,NA
+4075165,Breech extraction delivery with version,DELIV,NA
+4073438,Piper forceps delivery,DELIV,NA
+4073424,Trial of vacuum delivery,DELIV,NA
+4073422,Spontaneous breech delivery,DELIV,NA
+4071630,Non-manipulative cephalic vaginal delivery with abnormal presentation of head at delivery without instrument,DELIV,NA
+4066113,Deliveries by destructive operation,DELIV,NA
+4065737,Delivery by combination of forceps and vacuum extractor,DELIV,NA
+4064824,Piper forceps delivery by application to aftercoming head,DELIV,NA
+4063162,"Multiple delivery, all by forceps and vacuum extractor",DELIV,NA
+4063160,Normal delivery but ante- or post- natal conditions present,DELIV,NA
+4062136,Delivered by mid-cavity forceps with rotation,DELIV,NA
+4035778,High forceps delivery with episiotomy,DELIV,NA
+4034145,Complete breech delivery,DELIV,NA
+4032766,Burns Marshall maneuver,DELIV,NA
+4032764,Groin traction at breech delivery,DELIV,NA
+4032762,Forceps application to aftercoming head,DELIV,NA
+4032761,"Forceps delivery, face to pubes",DELIV,NA
+4023797,Partial breech delivery with forceps to aftercoming head,DELIV,NA
+4014720,Normal birth,DELIV,NA
+4011047,Postmature pregnancy delivered,DELIV,NA
+3186670,Threatened premature labor - delivered,DELIV,NA
+2110321,"Vaginal delivery only, after previous cesarean delivery (with or without episiotomy and/or forceps); including postpartum care",DELIV,NA
+2110319,"Routine obstetric care including antepartum care, vaginal delivery (with or without episiotomy, and/or forceps) and postpartum care, after previous cesarean delivery",DELIV,NA
+2110309,Vaginal delivery only (with or without episiotomy and/or forceps); including postpartum care,DELIV,NA
+2110308,Vaginal delivery only (with or without episiotomy and/or forceps),DELIV,NA
+2110307,"Routine obstetric care including antepartum care, vaginal delivery (with or without episiotomy, and/or forceps) and postpartum care",DELIV,NA
+2004731,Other specified instrumental delivery,DELIV,NA
+2004730,Other vacuum extraction,DELIV,NA
+2004726,Other total breech extraction,DELIV,NA
+2004724,Other partial breech extraction,DELIV,NA
+2004710,Other high forceps operation,DELIV,NA
+2004707,Other mid forceps operation,DELIV,NA
+2004702,"Forceps, vacuum, and breech delivery",DELIV,NA
+442069,Vacuum extractor delivery - delivered,DELIV,NA
+441641,Delivery normal,DELIV,NA
+440794,Elderly primigravida - delivered,DELIV,NA
+440793,Deliveries by breech extraction,DELIV,NA
+440790,Deliveries by vacuum extractor,DELIV,NA
+440462,Triplet pregnancy - delivered,DELIV,NA
+438481,Quadruplet pregnancy - delivered,DELIV,NA
+436767,Breech extraction - delivered,DELIV,NA
+435022,Forceps delivery - delivered,DELIV,NA
+435018,Twin pregnancy - delivered,DELIV,NA
+434110,Grand multiparity - delivered,DELIV,NA
+433260,Mother delivered,DELIV,NA
+73537,Breech presentation - delivered,DELIV,NA
+42539210,Triplet liveborn in hospital by cesarean section,DELIV,NA
+40483101,Twin liveborn born in hospital by cesarean section,DELIV,NA
+4063163,"Multiple delivery, all by cesarean section",DELIV,NA
+4064559,Delayed delivery second twin - delivered,DELIV,NA
+442422,Locked twins - delivered,DELIV,NA
+442082,Multiple pregnancy with malpresentation - delivered,DELIV,NA
+46270991,Emergency lower segment cesarean section with inverted T incision,DELIV,NA
+44513733,Other specified other caesarean delivery,DELIV,NA
+44513729,Other specified elective caesarean delivery,DELIV,NA
+42872493,Cesarean section through J shaped incision of uterus,DELIV,NA
+42872492,Cesarean section through inverted T shaped incision of uterus,DELIV,NA
+42537021,Emergency lower segment cesarean section with bilateral tubal ligation,DELIV,NA
+42536960,Elective lower segment cesarean section with bilateral tubal ligation,DELIV,NA
+42536954,Emergency upper segment cesarean section with bilateral tubal ligation,DELIV,NA
+42536952,Elective upper segment cesarean section with bilateral tubal ligation,DELIV,NA
+40483521,Single liveborn born in hospital by cesarean section,DELIV,NA
+40483126,Liveborn born in hospital by cesarean section,DELIV,NA
+38001486,Cesarean section w/o CC/MCC,DELIV,NA
+38001485,Cesarean section w CC/MCC,DELIV,NA
+37312440,Lower uterine segment cesarean section,DELIV,NA
+37110284,Preterm delivery following Cesarean section,DELIV,NA
+4250010,Born by emergency cesarean section,DELIV,NA
+4228344,Vaginal cesarean section,DELIV,NA
+4223536,Classical cesarean section,DELIV,NA
+4212794,Born by elective cesarean section,DELIV,NA
+4211824,Extraperitoneal cesarean section,DELIV,NA
+4192676,Born by cesarean section,DELIV,NA
+4172142,Placenta previa found before labor AND delivery by cesarean section without hemorrhage,DELIV,NA
+4171820,Anesthesia for cesarean section,DELIV,NA
+4167089,Emergency cesarean section,DELIV,NA
+4130321,Abdominal delivery for shoulder dystocia,DELIV,NA
+4127252,Emergency lower segment cesarean section,DELIV,NA
+4119336,Delivered by cesarean delivery following previous cesarean delivery,DELIV,NA
+4118802,Delivered by cesarean section - pregnancy at term,DELIV,NA
+4075182,Elective cesarean section,DELIV,NA
+4075161,Elective lower segment cesarean section,DELIV,NA
+4075160,Elective upper segment cesarean section,DELIV,NA
+4066112,Delivery by emergency cesarean section,DELIV,NA
+4066111,Cesarean section - pregnancy at term,DELIV,NA
+4065739,Cesarean section following previous cesarean section,DELIV,NA
+4061457,Delivery by elective cesarean section,DELIV,NA
+4032767,Emergency upper segment cesarean section,DELIV,NA
+4015701,Cesarean section,DELIV,NA
+2110324,"Cesarean delivery only, following attempted vaginal delivery after previous cesarean delivery; including postpartum care",DELIV,NA
+2110323,"Cesarean delivery only, following attempted vaginal delivery after previous cesarean delivery",DELIV,NA
+2110317,Cesarean delivery only; including postpartum care,DELIV,NA
+2110316,Cesarean delivery only,DELIV,NA
+2101814,Anesthesia for cesarean delivery following neuraxial labor analgesia/anesthesia (List separately in addition to code for primary procedure performed),DELIV,NA
+2101807,Anesthesia for cesarean delivery only,DELIV,NA
+2101016,Neuraxial analgesia/anesthesia for labor ending in a cesarean delivery (includes any repeat subarachnoid needle placement and drug injection and/or any necessary replacement of an epidural catheter during labor),DELIV,NA
+2101013,Anesthesia for intraperitoneal procedures in lower abdomen including laparoscopy; cesarean section,DELIV,NA
+2004802,Other cesarean section of unspecified type,DELIV,NA
+2004789,Cesarean section of other specified type,DELIV,NA
+2004786,Low cervical cesarean section,DELIV,NA
+437942,Cesarean delivery - delivered,DELIV,NA
+193277,Deliveries by cesarean,DELIV,NA
+4129700,Cystocele - delivered with postpartum complication,DELIV,NA
+4066133,Hemorrhoids in pregnancy and the puerperium - delivered with postnatal complication,DELIV,NA
+4066124,Puerperal septicemia - delivered with postnatal complication,DELIV,NA
+4066122,Puerperal peritonitis - delivered with postnatal complication,DELIV,NA
+4065749,Puerperal endometritis - delivered with postnatal complication,DELIV,NA
+4065622,Obstetric anesthesia with central nervous system complications - delivered,DELIV,NA
+4065621,Obstetric anesthesia with cardiac complications - delivered,DELIV,NA
+4065618,Secondary postpartum hemorrhage - delivered with postnatal problem,DELIV,NA
+4064960,Rupture of uterus during and after labor - delivered with postnatal problem,DELIV,NA
+4064834,Hypertonic uterine inertia - delivered,DELIV,NA
+4064426,Persistent occipitoposterior or occipitoanterior position - delivered,DELIV,NA
+4064177,Fetus with drug damage - delivered,DELIV,NA
+4064174,Fetus with viral damage via mother - delivered,DELIV,NA
+4064171,Fetus with hereditary disease - delivered,DELIV,NA
+4063305,Fetal distress - delivered,DELIV,NA
+4063296,Fetus with damage due to intrauterine contraceptive device - delivered,DELIV,NA
+4063171,Transverse lie - delivered,DELIV,NA
+4063028,Glycosuria during pregnancy - delivered,DELIV,NA
+4062572,Fatigue during pregnancy - delivered with postnatal complication,DELIV,NA
+4062571,Fatigue during pregnancy - delivered,DELIV,NA
+4062268,Hemorrhoids in pregnancy and the puerperium - delivered,DELIV,NA
+4062116,Obstetric anesthesia with pulmonary complications - delivered with postnatal problem,DELIV,NA
+4062115,Obstetric anesthesia with pulmonary complications - delivered,DELIV,NA
+4061465,Puerperal salpingitis - delivered with postnatal complication,DELIV,NA
+4061349,Obstetric anesthesia with central nervous system complication - delivered with postnatal problem,DELIV,NA
+4061346,Obstetric anesthesia with cardiac complications - delivered with postnatal problem,DELIV,NA
+4060695,Prolonged artificial rupture of membranes - delivered,DELIV,NA
+4060675,Fetus with radiation damage - delivered,DELIV,NA
+4060558,"Uterine scar from previous surgery in pregnancy, childbirth and the puerperium - delivered",DELIV,NA
+4060540,Brow presentation - delivered,DELIV,NA
+4060539,Face presentation - delivered,DELIV,NA
+4060301,Herpes gestationis - delivered,DELIV,NA
+4060157,Umbilical cord tight around neck - delivered,DELIV,NA
+4059757,Oblique lie - delivered,DELIV,NA
+4058536,Eclampsia with postnatal complication,DELIV,NA
+4058526,Antepartum hemorrhage with uterine leiomyoma - delivered,DELIV,NA
+4058524,Antepartum hemorrhage with trauma - delivered,DELIV,NA
+4058111,Glycosuria during pregnancy - delivered with postnatal complication,DELIV,NA
+4058110,Herpes gestationis - delivered with postnatal complication,DELIV,NA
+4028632,Rectocele - delivered with postpartum complication,DELIV,NA
+443521,Failed trial of labor - delivered,DELIV,NA
+443324,Papyraceous fetus - delivered,DELIV,NA
+443294,Obstetric non-purulent mastitis - delivered,DELIV,NA
+443133,Antepartum hemorrhage with coagulation defect - delivered,DELIV,NA
+442829,"Pelvic soft tissue abnormality in pregnancy, childbirth and the puerperium - delivered",DELIV,NA
+442828,Fetus with central nervous system malformation - delivered,DELIV,NA
+442420,Obstetric pyemic and septic pulmonary embolism - delivered,DELIV,NA
+442419,Puerperal cerebrovascular disorder - delivered,DELIV,NA
+442418,Puerperal cerebrovascular disorder - delivered with postnatal complication,DELIV,NA
+442090,Placental polyp - delivered with postnatal complication,DELIV,NA
+442089,Obstetric nipple infection - delivered,DELIV,NA
+442080,Obstetric laceration of cervix - delivered,DELIV,NA
+442072,Obstetric shock - delivered,DELIV,NA
+442070,Maternal hypotension syndrome - delivered,DELIV,NA
+442059,Varicose veins of legs in pregnancy and the puerperium - delivered,DELIV,NA
+442054,Amniotic fluid pulmonary embolism - delivered,DELIV,NA
+442053,Obstetric blood-clot pulmonary embolism - delivered,DELIV,NA
+442052,Obstetric air pulmonary embolism - delivered with postnatal complication,DELIV,NA
+442049,Obstetric air pulmonary embolism - delivered,DELIV,NA
+442048,Obstetric pyemic and septic pulmonary embolism - delivered with postnatal complication,DELIV,NA
+441924,Failed mechanical induction - delivered,DELIV,NA
+441649,Antenatal deep vein thrombosis - delivered,DELIV,NA
+441645,Prolapse of cord - delivered,DELIV,NA
+441643,Maternal distress - delivered with postnatal problem,DELIV,NA
+441630,History of recurrent miscarriage - delivered,DELIV,NA
+441369,Cervical incompetence - delivered,DELIV,NA
+441363,Postpartum coagulation defects - delivered with postnatal problem,DELIV,NA
+440481,"Cracked nipple in pregnancy, the puerperium or lactation - delivered with postnatal complication",DELIV,NA
+440475,Prolonged first stage - delivered,DELIV,NA
+439894,Post-term pregnancy - delivered,DELIV,NA
+439095,Superficial thrombophlebitis in pregnancy and the puerperium - delivered with postnatal complication,DELIV,NA
+439094,Superficial thrombophlebitis in pregnancy and the puerperium - delivered,DELIV,NA
+439092,Cord tangled with compression - delivered,DELIV,NA
+439077,Severe pre-eclampsia - delivered with postnatal complication,DELIV,NA
+438490,Severe pre-eclampsia - delivered,DELIV,NA
+438220,Precipitate labor - delivered,DELIV,NA
+437936,Amniotic cavity infection - delivered,DELIV,NA
+437098,Fetal intrauterine distress first noted during labor AND/OR delivery in liveborn infant,DELIV,NA
+437055,Obstetric nipple infection - delivered with postnatal complication,DELIV,NA
+436766,Varicose veins of perineum and vulva in pregnancy and the puerperium - delivered with postnatal complication,DELIV,NA
+436183,Maternal distress - delivered,DELIV,NA
+436173,Hyperemesis gravidarum with metabolic disturbance - delivered,DELIV,NA
+435612,"Retracted nipple in pregnancy, the puerperium or lactation - delivered",DELIV,NA
+435610,Varicose veins of perineum and vulva in pregnancy and the puerperium - delivered,DELIV,NA
+435609,Vasa previa - delivered,DELIV,NA
+435607,Cervical incompetence - delivered with postnatal complication,DELIV,NA
+435330,Varicose veins of legs in pregnancy and the puerperium - delivered with postnatal complication,DELIV,NA
+435031,Postnatal deep vein thrombosis - delivered with postnatal complication,DELIV,NA
+435020,Short cord - delivered,DELIV,NA
+434715,"Cracked nipple in pregnancy, the puerperium or lactation - delivered",DELIV,NA
+434713,Puerperal pyrexia of unknown origin - delivered with postnatal complication,DELIV,NA
+434431,Prolonged second stage - delivered,DELIV,NA
+434427,Polyhydramnios - delivered,DELIV,NA
+434112,Obstetric blood-clot pulmonary embolism - delivered with postnatal complication,DELIV,NA
+433812,"Tuberculosis in pregnancy, childbirth and the puerperium - delivered",DELIV,NA
+433276,"Retracted nipple in pregnancy, the puerperium or lactation - delivered with postnatal complication",DELIV,NA
+433274,Oligohydramnios - delivered,DELIV,NA
+432388,Amniotic fluid pulmonary embolism - delivered with postnatal complication,DELIV,NA
+321367,Vascular lesions of cord - delivered,DELIV,NA
+320456,"Benign essential hypertension complicating pregnancy, childbirth and the puerperium - delivered with postnatal complication",DELIV,NA
+314103,"Benign essential hypertension complicating pregnancy, childbirth and the puerperium - delivered",DELIV,NA
+313829,Maternal hypotension syndrome - delivered with postnatal problem,DELIV,NA
+201912,"Renal hypertension complicating pregnancy, childbirth and the puerperium - delivered with postnatal complication",DELIV,NA
+201368,Obstetric pelvic hematoma - delivered,DELIV,NA
+201359,Placenta previa without hemorrhage - delivered,DELIV,NA
+200160,Premature rupture of membranes - delivered,DELIV,NA
+200157,"Renal hypertension complicating pregnancy, childbirth and the puerperium - delivered",DELIV,NA
+199087,Obstructed labor caused by bony pelvis - delivered,DELIV,NA
+198816,Rupture of uterus before labor - delivered,DELIV,NA
+198499,Second degree perineal tear during delivery - delivered,DELIV,NA
+198486,Disproportion - major pelvic abnormality - delivered,DELIV,NA
+198216,Retroverted incarcerated gravid uterus - delivered,DELIV,NA
+197616,Retroverted incarcerated gravid uterus - delivered with postnatal complication,DELIV,NA
+197048,Obstetric inversion of uterus - delivered with postnatal problem,DELIV,NA
+197042,Peripheral neuritis in pregnancy - delivered,DELIV,NA
+196762,Primary uterine inertia - delivered,DELIV,NA
+196182,Obstructed labor caused by pelvic soft tissues - delivered,DELIV,NA
+196170,Liver disorder in pregnancy - delivered,DELIV,NA
+195878,Rhesus isoimmunization - delivered,DELIV,NA
+195025,Obstetric shock - delivered with postnatal problem,DELIV,NA
+194711,Obstructed labor due to fetal malposition - delivered,DELIV,NA
+194429,Fourth degree perineal tear during delivery - delivered,DELIV,NA
+194113,Cesarean wound disruption - delivered with postnatal complication,DELIV,NA
+193539,Placental abruption - delivered,DELIV,NA
+193535,Fetal-maternal hemorrhage - delivered,DELIV,NA
+193275,Third degree perineal tear during delivery - delivered,DELIV,NA
+193271,Obstetric pelvic hematoma - delivered with postnatal problem,DELIV,NA
+193269,Obstetric high vaginal laceration - delivered,DELIV,NA
+193264,Placenta previa with hemorrhage - delivered,DELIV,NA
+192978,First degree perineal tear during delivery - delivered,DELIV,NA
+192971,"Pelvic soft tissue abnormality in pregnancy, childbirth and the puerperium - delivered with postnatal complication",DELIV,NA
+192699,Rupture of uterus during and after labor - delivered,DELIV,NA
+192387,Obstetric perineal wound disruption - delivered with postnatal complication,DELIV,NA
+192384,Secondary uterine inertia - delivered,DELIV,NA
+141639,Transient hypertension of pregnancy - delivered with postnatal complication,DELIV,NA
+138811,Eclampsia - delivered with postnatal complication,DELIV,NA
+137940,Transient hypertension of pregnancy - delivered,DELIV,NA
+135601,Pre-eclampsia or eclampsia with pre-existing hypertension - delivered,DELIV,NA
+134414,Pre-eclampsia or eclampsia with pre-existing hypertension - delivered with postnatal complication,DELIV,NA
+133816,Eclampsia - delivered,DELIV,NA
+81357,Genitourinary tract infection in pregnancy - delivered,DELIV,NA
+81086,"Breast engorgement in pregnancy, the puerperium or lactation - delivered with postnatal complication",DELIV,NA
+80782,Large fetus causing disproportion - delivered,DELIV,NA
+80778,Genitourinary tract infection in pregnancy - delivered with postnatal complication,DELIV,NA
+80479,Failure of lactation - delivered with postnatal complication,DELIV,NA
+80474,Shoulder dystocia - delivered,DELIV,NA
+79897,Obstetric non-purulent mastitis - delivered with postnatal complication,DELIV,NA
+79889,Unstable lie - delivered,DELIV,NA
+78494,Obstetric breast abscess - delivered with postnatal complication,DELIV,NA
+77624,"Breast engorgement in pregnancy, the puerperium or lactation - delivered",DELIV,NA
+77621,Inlet pelvic contraction - delivered,DELIV,NA
+77615,High head at term - delivered,DELIV,NA
+77347,Suppressed lactation - delivered,DELIV,NA
+77056,Failure of lactation - delivered,DELIV,NA
+77052,Generally contracted pelvis - delivered,DELIV,NA
+76769,Suppressed lactation - delivered with postnatal complication,DELIV,NA
+76761,Asymptomatic bacteriuria in pregnancy - delivered,DELIV,NA
+75882,Deep transverse arrest - delivered,DELIV,NA
+75326,Obstetric damage to pelvic joints and ligaments - delivered,DELIV,NA
+74717,Galactorrhea in pregnancy and the puerperium - delivered with postnatal complication,DELIV,NA
+74440,Galactorrhea in pregnancy and the puerperium - delivered,DELIV,NA
+74433,Obstetric breast abscess - delivered,DELIV,NA
+73824,Outlet pelvic contraction - delivered,DELIV,NA
+73538,Hydrocephalic disproportion - delivered,DELIV,NA
+73526,Asymptomatic bacteriuria in pregnancy - delivered with postnatal complication,DELIV,NA
+72970,Mixed feto-pelvic disproportion - delivered,DELIV,NA
+72697,Fetus with chromosomal abnormality - delivered,DELIV,NA
+72692,Prolapsed arm - delivered,DELIV,NA
+2784578,"Delivery of Products of Conception, External Approach",DELIV,NA
+43018345,"Manual Extraction of Products of Conception, Retained, Via Natural or Artificial Opening Endoscopic",DELIV,NA
+43018344,"Manual Extraction of Products of Conception, Retained, Via Natural or Artificial Opening",DELIV,NA
+2784574,"Extraction of Products of Conception, Retained, Via Natural or Artificial Opening Endoscopic",DELIV,NA
+2784573,"Extraction of Products of Conception, Retained, Via Natural or Artificial Opening",DELIV,NA
+2784572,"Extraction of Products of Conception, Other, Via Natural or Artificial Opening",DELIV,NA
+2784571,"Extraction of Products of Conception, Internal Version, Via Natural or Artificial Opening",DELIV,NA
+2784570,"Extraction of Products of Conception, Vacuum, Via Natural or Artificial Opening",DELIV,NA
+2784569,"Extraction of Products of Conception, High Forceps, Via Natural or Artificial Opening",DELIV,NA
+2784568,"Extraction of Products of Conception, Mid Forceps, Via Natural or Artificial Opening",DELIV,NA
+2784567,"Extraction of Products of Conception, Low Forceps, Via Natural or Artificial Opening",DELIV,NA
+2784566,"Extraction of Products of Conception, Extraperitoneal, Open Approach",DELIV,NA
+2784565,"Extraction of Products of Conception, Low, Open Approach",DELIV,NA
+2784564,"Extraction of Products of Conception, High, Open Approach",DELIV,NA

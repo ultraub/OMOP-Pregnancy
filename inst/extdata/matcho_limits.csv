@@ -1,0 +1,8 @@
+category,min_term,max_term,hierarchy,description
+LB,154,301,1,Live birth (22-43 weeks)
+SB,140,301,2,Stillbirth (20-43 weeks)
+DELIV,154,301,3,Delivery (22-43 weeks)
+ECT,30,84,4,Ectopic pregnancy (4-12 weeks)
+AB,30,140,5,Induced abortion (4-20 weeks)
+SA,30,140,6,Spontaneous abortion (4-20 weeks)
+PREG,30,301,7,Pregnancy ongoing (4-43 weeks)

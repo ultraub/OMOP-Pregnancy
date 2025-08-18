@@ -1,0 +1,42 @@
+# R specific
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# Package build
+*.tar.gz
+*.zip
+
+# Output directories
+output/
+output_*/
+results/
+
+# Test data (may contain PHI)
+test_data/
+*.csv
+!inst/extdata/*.csv
+
+# Environment files
+.env
+.env.*
+!.env.*.template
+
+# JDBC drivers
+jdbc_drivers/
+*.jar
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Temporary files
+*~
+*.tmp
+*.bak

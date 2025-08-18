@@ -1,0 +1,38 @@
+Package: OMOPPregnancyV2
+Type: Package
+Title: Database-Agnostic Pregnancy Episode Identification in OMOP CDM
+Version: 2.0.0
+Date: 2025-08-18
+Authors@R: c(
+    person("Robert", "Barrett", email = "maintainer@example.com", role = c("aut", "cre")),
+    person("Louisa H", "Smith", role = "ctb", comment = "All of Us implementation"),
+    person("Sara E", "Jones", role = "ctb", comment = "Original HIPPS algorithm")
+    )
+Description: A database-agnostic implementation of the HIPPS (Hierarchical 
+    Identification of Pregnancy and Pregnancy Progression Signatures) algorithm 
+    for identifying pregnancy episodes in OMOP CDM databases. This package 
+    provides reliable pregnancy episode identification across all OMOP CDM 
+    platforms including SQL Server, PostgreSQL, Oracle, Databricks, BigQuery, 
+    and Snowflake. It combines the HIP and PPS algorithms with the ESD 
+    (Estimated Start Date) refinement for comprehensive pregnancy identification.
+License: Apache License 2.0
+Encoding: UTF-8
+LazyData: true
+Depends: 
+    R (>= 4.0.0)
+Imports:
+    DatabaseConnector (>= 5.0.0),
+    SqlRender (>= 1.6.0),
+    dplyr (>= 1.0.0),
+    lubridate (>= 1.7.0),
+    readr (>= 2.0.0)
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    DBI,
+    tidyr,
+    tibble
+RoxygenNote: 7.3.2
+URL: https://github.com/ultraub/OMOP-Pregnancy
+BugReports: https://github.com/ultraub/OMOP-Pregnancy/issues

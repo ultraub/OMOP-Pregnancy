@@ -1,0 +1,13 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.git$
+^\.gitignore$
+^\.env$
+^output$
+^test_data$
+^jdbc_drivers$
+^README\.md$
+^README_DEPLOYMENT\.md$
+^VALIDATION_REPORT\.md$
+^ARCHITECTURE\.md$
+^tests/testthat$
