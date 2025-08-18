@@ -144,6 +144,18 @@ create_omop_connection <- function(
     env_windows_auth <- Sys.getenv("USE_WINDOWS_AUTH", "false")
     if (tolower(env_windows_auth) %in% c("true", "1", "yes")) {
       use_windows_auth <- TRUE
+      # For Windows auth, also check if credentials were provided
+      # Some environments require explicit domain credentials even with Windows auth
+      if (user == "" || is.null(user)) {
+        # Check for Windows-specific user variable
+        win_user <- Sys.getenv("SQL_WINDOWS_USER")
+        if (win_user != "") user <- win_user
+      }
+      if (password == "" || is.null(password)) {
+        # Check for Windows-specific password variable
+        win_password <- Sys.getenv("SQL_WINDOWS_PASSWORD")
+        if (win_password != "") password <- win_password
+      }
     }
     
     # Handle separate database configuration (previous version compatibility)
@@ -274,15 +286,32 @@ create_sqlserver_connection <- function(
   )
   
   if (use_windows_auth) {
-    # Add Windows authentication parameters
-    jdbc_url <- paste0(jdbc_url, "integratedSecurity=true;authenticationScheme=NTLM;")
-    
-    # For Windows AD, we don't need user/password
-    return(DatabaseConnector::createConnectionDetails(
-      dbms = "sql server",
-      connectionString = jdbc_url,
-      pathToDriver = pathToDriver
-    ))
+    # Windows authentication approach depends on environment
+    # Check if we have Windows credentials provided
+    if (!is.null(user) && user != "" && !is.null(password) && password != "") {
+      # Use NTLM with explicit credentials (for cross-platform or domain auth)
+      jdbc_url <- paste0(jdbc_url, "integratedSecurity=false;authenticationScheme=NTLM;")
+      message("  Using Windows AD with NTLM authentication")
+      
+      return(DatabaseConnector::createConnectionDetails(
+        dbms = "sql server",
+        connectionString = jdbc_url,
+        user = user,
+        password = password,
+        pathToDriver = pathToDriver
+      ))
+    } else {
+      # Try true integrated security (works on Windows with proper driver setup)
+      # Don't specify authenticationScheme to let driver auto-detect
+      jdbc_url <- paste0(jdbc_url, "integratedSecurity=true;")
+      message("  Using Windows integrated security")
+      
+      return(DatabaseConnector::createConnectionDetails(
+        dbms = "sql server",
+        connectionString = jdbc_url,
+        pathToDriver = pathToDriver
+      ))
+    }
   } else {
     # Standard SQL Server authentication
     return(DatabaseConnector::createConnectionDetails(
