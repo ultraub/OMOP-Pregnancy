@@ -101,7 +101,14 @@ ohdsi_create_temp_table <- function(connection,
   
   # For Spark/Databricks, also track the full qualified name if available
   if (dbms %in% c("spark", "databricks") && !is.null(resultsDatabaseSchema)) {
-    conn_id <- format(connection@jConnection@jobj@ref)
+    # Create a unique connection ID using server and database attributes
+    server <- attr(connection, "server")
+    database <- attr(connection, "database")
+    conn_id <- paste0("spark_", 
+                     ifelse(!is.null(server), gsub("[^a-zA-Z0-9]", "_", server), "conn"),
+                     "_", 
+                     ifelse(!is.null(database), database, "db"))
+    
     if (!exists(conn_id, envir = .temp_table_full_names)) {
       .temp_table_full_names[[conn_id]] <- list()
     }
@@ -205,7 +212,14 @@ create_spark_temp_table <- function(connection, data, table_name,
     )
     
     # Store the full qualified name for cleanup
-    conn_id <- format(connection@jConnection@jobj@ref)
+    # Create a unique connection ID using server and database attributes
+    server <- attr(connection, "server")
+    database <- attr(connection, "database")
+    conn_id <- paste0("spark_", 
+                     ifelse(!is.null(server), gsub("[^a-zA-Z0-9]", "_", server), "conn"),
+                     "_", 
+                     ifelse(!is.null(database), database, "db"))
+    
     if (!exists(conn_id, envir = .temp_table_full_names)) {
       .temp_table_full_names[[conn_id]] <- list()
     }
@@ -306,7 +320,14 @@ ohdsi_drop_temp_table <- function(connection, table_name) {
   
   if (dbms %in% c("spark", "databricks")) {
     # Check if we have a stored full qualified name
-    conn_id <- format(connection@jConnection@jobj@ref)
+    # Create a unique connection ID using server and database attributes
+    server <- attr(connection, "server")
+    database <- attr(connection, "database")
+    conn_id <- paste0("spark_", 
+                     ifelse(!is.null(server), gsub("[^a-zA-Z0-9]", "_", server), "conn"),
+                     "_", 
+                     ifelse(!is.null(database), database, "db"))
+    
     full_name <- NULL
     
     if (exists(conn_id, envir = .temp_table_full_names)) {
