@@ -343,6 +343,19 @@ create_databricks_connection <- function(
   extraSettings
 ) {
   
+  # Ensure rJava is initialized for Databricks
+  # This is important for proper Arrow memory management
+  if (!exists(".jinit")) {
+    if (require("rJava", quietly = TRUE)) {
+      tryCatch({
+        .jinit()
+        message("  Initialized rJava for Databricks connection")
+      }, error = function(e) {
+        # rJava already initialized, continue
+      })
+    }
+  }
+  
   if (!is.null(connectionString)) {
     # Use provided connection string
     return(DatabaseConnector::createConnectionDetails(

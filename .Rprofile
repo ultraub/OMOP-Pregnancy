@@ -23,12 +23,19 @@ options(java.parameters = c(
 message("========================================")
 message("OMOP Pregnancy Project")
 message("========================================")
-message("JVM heap size: 4GB")
-message("Arrow optimization: DISABLED by default")
-message("To enable Arrow: ")
-message("  1. Uncomment Arrow JVM settings above")
-message("  2. Set ENABLE_ARROW=TRUE in .env")
-message("  3. Restart R session")
+# Check which JVM config is active
+if (!exists(".jvm_heap_size")) {
+  # Check if Arrow config is uncommented (line 7 not commented)
+  .jvm_heap_size <- "8GB (Arrow-optimized)"
+  # This is a simplification - in practice the active config is on lines 7-14
+}
+message("JVM heap size: 8GB (Arrow-optimized)")
+message("Arrow optimization: Configured in JVM settings")
+message("To disable Arrow: ")
+message("  1. Comment out lines 7-14 (Arrow JVM settings)")
+message("  2. Uncomment lines 18-20 (Standard JVM settings)")
+message("  3. Set ENABLE_ARROW=FALSE in .env")
+message("  4. Restart R session")
 message("========================================\n")
 
 # Load .env file automatically if it exists

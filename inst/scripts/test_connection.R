@@ -41,14 +41,37 @@ if (ENVIRONMENT == "DATABRICKS") {
   # Databricks configuration
   cat("Configuring Databricks connection...\n")
   
-  # Set JVM parameters
+  # Set JVM parameters (must be done before loading rJava)
   options(java.parameters = c(
-    "-Xmx4g",
-    "--add-opens=java.base/java.nio=ALL-UNNAMED"
+    "-Xmx8g",                                          # Increased heap for large datasets
+    "-XX:MaxDirectMemorySize=4g",                      # Direct memory for Arrow
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",      # Java 17 module access
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",    # Additional module access
+    "-Dio.netty.tryReflectionSetAccessible=true",      # Netty reflection for Arrow
+    "-Dio.netty.allocator.type=unpooled"              # Avoid pooled memory issues
   ))
   
+  # Check JAVA_HOME is set
+  if (Sys.getenv("JAVA_HOME") == "") {
+    cat("  ⚠ Warning: JAVA_HOME not set\n")
+    cat("  Please set JAVA_HOME in your .env file or environment\n")
+    cat("  Example for macOS: JAVA_HOME=/opt/homebrew/opt/openjdk@17\n")
+  } else {
+    cat(sprintf("  JAVA_HOME: %s\n", Sys.getenv("JAVA_HOME")))
+  }
+  
+  # Initialize rJava
   library(rJava)
   .jinit()
+  cat("  ✓ rJava initialized\n")
+  
+  # Optional: Install and load Arrow R package for better memory handling
+  if (!require("arrow", quietly = TRUE)) {
+    cat("  Installing Arrow R package for improved performance...\n")
+    install.packages("arrow", quiet = TRUE)
+    library(arrow)
+    cat("  ✓ Arrow R package loaded\n")
+  }
   
   server <- Sys.getenv("DATABRICKS_SERVER")
   httpPath <- Sys.getenv("DATABRICKS_HTTP_PATH")
