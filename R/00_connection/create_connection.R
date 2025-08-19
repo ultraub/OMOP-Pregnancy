@@ -396,11 +396,12 @@ create_databricks_connection <- function(
   jdbc_url <- paste0(jdbc_url, "UseNativeQuery=0;")  # Disable native query optimization
   
   # Add batch optimization parameters for better performance
+  # batchsize is supported by Databricks JDBC driver
   batch_size <- Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "10000")
   jdbc_url <- paste0(jdbc_url, sprintf("batchsize=%s;", batch_size))
   
-  # Enable batch statement rewriting for better performance
-  jdbc_url <- paste0(jdbc_url, "rewriteBatchedStatements=true;")
+  # Note: rewriteBatchedStatements is MySQL-specific and not supported by Databricks
+  # The bulk upload optimization is handled by DatabaseConnector, not JDBC parameters
   
   # Only enable Arrow if explicitly requested (to avoid memory initialization errors)
   enable_arrow <- Sys.getenv("ENABLE_ARROW", "FALSE")
