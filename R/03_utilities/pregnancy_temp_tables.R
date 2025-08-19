@@ -94,8 +94,8 @@ create_person_temp_table <- function(connection, person_ids, table_name = "#pers
           data = batch_df,
           createTable = FALSE,  # Table already exists
           tempTable = FALSE,
-          bulkLoad = bulk_load,
-          append = TRUE  # Append to existing table
+          bulkLoad = bulk_load
+          # Note: insertTable appends by default when createTable = FALSE
         )
       }
     }
