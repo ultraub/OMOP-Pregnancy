@@ -380,9 +380,16 @@ create_databricks_connection <- function(
   }
   
   # Add performance optimizations
-  jdbc_url <- paste0(jdbc_url,
-                    "UseNativeQuery=0;",     # Disable native query optimization
-                    "EnableArrow=1;")         # Enable Arrow for performance
+  jdbc_url <- paste0(jdbc_url, "UseNativeQuery=0;")  # Disable native query optimization
+  
+  # Only enable Arrow if explicitly requested (to avoid memory initialization errors)
+  enable_arrow <- Sys.getenv("ENABLE_ARROW", "FALSE")
+  if (toupper(enable_arrow) %in% c("TRUE", "1", "YES")) {
+    jdbc_url <- paste0(jdbc_url, "EnableArrow=1;")
+    message("  Arrow optimization enabled (requires proper JVM configuration)")
+  } else {
+    jdbc_url <- paste0(jdbc_url, "EnableArrow=0;")
+  }
   
   return(DatabaseConnector::createConnectionDetails(
     dbms = "spark",
@@ -403,18 +410,9 @@ configure_spark_connection <- function(connection, results_schema) {
     options(sqlRenderTempEmulationSchema = results_schema)
   }
   
-  # Disable Arrow optimization if it causes issues
-  # Can be re-enabled with environment variable
-  if (Sys.getenv("ENABLE_ARROW", "FALSE") == "FALSE") {
-    options(sparklyr.arrow = FALSE)
-    
-    # Try to disable Arrow at connection level
-    tryCatch({
-      DBI::dbExecute(connection, "SET spark.sql.execution.arrow.enabled = false")
-    }, error = function(e) {
-      # Ignore if setting fails
-    })
-  }
+  # Arrow optimization is now controlled at connection creation time
+  # via the ENABLE_ARROW environment variable in the JDBC URL
+  # This ensures consistency between JDBC and R settings
   
   invisible(NULL)
 }
