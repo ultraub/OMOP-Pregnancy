@@ -5,6 +5,7 @@
 #'
 #' @import DatabaseConnector
 #' @import SqlRender
+#' @import DBI
 
 #' Create Person Cohort Temporary Table
 #'
@@ -38,33 +39,34 @@ create_person_temp_table <- function(connection, person_ids, table_name = "#pers
     dbms <- "sql server"
   }
   
-  # Drop table if exists
-  if (dbms == "sql server") {
-    drop_sql <- SqlRender::render(
-      "IF OBJECT_ID('tempdb..@table_name') IS NOT NULL DROP TABLE @table_name",
-      table_name = table_name
-    )
-    drop_sql <- SqlRender::translate(drop_sql, targetDialect = dbms)
-    tryCatch(
-      DatabaseConnector::executeSql(connection, drop_sql),
-      error = function(e) {} # Ignore if doesn't exist
-    )
+  # Get results schema for Spark/Databricks
+  results_schema <- attr(connection, "results_schema")
+  
+  # Adjust table name based on platform
+  if (dbms == "sql server" && !grepl("^#", table_name)) {
+    table_name <- paste0("#", table_name)
+  } else if (dbms %in% c("spark", "databricks")) {
+    # Remove # prefix for Spark
+    table_name <- gsub("^#", "", table_name)
   }
   
-  # Create temp table using DatabaseConnector
-  DatabaseConnector::insertTable(
+  # Use the unified temp table creation function
+  temp_table <- ohdsi_create_temp_table(
     connection = connection,
-    tableName = table_name,
     data = person_df,
-    dropTableIfExists = TRUE,
-    createTable = TRUE,
-    tempTable = TRUE,
-    progressBar = FALSE
+    table_name = table_name,
+    resultsDatabaseSchema = results_schema,
+    overwrite = TRUE
   )
   
   message(sprintf("  Created temp table %s", table_name))
   
-  return(table_name)
+  # Return the table name for backward compatibility
+  if (inherits(temp_table, "tbl")) {
+    return(table_name)
+  } else {
+    return(temp_table)
+  }
 }
 
 #' Create Concept Temporary Table
@@ -103,33 +105,34 @@ create_concept_temp_table <- function(connection, concepts, table_name) {
     dbms <- "sql server"
   }
   
-  # Drop table if exists
-  if (dbms == "sql server") {
-    drop_sql <- SqlRender::render(
-      "IF OBJECT_ID('tempdb..@table_name') IS NOT NULL DROP TABLE @table_name",
-      table_name = table_name
-    )
-    drop_sql <- SqlRender::translate(drop_sql, targetDialect = dbms)
-    tryCatch(
-      DatabaseConnector::executeSql(connection, drop_sql),
-      error = function(e) {} # Ignore if doesn't exist
-    )
+  # Get results schema for Spark/Databricks
+  results_schema <- attr(connection, "results_schema")
+  
+  # Adjust table name based on platform
+  if (dbms == "sql server" && !grepl("^#", table_name)) {
+    table_name <- paste0("#", table_name)
+  } else if (dbms %in% c("spark", "databricks")) {
+    # Remove # prefix for Spark
+    table_name <- gsub("^#", "", table_name)
   }
   
-  # Create temp table
-  DatabaseConnector::insertTable(
+  # Use the unified temp table creation function
+  temp_table <- ohdsi_create_temp_table(
     connection = connection,
-    tableName = table_name,
     data = concept_df,
-    dropTableIfExists = TRUE,
-    createTable = TRUE,
-    tempTable = TRUE,
-    progressBar = FALSE
+    table_name = table_name,
+    resultsDatabaseSchema = results_schema,
+    overwrite = TRUE
   )
   
   message(sprintf("  Created temp table %s", table_name))
   
-  return(table_name)
+  # Return the table name for backward compatibility
+  if (inherits(temp_table, "tbl")) {
+    return(table_name)
+  } else {
+    return(temp_table)
+  }
 }
 
 #' Cleanup Pregnancy Cohort Temporary Tables
@@ -143,10 +146,10 @@ create_concept_temp_table <- function(connection, concepts, table_name) {
 cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
   
   if (is.null(table_names)) {
-    # Default tables to clean up
-    table_names <- c("#person_cohort", "#hip_concepts", "#pps_concepts", 
-                    "#hip_conditions", "#hip_procedures", "#hip_observations",
-                    "#hip_measurements")
+    # Default tables to clean up (without # prefix - will be added as needed)
+    table_names <- c("person_cohort", "hip_concepts", "pps_concepts", 
+                    "hip_conditions", "hip_procedures", "hip_observations",
+                    "hip_measurements")
   }
   
   message("  Cleaning up temporary tables...")
@@ -161,12 +164,35 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
   
   for (table_name in table_names) {
     tryCatch({
+      # Adjust table name based on platform
       if (dbms == "sql server") {
+        # Add # prefix if not present
+        if (!grepl("^#", table_name)) {
+          table_name <- paste0("#", table_name)
+        }
         drop_sql <- SqlRender::render(
           "IF OBJECT_ID('tempdb..@table_name') IS NOT NULL DROP TABLE @table_name",
           table_name = table_name
         )
+      } else if (dbms %in% c("spark", "databricks")) {
+        # Remove # prefix for Spark
+        table_name <- gsub("^#", "", table_name)
+        # Try dropping as view first (for lazy queries), then as table
+        drop_sql <- SqlRender::render(
+          "DROP VIEW IF EXISTS @table_name",
+          table_name = table_name
+        )
+        tryCatch(
+          DatabaseConnector::executeSql(connection, drop_sql),
+          error = function(e) {}
+        )
+        # Also try dropping as table (for uploaded data)
+        drop_sql <- SqlRender::render(
+          "DROP TABLE IF EXISTS @table_name",
+          table_name = table_name
+        )
       } else {
+        # Generic SQL for other platforms
         drop_sql <- SqlRender::render(
           "DROP TABLE IF EXISTS @table_name",
           table_name = table_name
@@ -181,7 +207,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
     })
   }
   
-  message(sprintf("  Dropped %d temp tables (%d failed or didn't exist)", 
+  message(sprintf("  Dropped %d temp tables/views (%d failed or didn't exist)", 
                   dropped, failed))
   
   invisible(NULL)
@@ -208,7 +234,8 @@ create_domain_concept_tables <- function(connection, hip_concepts) {
       filter(!is.na(domain_name) & domain_name == !!domain)
     
     if (nrow(domain_concepts) > 0) {
-      table_name <- paste0("#hip_", tolower(gsub(" ", "_", domain)))
+      # Create table name without # prefix (will be added if needed)
+      table_name <- paste0("hip_", tolower(gsub(" ", "_", domain)))
       
       create_concept_temp_table(connection, domain_concepts, table_name)
       tables_created[[domain]] <- table_name

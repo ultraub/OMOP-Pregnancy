@@ -4,17 +4,20 @@
 # JVM Configuration for Databricks Arrow Support
 # These settings must be configured before any Java-using packages are loaded
 # Only uncomment if you need Arrow optimization AND have proper Databricks JDBC drivers
-# options(java.parameters = c(
-#   "-Xmx8g",                                    # Maximum heap size
-#   "-XX:MaxDirectMemorySize=4g",                # Direct memory for Arrow buffers
-#   "-Dio.netty.tryReflectionSetAccessible=true" # Required for Arrow memory access
-# ))
+options(java.parameters = c(
+  "-Xmx8g",                                          # Increased heap for 466K+ rows
+  "-XX:MaxDirectMemorySize=4g",                      # More direct memory for Arrow
+  "--add-opens=java.base/java.nio=ALL-UNNAMED",      # Critical: Allow Arrow nio access
+  "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",    # Java 17 module access
+  "-Dio.netty.tryReflectionSetAccessible=true",      # Netty reflection for Arrow
+  "-Dio.netty.allocator.type=unpooled"              # Avoid pooled memory issues
+))
 
 # Default JVM settings (without Arrow)
 # Uncomment this block for standard Databricks connection without Arrow
-options(java.parameters = c(
-  "-Xmx4g"  # 4GB heap is usually sufficient without Arrow
-))
+#options(java.parameters = c(
+#  "-Xmx4g"  # 4GB heap is usually sufficient without Arrow
+#))
 
 # Package load messages
 message("========================================")
