@@ -62,7 +62,7 @@ NULL
 #'   user = "token",
 #'   password = Sys.getenv("DATABRICKS_TOKEN"),
 #'   cdm_schema = "omop.data",
-#'   extraSettings = "HTTPPath=/sql/1.0/warehouses/warehouse_id"
+#'   extraSettings = "httpPath=/sql/1.0/warehouses/warehouse_id"
 #' )
 #' }
 create_omop_connection <- function(
@@ -138,6 +138,12 @@ create_omop_connection <- function(
     if (is.null(results_schema)) {
       results_schema <- Sys.getenv("SQL_RESULTS_SCHEMA")
       if (results_schema == "") results_schema <- Sys.getenv("RESULTS_SCHEMA")
+    }
+    
+    # Get extra settings for Databricks
+    if (is.null(extraSettings)) {
+      extraSettings <- Sys.getenv("DB_EXTRA_SETTINGS")
+      if (extraSettings == "") extraSettings <- NULL
     }
     
     # Check for Windows auth flag in environment
