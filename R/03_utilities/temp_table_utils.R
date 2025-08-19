@@ -12,6 +12,8 @@ NULL
 
 # Track temp tables for cleanup (module-level variable)
 .temp_tables <- new.env(parent = emptyenv())
+# Track full schema-qualified names for Spark/Databricks
+.temp_table_full_names <- new.env(parent = emptyenv())
 
 #' Create OHDSI-compliant temporary table
 #'
@@ -97,6 +99,17 @@ ohdsi_create_temp_table <- function(connection,
   # Track for cleanup
   register_temp_table(connection, table_name, dbms)
   
+  # For Spark/Databricks, also track the full qualified name if available
+  if (dbms %in% c("spark", "databricks") && !is.null(resultsDatabaseSchema)) {
+    conn_id <- format(connection@jConnection@jobj@ref)
+    if (!exists(conn_id, envir = .temp_table_full_names)) {
+      .temp_table_full_names[[conn_id]] <- list()
+    }
+    spark_table_name <- gsub("^#", "", table_name)
+    full_name <- paste(resultsDatabaseSchema, spark_table_name, sep = ".")
+    .temp_table_full_names[[conn_id]][[table_name]] <- full_name
+  }
+  
   return(created_table)
 }
 
@@ -172,14 +185,31 @@ create_spark_temp_table <- function(connection, data, table_name,
       )
     }
     
-    # Upload data
+    # Upload data with bulk loading for performance
+    # Check for bulk load settings
+    bulk_load <- as.logical(Sys.getenv("DATABASE_CONNECTOR_BULK_UPLOAD", "FALSE"))
+    batch_size <- as.integer(Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "10000"))
+    
+    # For large datasets, process in batches
+    if (nrow(data) > batch_size && !bulk_load) {
+      message(sprintf("Large dataset (%d rows). Consider setting DATABASE_CONNECTOR_BULK_UPLOAD=TRUE for better performance.", nrow(data)))
+    }
+    
     DatabaseConnector::insertTable(
       connection = connection,
       tableName = full_table_name,
       data = data,
       createTable = TRUE,
-      tempTable = FALSE  # Can't use TRUE for Spark
+      tempTable = FALSE,  # Can't use TRUE for Spark
+      bulkLoad = bulk_load  # Enable bulk loading if configured
     )
+    
+    # Store the full qualified name for cleanup
+    conn_id <- format(connection@jConnection@jobj@ref)
+    if (!exists(conn_id, envir = .temp_table_full_names)) {
+      .temp_table_full_names[[conn_id]] <- list()
+    }
+    .temp_table_full_names[[conn_id]][[table_name]] <- full_table_name
   }
   
   # Return reference with OHDSI # prefix for consistency
@@ -221,13 +251,16 @@ create_emulated_temp_table <- function(connection, data, table_name,
                          dbplyr::sql_render(data))
     DatabaseConnector::executeSql(connection, create_sql)
   } else {
-    # Upload local data
+    # Upload local data with bulk loading for performance
+    bulk_load <- as.logical(Sys.getenv("DATABASE_CONNECTOR_BULK_UPLOAD", "FALSE"))
+    
     DatabaseConnector::insertTable(
       connection = connection,
       tableName = full_table_name,
       data = data,
       createTable = TRUE,
-      tempTable = FALSE
+      tempTable = FALSE,
+      bulkLoad = bulk_load
     )
   }
   
@@ -272,8 +305,20 @@ ohdsi_drop_temp_table <- function(connection, table_name) {
   }
   
   if (dbms %in% c("spark", "databricks")) {
-    # Drop view or table
-    spark_name <- gsub("^#", "", table_name)
+    # Check if we have a stored full qualified name
+    conn_id <- format(connection@jConnection@jobj@ref)
+    full_name <- NULL
+    
+    if (exists(conn_id, envir = .temp_table_full_names)) {
+      full_name <- .temp_table_full_names[[conn_id]][[table_name]]
+    }
+    
+    # Use full qualified name if available, otherwise use table name without # prefix
+    if (!is.null(full_name)) {
+      spark_name <- full_name
+    } else {
+      spark_name <- gsub("^#", "", table_name)
+    }
     
     # Try dropping as view first
     drop_view_sql <- sprintf("DROP VIEW IF EXISTS %s", spark_name)
@@ -285,6 +330,11 @@ ohdsi_drop_temp_table <- function(connection, table_name) {
         DatabaseConnector::executeSql(connection, drop_table_sql)
       }
     )
+    
+    # Clean up stored name
+    if (exists(conn_id, envir = .temp_table_full_names)) {
+      .temp_table_full_names[[conn_id]][[table_name]] <- NULL
+    }
   } else if (dbms == "sql server") {
     # SQL Server temp table
     drop_sql <- sprintf("IF OBJECT_ID('tempdb..%s') IS NOT NULL DROP TABLE %s",

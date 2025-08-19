@@ -395,6 +395,13 @@ create_databricks_connection <- function(
   # Add performance optimizations
   jdbc_url <- paste0(jdbc_url, "UseNativeQuery=0;")  # Disable native query optimization
   
+  # Add batch optimization parameters for better performance
+  batch_size <- Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "10000")
+  jdbc_url <- paste0(jdbc_url, sprintf("batchsize=%s;", batch_size))
+  
+  # Enable batch statement rewriting for better performance
+  jdbc_url <- paste0(jdbc_url, "rewriteBatchedStatements=true;")
+  
   # Only enable Arrow if explicitly requested (to avoid memory initialization errors)
   enable_arrow <- Sys.getenv("ENABLE_ARROW", "FALSE")
   if (toupper(enable_arrow) %in% c("TRUE", "1", "YES")) {
@@ -402,6 +409,15 @@ create_databricks_connection <- function(
     message("  Arrow optimization enabled (requires proper JVM configuration)")
   } else {
     jdbc_url <- paste0(jdbc_url, "EnableArrow=0;")
+  }
+  
+  # Log optimization settings if in interactive mode
+  if (interactive()) {
+    message(sprintf("  Batch size: %s", batch_size))
+    bulk_upload <- Sys.getenv("DATABASE_CONNECTOR_BULK_UPLOAD", "FALSE")
+    if (toupper(bulk_upload) %in% c("TRUE", "1", "YES")) {
+      message("  Bulk upload: enabled")
+    }
   }
   
   return(DatabaseConnector::createConnectionDetails(
