@@ -101,26 +101,23 @@ cat("========================================\n")
 
 if (!file.exists(".env")) {
   cat("\nNo .env file found. Would you like to create one?\n")
-  cat("  1. SQL Server configuration\n")
-  cat("  2. Databricks configuration\n")
-  cat("  3. Skip\n")
-  cat("Enter choice (1-3): ")
+  cat("  1. Yes, copy the template\n")
+  cat("  2. No, skip\n")
+  cat("Enter choice (1-2): ")
   
   env_choice <- readline()
   
   if (env_choice == "1") {
-    # Copy SQL Server template
-    if (file.exists("inst/scripts/.env.sqlserver.template")) {
-      file.copy("inst/scripts/.env.sqlserver.template", ".env")
-      cat("\n✓ Created .env file from SQL Server template\n")
-      cat("  Please edit .env and add your connection details\n")
-    }
-  } else if (env_choice == "2") {
-    # Copy Databricks template
-    if (file.exists("inst/scripts/.env.databricks.template")) {
-      file.copy("inst/scripts/.env.databricks.template", ".env")
-      cat("\n✓ Created .env file from Databricks template\n")
-      cat("  Please edit .env and add your connection details\n")
+    # Copy unified template
+    if (file.exists("inst/templates/.env.template")) {
+      file.copy("inst/templates/.env.template", ".env")
+      cat("\n✓ Created .env file from template\n")
+      cat("  Please edit .env and:\n")
+      cat("    1. Set DB_TYPE to your database platform (sql server, databricks, etc.)\n")
+      cat("    2. Fill in your connection details\n")
+      cat("    3. Configure schema names\n")
+    } else {
+      cat("\n✗ Template file not found at inst/templates/.env.template\n")
     }
   }
 } else {

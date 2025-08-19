@@ -30,6 +30,25 @@ R CMD INSTALL OMOPPregnancyV2_2.0.0.tar.gz
 
 ## Database Setup
 
+### Quick Configuration with .env File
+
+The easiest way to configure your database connection:
+
+1. Copy the environment template:
+   ```bash
+   cp inst/templates/.env.template .env
+   ```
+
+2. Edit `.env` with your database settings
+
+3. Use the environment-based connection:
+   ```r
+   source("R/00_connection/create_connection.R")
+   con <- create_connection_from_env()
+   ```
+
+### Manual Configuration
+
 ### SQL Server
 ```r
 connectionDetails <- DatabaseConnector::createConnectionDetails(

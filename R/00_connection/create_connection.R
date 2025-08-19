@@ -395,13 +395,13 @@ create_databricks_connection <- function(
   # Add performance optimizations
   jdbc_url <- paste0(jdbc_url, "UseNativeQuery=0;")  # Disable native query optimization
   
-  # Add batch optimization parameters for better performance
-  # batchsize is supported by Databricks JDBC driver
-  batch_size <- Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "10000")
-  jdbc_url <- paste0(jdbc_url, sprintf("batchsize=%s;", batch_size))
-  
-  # Note: rewriteBatchedStatements is MySQL-specific and not supported by Databricks
-  # The bulk upload optimization is handled by DatabaseConnector, not JDBC parameters
+  # Batch optimization note:
+  # The Databricks JDBC driver does not support batch-related parameters in the connection string.
+  # Performance optimization is achieved through:
+  # 1. DatabaseConnector's bulk upload functionality (DATABASE_CONNECTOR_BULK_UPLOAD=TRUE)
+  # 2. Application-level batch processing (DATABASE_CONNECTOR_BATCH_SIZE environment variable)
+  # 3. Arrow optimization when properly configured
+  # The batch_size variable is still used by our code for splitting large datasets
   
   # Only enable Arrow if explicitly requested (to avoid memory initialization errors)
   enable_arrow <- Sys.getenv("ENABLE_ARROW", "FALSE")
@@ -414,10 +414,11 @@ create_databricks_connection <- function(
   
   # Log optimization settings if in interactive mode
   if (interactive()) {
-    message(sprintf("  Batch size: %s", batch_size))
+    batch_size <- Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "10000")
     bulk_upload <- Sys.getenv("DATABASE_CONNECTOR_BULK_UPLOAD", "FALSE")
+    message(sprintf("  Batch processing size: %s rows", batch_size))
     if (toupper(bulk_upload) %in% c("TRUE", "1", "YES")) {
-      message("  Bulk upload: enabled")
+      message("  Bulk upload: enabled (DatabaseConnector)")
     }
   }
   

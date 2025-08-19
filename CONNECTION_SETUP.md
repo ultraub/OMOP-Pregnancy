@@ -9,19 +9,17 @@ This guide explains how to configure database connections for the OMOP Pregnancy
    source("inst/scripts/setup_jdbc_drivers.R")
    ```
 
-2. **Copy appropriate .env template**
+2. **Copy the environment template**
    ```bash
-   # For SQL Server with Windows AD:
-   cp inst/templates/.env.sqlserver_windows .env
-   
-   # For SQL Server with standard auth:
-   cp inst/templates/.env.sqlserver_standard .env
-   
-   # For Databricks:
-   cp inst/templates/.env.databricks .env
+   # Copy the unified template to your project root
+   cp inst/templates/.env.template .env
    ```
 
 3. **Edit .env file with your settings**
+   - Set `DB_TYPE` to your database platform
+   - Fill in connection details
+   - Configure schema names
+   - See template comments for platform-specific settings
 
 4. **Run the analysis**
    ```r
@@ -147,9 +145,15 @@ con <- create_connection_from_env()
 ### Performance Tuning
 
 #### Databricks
-- Set `ENABLE_ARROW=TRUE` for columnar data transfer (3x faster)
-- Configure JVM memory: `-Xmx8g` for large datasets
-- Use warehouse compute for better performance
+- **Arrow Optimization**: Can provide 3x faster columnar data transfer
+  - Default is `ENABLE_ARROW=FALSE` to avoid initialization errors
+  - To enable Arrow, you must:
+    1. Download complete Databricks JDBC driver with all dependencies
+    2. Set JVM options: `-Dio.netty.tryReflectionSetAccessible=true -Xmx8g`
+    3. Ensure sufficient memory allocation
+    4. Set `ENABLE_ARROW=TRUE` in your .env file
+- Use SQL warehouse compute for better performance
+- Configure appropriate warehouse size for your workload
 
 #### SQL Server
 - Adjust timeout for long queries: `DB_TIMEOUT=600`
@@ -172,16 +176,29 @@ con <- create_connection_from_env()
 
 ### Databricks Connection Issues
 
-1. **"Arrow memory initialization failed"**
-   - Set JVM options before loading packages:
-   ```r
-   options(java.parameters = c("-Xmx8g", "-XX:MaxDirectMemorySize=4g"))
-   ```
+1. **"Could not initialize class com.databricks.client.jdbc42.internal.apache.arrow.memory.util.MemoryUtil"**
+   - This error occurs when Arrow optimization is enabled but environment isn't configured
+   - **Quick Fix**: Set `ENABLE_ARROW=FALSE` in your .env file (default)
+   - **To Enable Arrow** (for better performance):
+     ```r
+     # Set JVM options BEFORE loading any packages
+     options(java.parameters = c(
+       "-Xmx8g",
+       "-XX:MaxDirectMemorySize=4g",
+       "-Dio.netty.tryReflectionSetAccessible=true"
+     ))
+     ```
+     Then ensure you have the complete Databricks JDBC driver with all Arrow dependencies
 
 2. **"Token authentication failed"**
    - Generate new token in Databricks workspace
    - Ensure token has SQL warehouse permissions
    - Check firewall/network access
+
+3. **"HTTP Path parsing error"**
+   - Ensure httpPath uses lowercase 'h' (not HTTPPath)
+   - Format: `DB_EXTRA_SETTINGS=httpPath=/sql/1.0/warehouses/your-warehouse-id`
+   - Do not include quotes or extra semicolons
 
 ### General Issues
 
