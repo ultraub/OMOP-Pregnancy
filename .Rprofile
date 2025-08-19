@@ -50,7 +50,10 @@ if (file.exists(".env")) {
         key <- trimws(parts[1])
         value <- trimws(paste(parts[-1], collapse = "="))
         value <- gsub("^['\"]|['\"]$", "", value)
-        do.call(Sys.setenv, setNames(list(value), key))
+        # Avoid setNames which may not be loaded yet
+        env_list <- list(value)
+        names(env_list) <- key
+        do.call(Sys.setenv, env_list)
       }
     }
   }
