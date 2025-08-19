@@ -1,0 +1,86 @@
+# OMOP Pregnancy Project R Profile
+# This file is loaded automatically when R starts in this project directory
+
+# JVM Configuration for Databricks Arrow Support
+# These settings must be configured before any Java-using packages are loaded
+# Only uncomment if you need Arrow optimization AND have proper Databricks JDBC drivers
+# options(java.parameters = c(
+#   "-Xmx8g",                                    # Maximum heap size
+#   "-XX:MaxDirectMemorySize=4g",                # Direct memory for Arrow buffers
+#   "-Dio.netty.tryReflectionSetAccessible=true" # Required for Arrow memory access
+# ))
+
+# Default JVM settings (without Arrow)
+# Uncomment this block for standard Databricks connection without Arrow
+options(java.parameters = c(
+  "-Xmx4g"  # 4GB heap is usually sufficient without Arrow
+))
+
+# Package load messages
+message("========================================")
+message("OMOP Pregnancy Project")
+message("========================================")
+message("JVM heap size: 4GB")
+message("Arrow optimization: DISABLED by default")
+message("To enable Arrow: ")
+message("  1. Uncomment Arrow JVM settings above")
+message("  2. Set ENABLE_ARROW=TRUE in .env")
+message("  3. Restart R session")
+message("========================================\n")
+
+# Load .env file automatically if it exists
+if (file.exists(".env")) {
+  # Simple .env loader
+  env_lines <- readLines(".env", warn = FALSE)
+  for (line in env_lines) {
+    line <- trimws(line)
+    if (nchar(line) > 0 && !startsWith(line, "#")) {
+      parts <- strsplit(line, "=", fixed = TRUE)[[1]]
+      if (length(parts) >= 2) {
+        key <- trimws(parts[1])
+        value <- trimws(paste(parts[-1], collapse = "="))
+        value <- gsub("^['\"]|['\"]$", "", value)
+        do.call(Sys.setenv, setNames(list(value), key))
+      }
+    }
+  }
+  message("✓ Loaded environment variables from .env\n")
+}
+
+# Set default options for better display
+options(
+  width = 120,                    # Wider console output
+  scipen = 999,                    # Avoid scientific notation
+  stringsAsFactors = FALSE,       # Modern R default
+  max.print = 1000,                # Limit console output
+  warn = 1                         # Show warnings immediately
+)
+
+# Databricks/Spark specific options
+options(
+  dbplyr.compute.defaults = list(temporary = FALSE),  # No temp tables with #
+  dbplyr.temp_prefix = "temp_"                        # Use temp_ prefix instead
+)
+
+# Helper function to test connection
+.test_connection <- function() {
+  message("Testing database connection...")
+  tryCatch({
+    source("R/00_connection/create_connection.R")
+    con <- create_connection_from_env()
+    message("✓ Connection successful!")
+    return(con)
+  }, error = function(e) {
+    message("✗ Connection failed: ", e$message)
+    return(NULL)
+  })
+}
+
+# Remind user about setup
+if (!dir.exists("jdbc_drivers") || length(list.files("jdbc_drivers", pattern = "\\.jar$")) == 0) {
+  message("⚠ Warning: JDBC drivers not found")
+  message("  Run: source('inst/scripts/setup_jdbc_drivers.R')")
+  message("")
+}
+
+message("Ready! Use .test_connection() to test your database connection.\n")
