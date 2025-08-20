@@ -42,6 +42,25 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
            orig_episode_end_date = episode_end_date,
            everything())
   
+  # Get total number of groups for progress tracking
+  n_groups_with_timing <- episodes_for_join %>%
+    inner_join(
+      timing_concepts,
+      by = c("person_id", "episode_number"),
+      relationship = "many-to-many"
+    ) %>%
+    group_by(person_id, episode_number) %>%
+    summarise(.groups = "drop") %>%
+    nrow()
+  
+  if (n_groups_with_timing > 0) {
+    message(sprintf("  Processing %d episodes with timing concepts...", n_groups_with_timing))
+  }
+  
+  # Track progress
+  current_group <- 0
+  progress_shown <- c()
+  
   episodes_with_timing <- episodes_for_join %>%
     inner_join(
       timing_concepts,
@@ -55,7 +74,24 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
     ) %>%
     select(-orig_episode_start_date, -orig_episode_end_date) %>%
     group_by(person_id, episode_number) %>%
-    group_modify(~calculate_episode_esd(.x), .keep = TRUE) %>%
+    group_modify(function(x, keys) {
+      # Update progress
+      current_group <<- current_group + 1
+      
+      # Calculate percentage
+      pct_complete <- round((current_group / n_groups_with_timing) * 100)
+      
+      # Show progress every 5%
+      if (pct_complete %% 5 == 0 && pct_complete > 0) {
+        if (!pct_complete %in% progress_shown) {
+          message(sprintf("    %d%% complete", pct_complete))
+          progress_shown <<- c(progress_shown, pct_complete)
+        }
+      }
+      
+      # Call the original function
+      calculate_episode_esd(x)
+    }, .keep = TRUE) %>%
     ungroup()
   
   # Then, handle episodes without timing concepts
