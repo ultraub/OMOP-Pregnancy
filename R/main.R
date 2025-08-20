@@ -107,7 +107,8 @@ run_pregnancy_identification <- function(
   message("\nStep 5: Merging HIP and PPS episodes...")
   final_episodes <- merge_pregnancy_episodes(
     hip_episodes = hip_episodes,
-    pps_episodes = pps_episodes
+    pps_episodes = pps_episodes,
+    cohort_data = cohort_data
   )
   message(sprintf("  - Final episode count: %d", nrow(final_episodes)))
   

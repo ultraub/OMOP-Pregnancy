@@ -67,16 +67,16 @@ add_episode_windows <- function(episodes, source) {
         case_when(
           # If we have gestational age value, use it
           !is.na(gestational_age_days) ~ 
-            episode_start_date + gestational_age_days + 30,
+            episode_start_date + gestational_age_days + DAYS_PER_MONTH,
           # Otherwise use outcome-based estimate
-          outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + 30,
+          outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + DAYS_PER_MONTH,
           outcome_category %in% c("ECT", "AB", "SA") ~ episode_end_date + 60,
           TRUE ~ episode_end_date + 90
         )
       } else {
         case_when(
           # Use outcome-based estimate when no gestational_age_days column
-          outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + 30,
+          outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + DAYS_PER_MONTH,
           outcome_category %in% c("ECT", "AB", "SA") ~ episode_end_date + 60,
           TRUE ~ episode_end_date + 90
         )
@@ -331,7 +331,7 @@ add_window_outcomes <- function(episodes, cohort_data) {
     cohort_data$observations,
     cohort_data$measurements
   ) %>%
-    filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA")) %>%
+    filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")) %>%
     select(person_id, outcome_date = event_date, found_outcome = category)
   
   if (nrow(outcome_records) == 0) {
@@ -365,7 +365,7 @@ add_window_outcomes <- function(episodes, cohort_data) {
     group_by(person_id, episode_number) %>%
     # Use Matcho hierarchy to select best outcome
     arrange(
-      factor(found_outcome, levels = c("LB", "SB", "DELIV", "ECT", "AB", "SA")),
+      factor(found_outcome, levels = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")),
       outcome_date
     ) %>%
     slice(1) %>%

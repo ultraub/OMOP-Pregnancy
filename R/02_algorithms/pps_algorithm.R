@@ -155,7 +155,7 @@ assign_person_episodes <- function(personlist) {
     # Calculate time difference from previous record (in months)
     delta_t <- as.numeric(
       personlist$event_date[i] - personlist$event_date[i-1]
-    ) / 30.44  # Average days per month
+    ) / DAYS_PER_MONTH  # Using standardized month length
     
     # Check temporal consistency with retry logic
     # This is O(n²) for each record, making overall O(n³)
@@ -181,7 +181,7 @@ assign_person_episodes <- function(personlist) {
     mutate(
       episode_start = safe_as_date(min(event_date)),
       episode_end = safe_as_date(max(event_date)),
-      episode_length_months = as.numeric(episode_end - episode_start) / 30.44,
+      episode_length_months = as.numeric(episode_end - episode_start) / DAYS_PER_MONTH,
       is_valid = episode_length_months <= 12
     ) %>%
     filter(is_valid) %>%
@@ -208,7 +208,7 @@ records_comparison <- function(personlist, i) {
     # Obtain the difference in actual dates (in months)
     delta_t <- as.numeric(
       difftime(personlist$event_date[i], personlist$event_date[i - j], units = "days")
-    ) / 30.44  # Use consistent month length
+    ) / DAYS_PER_MONTH  # Use consistent month length
     
     # Get expected month differences with 2-month leniency
     adjConceptMonths_MaxExpectedDelta <- personlist$max_month[i] - personlist$min_month[i - j] + 2
@@ -237,7 +237,7 @@ records_comparison <- function(personlist, i) {
       # Get time difference between bridge records
       bridge_delta_t <- as.numeric(
         difftime(personlist$event_date[i + e], personlist$event_date[i - s], units = "days")
-      ) / 30.44  # Use consistent month length
+      ) / DAYS_PER_MONTH  # Use consistent month length
       
       # Get expected differences for bridge
       bridge_MaxExpectedDelta <- personlist$max_month[i + e] - personlist$min_month[i - s] + 2
@@ -285,7 +285,7 @@ calculate_pps_boundaries <- function(episodes_raw) {
       # Calculate expected pregnancy end date
       # Based on last concept + remaining pregnancy time
       expected_end_date = case_when(
-        !is.na(latest_ga_max) ~ episode_max_date + (10 - latest_ga_max) * 30,
+        !is.na(latest_ga_max) ~ episode_max_date + (10 - latest_ga_max) * DAYS_PER_MONTH,
         TRUE ~ episode_max_date + 60  # Default 2 months
       )
     )
@@ -304,7 +304,7 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
     cohort_data$observations,
     cohort_data$measurements
   ) %>%
-    filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA")) %>%
+    filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")) %>%
     select(person_id, outcome_date = event_date, outcome_category = category)
   
   if (nrow(outcome_records) == 0) {
@@ -351,7 +351,7 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
     group_by(person_id, person_episode_number) %>%
     # Use Matcho hierarchy to select outcome
     arrange(
-      factor(outcome_category, levels = c("LB", "SB", "DELIV", "ECT", "AB", "SA")),
+      factor(outcome_category, levels = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")),
       outcome_date
     ) %>%
     slice(1) %>%  # Take highest priority outcome
@@ -388,7 +388,7 @@ validate_pps_episodes <- function(episodes) {
       # Calculate estimated start date
       episode_start_date = safe_as_date(case_when(
         # Use gestational timing if available
-        !is.na(earliest_ga_min) ~ safe_as_date(episode_min_date) - (earliest_ga_min * 30),
+        !is.na(earliest_ga_min) ~ safe_as_date(episode_min_date) - (earliest_ga_min * DAYS_PER_MONTH),
         # Otherwise assume start is 3 months before first concept
         TRUE ~ safe_as_date(episode_min_date) - 90
       )),

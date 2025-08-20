@@ -1,3 +1,7 @@
+# Global constant for consistent month length calculations
+# Using 365.25/12 for accurate month-to-day conversions across all algorithms
+DAYS_PER_MONTH <- 30.437
+
 #' Calculate Episode Dates
 #'
 #' Wrapper function that calculates estimated start dates for pregnancy episodes

@@ -218,11 +218,11 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       
       # Calculate range for GR3m concepts
       range_start = case_when(
-        GT_type == "GR3m" & !is.na(max_month) ~ safe_as_date(event_date) - (max_month * 30.4),
+        GT_type == "GR3m" & !is.na(max_month) ~ safe_as_date(event_date) - (max_month * DAYS_PER_MONTH),
         TRUE ~ as.Date(NA)
       ),
       range_end = case_when(
-        GT_type == "GR3m" & !is.na(min_month) ~ safe_as_date(event_date) - (min_month * 30.4),
+        GT_type == "GR3m" & !is.na(min_month) ~ safe_as_date(event_date) - (min_month * DAYS_PER_MONTH),
         TRUE ~ as.Date(NA)
       )
     ) %>%

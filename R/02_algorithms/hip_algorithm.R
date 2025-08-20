@@ -126,8 +126,16 @@ process_outcome_category <- function(initial_cohort, categories, matcho_outcome_
       ) %>%
       pull(min_days)
   } else {
-    # For AB/SA, use the minimum spacing
-    min_days <- 56  # Default for AB/SA combinations
+    # For AB/SA, look up the appropriate spacing from matcho_outcome_limits
+    # Use the minimum spacing between AB and SA
+    ab_sa_spacing <- matcho_outcome_limits %>%
+      filter(
+        (first_preg_category == "AB" & outcome_preg_category == "SA") |
+        (first_preg_category == "SA" & outcome_preg_category == "AB")
+      ) %>%
+      pull(min_days)
+    
+    min_days <- ifelse(length(ab_sa_spacing) > 0, min(ab_sa_spacing), 56)
   }
   
   if (length(min_days) == 0) {
@@ -291,8 +299,13 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
     group_by(person_id) %>%
     arrange(outcome_date)
   
-  # For simplicity, use a general minimum spacing of 56 days for abortions
-  min_spacing <- 56
+  # Look up minimum spacing for abortions from matcho_outcome_limits
+  # Get the minimum spacing between any previous outcome and AB/SA
+  min_spacing_values <- spacing_rules %>%
+    filter(!is.na(min_days)) %>%
+    pull(min_days)
+  
+  min_spacing <- ifelse(length(min_spacing_values) > 0, min(min_spacing_values), 56)
   
   valid_ab_sa <- combined %>%
     mutate(
@@ -327,8 +340,15 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
     group_by(person_id) %>%
     arrange(outcome_date)
   
-  # Use 168 days as default minimum for delivery spacing
-  min_spacing <- 168
+  # Look up minimum spacing for delivery from matcho_outcome_limits
+  deliv_spacing <- matcho_outcome_limits %>%
+    filter(
+      first_preg_category == "DELIV",
+      outcome_preg_category == "DELIV"
+    ) %>%
+    pull(min_days)
+  
+  min_spacing <- ifelse(length(deliv_spacing) > 0, deliv_spacing[1], 168)
   
   valid_deliv <- combined %>%
     mutate(
