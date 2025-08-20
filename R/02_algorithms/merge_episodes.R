@@ -593,6 +593,8 @@ prepare_final_episodes <- function(episodes) {
     select(
       person_id,
       episode_number,
+      episode_start_date,  # Keep original names for ESD compatibility
+      episode_end_date,
       recorded_episode_start = episode_start_date,
       recorded_episode_end = episode_end_date,
       recorded_episode_length,
@@ -601,6 +603,7 @@ prepare_final_episodes <- function(episodes) {
       HIP_end_date,
       PPS_end_date,
       HIP_flag,
-      PPS_flag
+      PPS_flag,
+      everything()  # Include any other columns like outcome_category, gestational_age_days
     )
 }
