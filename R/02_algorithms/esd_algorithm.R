@@ -144,12 +144,13 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     col_cache$has_value_as_number <- "value_as_number" %in% names(all_domain_data)
     
     # Single filter operation for all domains
+    # Build filter conditions based on available columns
     timing_from_domains <- all_domain_data %>%
       filter(
         concept_id %in% timing_concept_ids |
-        (col_cache$has_concept_name & grepl("gestation", concept_name, ignore.case = TRUE)) |
-        (col_cache$has_category & category == "GEST") |
-        (col_cache$has_gest_value & !is.na(gest_value))
+        (if (col_cache$has_concept_name) grepl("gestation", concept_name, ignore.case = TRUE) else FALSE) |
+        (if (col_cache$has_category) category == "GEST" else FALSE) |
+        (if (col_cache$has_gest_value) !is.na(gest_value) else FALSE)
       ) %>%
       select(-domain_source)  # Remove temporary column
   } else {
@@ -250,10 +251,10 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       # Determine timing type (GW vs GR3m)
       GT_type = case_when(
         # GW concepts: specific gestational week concepts
-        col_cache$has_concept_name & grepl("gestation period,", concept_name, ignore.case = TRUE) ~ "GW",
-        col_cache$has_concept_name & grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
+        (if (col_cache$has_concept_name) grepl("gestation period,", concept_name, ignore.case = TRUE) else FALSE) ~ "GW",
+        (if (col_cache$has_concept_name) grepl("gestational age", concept_name, ignore.case = TRUE) else FALSE) ~ "GW",
         concept_id %in% c(3048230, 3002209, 3012266, 3050433) ~ "GW",
-        col_cache$has_gest_value & !is.na(gest_value) ~ "GW",
+        (if (col_cache$has_gest_value) !is.na(gest_value) else FALSE) ~ "GW",
         # GR3m concepts: range-based concepts from PPS
         !is.na(min_month) & !is.na(max_month) ~ "GR3m",
         TRUE ~ NA_character_
@@ -265,11 +266,12 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     episode_timing <- episode_timing %>%
       mutate(
         gestational_weeks = case_when(
-          GT_type == "GW" & col_cache$has_gest_value & !is.na(gest_value) ~ gest_value,
-          GT_type == "GW" & col_cache$has_value_as_number & !is.na(value_as_number) & value_as_number < 50 ~ value_as_number,
-          GT_type == "GW" & col_cache$has_concept_name & grepl("\\d+ weeks?", concept_name) ~ suppressWarnings(
-            as.numeric(gsub(".*?(\\d+) weeks?.*", "\\1", concept_name))
-          ),
+          GT_type == "GW" & (if (col_cache$has_gest_value) !is.na(gest_value) else FALSE) ~ 
+            if (col_cache$has_gest_value) gest_value else NA_real_,
+          GT_type == "GW" & (if (col_cache$has_value_as_number) !is.na(value_as_number) & value_as_number < 50 else FALSE) ~ 
+            if (col_cache$has_value_as_number) value_as_number else NA_real_,
+          GT_type == "GW" & (if (col_cache$has_concept_name) grepl("\\d+ weeks?", concept_name) else FALSE) ~ 
+            if (col_cache$has_concept_name) suppressWarnings(as.numeric(gsub(".*?(\\d+) weeks?.*", "\\1", concept_name))) else NA_real_,
           TRUE ~ NA_real_
         )
       )
