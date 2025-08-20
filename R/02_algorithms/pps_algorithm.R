@@ -99,6 +99,9 @@ assign_pps_episodes <- function(timing_data) {
   
   message(sprintf("  Processing PPS episodes for %d persons...", n_persons))
   
+  # Track progress milestones
+  progress_shown <- c()
+  
   # Process each person separately with progress updates
   episodes <- timing_data %>%
     group_by(person_id) %>%
@@ -110,11 +113,11 @@ assign_pps_episodes <- function(timing_data) {
       pct_complete <- round((person_idx / n_persons) * 100)
       
       # Show progress every 5% or at completion
-      if (pct_complete %% 5 == 0 && pct_complete != 0) {
+      if (pct_complete %% 5 == 0 && pct_complete > 0) {
         # Only show if we haven't shown this percentage yet
-        if (!exists("last_pct_shown") || last_pct_shown < pct_complete) {
+        if (!pct_complete %in% progress_shown) {
           message(sprintf("    %d%% complete", pct_complete))
-          assign("last_pct_shown", pct_complete, envir = parent.frame())
+          progress_shown <<- c(progress_shown, pct_complete)
         }
       }
       
