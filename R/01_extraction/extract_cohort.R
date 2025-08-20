@@ -3,6 +3,11 @@
 #' Extracts all pregnancy-related data using temporary tables for efficiency.
 #' This approach avoids huge WHERE IN clauses by using JOINs with temp tables,
 #' making it scalable for large cohorts.
+#' 
+#' NOTE: DatabaseConnector automatically handles date conversion from different
+#' database systems (SQL Server, PostgreSQL, Oracle, etc.). Dates are returned
+#' as R Date objects, not numeric values. If dates appear as numeric, check
+#' the database connection configuration.
 #'
 #' @param connection DatabaseConnector connection
 #' @param cdm_schema Schema containing CDM tables

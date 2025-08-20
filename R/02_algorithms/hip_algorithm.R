@@ -153,14 +153,14 @@ process_outcome_category <- function(initial_cohort, categories, matcho_outcome_
     ) %>%
     group_by(person_id, episode_id) %>%
     summarise(
-      outcome_date = max(safe_as_date(event_date)),
+      outcome_date = max(as.Date(event_date)),
       outcome_category = first(category),
       n_visits = n(),
       .groups = "drop"
     ) %>%
     ungroup() %>%
     mutate(
-      outcome_date = safe_as_date(outcome_date)
+      outcome_date = as.Date(outcome_date)
     )
   
   return(episodes)
@@ -194,8 +194,8 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
     mutate(
       prev_category = lag(outcome_category),
       next_category = lead(outcome_category),
-      days_after = as.numeric(safe_as_date(outcome_date) - safe_as_date(lag(outcome_date))),
-      days_before = as.numeric(safe_as_date(lead(outcome_date)) - safe_as_date(outcome_date))
+      days_after = as.numeric(as.Date(outcome_date) - as.Date(lag(outcome_date))),
+      days_before = as.numeric(as.Date(lead(outcome_date)) - as.Date(outcome_date))
     )
   
   # Filter SB episodes that don't meet spacing requirements
@@ -255,8 +255,8 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
     mutate(
       prev_category = lag(outcome_category),
       next_category = lead(outcome_category),
-      days_after = as.numeric(safe_as_date(outcome_date) - safe_as_date(lag(outcome_date))),
-      days_before = as.numeric(safe_as_date(lead(outcome_date)) - safe_as_date(outcome_date))
+      days_after = as.numeric(as.Date(outcome_date) - as.Date(lag(outcome_date))),
+      days_before = as.numeric(as.Date(lead(outcome_date)) - as.Date(outcome_date))
     )
   
   # Filter ECT episodes that meet spacing requirements
@@ -447,19 +447,19 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
       # If we have gestational info, use it
       gest_based_start = case_when(
         has_gestational_info & !is.na(gestational_weeks) ~ 
-          safe_as_date(outcome_date) - (gestational_weeks * 7),
+          as.Date(outcome_date) - (gestational_weeks * 7),
         TRUE ~ as.Date(NA)
       ),
       
       # Otherwise use term limits
       term_based_start = case_when(
-        !is.na(max_term) ~ safe_as_date(outcome_date) - max_term,
-        TRUE ~ safe_as_date(outcome_date) - 280  # Default max pregnancy
+        !is.na(max_term) ~ as.Date(outcome_date) - max_term,
+        TRUE ~ as.Date(outcome_date) - 280  # Default max pregnancy
       ),
       
       # Choose the best estimate
-      episode_start_date = safe_as_date(coalesce(gest_based_start, term_based_start)),
-      episode_end_date = safe_as_date(outcome_date),
+      episode_start_date = as.Date(coalesce(gest_based_start, term_based_start)),
+      episode_end_date = as.Date(outcome_date),
       
       # Calculate gestational age at outcome
       gestational_age_days = as.numeric(episode_end_date - episode_start_date)
@@ -502,8 +502,8 @@ validate_hip_episodes <- function(episodes) {
       
       # Adjust start date if overlapping
       adjusted_start = case_when(
-        !is.na(overlap_days) & overlap_days > 0 ~ safe_as_date(prev_end_date + 1),
-        TRUE ~ safe_as_date(episode_start_date)
+        !is.na(overlap_days) & overlap_days > 0 ~ as.Date(prev_end_date + 1),
+        TRUE ~ as.Date(episode_start_date)
       ),
       
       # Recalculate gestational age

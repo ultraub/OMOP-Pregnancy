@@ -43,61 +43,6 @@ calculate_episode_dates <- function(episodes, gestational_data) {
 }
 
 
-#' Safely Convert to Date Type
-#'
-#' Handles various date formats and SQL Server numeric dates.
-#'
-#' @param x Value to convert to Date
-#' @return Date object
-#' @export
-safe_as_date <- function(x) {
-  # If already Date, return as-is
-  if (inherits(x, "Date")) {
-    return(x)
-  }
-  
-  # If POSIXct/POSIXlt, convert
-  if (inherits(x, c("POSIXct", "POSIXlt"))) {
-    return(as.Date(x))
-  }
-  
-  # If numeric (SQL Server date), convert
-  if (is.numeric(x)) {
-    # Determine the likely date format based on the numeric range
-    # SQL Server dates are days since 1900-01-01 (origin 1899-12-30 due to Excel bug)
-    # Current dates (2020s) would be ~44000-45000 as SQL Server dates
-    # Unix timestamps are seconds since 1970-01-01
-    
-    # Get the maximum non-NA value for checking
-    max_val <- max(x[!is.na(x)], na.rm = TRUE)
-    
-    if (is.infinite(max_val) || is.na(max_val)) {
-      # If no valid values, return NA dates
-      return(as.Date(NA))
-    }
-    
-    if (max_val < 50000) {
-      # Likely SQL Server date (days since 1900)
-      # 50000 days from 1900 = year 2036
-      return(as.Date(x, origin = "1899-12-30"))
-    } else if (max_val > 1000000) {
-      # Likely Unix timestamp (seconds since 1970)
-      return(as.Date(x/86400, origin = "1970-01-01"))
-    } else {
-      # In between - could be days since 1970
-      # 50000 days from 1970 = year 2106
-      return(as.Date(x, origin = "1970-01-01"))
-    }
-  }
-  
-  # If character, parse
-  if (is.character(x)) {
-    return(as.Date(x))
-  }
-  
-  # Default: try as.Date
-  return(as.Date(x))
-}
 
 #' Save Results
 #'

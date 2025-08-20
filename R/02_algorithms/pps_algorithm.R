@@ -77,7 +77,7 @@ prepare_pps_data <- function(timing_data, persons_data) {
       day_of_birth = ifelse(is.na(day_of_birth), 1, day_of_birth),
       
       # Calculate age at event
-      birth_date = safe_as_date(paste(year_of_birth, month_of_birth, day_of_birth, sep = "-")),
+      birth_date = as.Date(paste(year_of_birth, month_of_birth, day_of_birth, sep = "-")),
       age_at_event = as.numeric(event_date - birth_date) / 365.25,
       
       # Filter to reproductive age (15-55)
@@ -179,8 +179,8 @@ assign_person_episodes <- function(personlist) {
   valid_episodes <- personlist %>%
     group_by(person_episode_number) %>%
     mutate(
-      episode_start = safe_as_date(min(event_date)),
-      episode_end = safe_as_date(max(event_date)),
+      episode_start = as.Date(min(event_date)),
+      episode_end = as.Date(max(event_date)),
       episode_length_months = as.numeric(episode_end - episode_start) / DAYS_PER_MONTH,
       is_valid = episode_length_months <= 12
     ) %>%
@@ -264,8 +264,8 @@ calculate_pps_boundaries <- function(episodes_raw) {
     group_by(person_id, person_episode_number) %>%
     summarise(
       # Episode boundaries
-      episode_min_date = safe_as_date(min(event_date)),
-      episode_max_date = safe_as_date(max(event_date)),
+      episode_min_date = as.Date(min(event_date)),
+      episode_max_date = as.Date(max(event_date)),
       
       # Gestational timing info
       earliest_ga_min = min(min_month, na.rm = TRUE),
@@ -329,7 +329,7 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
       
       # Lookahead window: minimum of next episode or expected end
       lookahead_date = pmin(
-        coalesce(next_episode_start - 1, safe_as_date("2999-01-01")),
+        coalesce(next_episode_start - 1, as.Date("2999-01-01")),
         expected_end_date,
         na.rm = TRUE
       )
@@ -386,15 +386,15 @@ validate_pps_episodes <- function(episodes) {
   validated <- episodes %>%
     mutate(
       # Calculate estimated start date
-      episode_start_date = safe_as_date(case_when(
+      episode_start_date = as.Date(case_when(
         # Use gestational timing if available
-        !is.na(earliest_ga_min) ~ safe_as_date(episode_min_date) - (earliest_ga_min * DAYS_PER_MONTH),
+        !is.na(earliest_ga_min) ~ as.Date(episode_min_date) - (earliest_ga_min * DAYS_PER_MONTH),
         # Otherwise assume start is 3 months before first concept
-        TRUE ~ safe_as_date(episode_min_date) - 90
+        TRUE ~ as.Date(episode_min_date) - 90
       )),
       
       # End date is outcome date
-      episode_end_date = safe_as_date(outcome_date),
+      episode_end_date = as.Date(outcome_date),
       
       # Calculate gestational age
       gestational_age_days = as.numeric(episode_end_date - episode_start_date)

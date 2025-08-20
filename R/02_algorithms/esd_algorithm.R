@@ -20,7 +20,7 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
   episodes <- episodes %>%
     mutate(
       across(any_of(c("episode_start_date", "episode_end_date", "outcome_date")), 
-             ~safe_as_date(.x))
+             ~as.Date(.x))
     )
   
   # Get all timing concepts
@@ -66,8 +66,8 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
     ) %>%
     mutate(
       # Ensure date columns are Date type, using safe conversion
-      episode_start_date = safe_as_date(episode_start_date),
-      episode_end_date = safe_as_date(episode_end_date),
+      episode_start_date = as.Date(episode_start_date),
+      episode_end_date = as.Date(episode_end_date),
       precision_category = "non-specific",
       precision_days = 999
     )
@@ -154,6 +154,12 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     return(data.frame())
   }
   
+  # Check which columns exist in the combined timing records
+  # These are needed later for GT_type classification
+  has_concept_name <- "concept_name" %in% names(timing_records)
+  has_gest_value <- "gest_value" %in% names(timing_records)
+  has_value_as_number <- "value_as_number" %in% names(timing_records)
+  
   # Join with PPS concepts to get min_month and max_month (if not already present)
   if (!"min_month" %in% names(timing_records) || !"max_month" %in% names(timing_records)) {
     timing_records <- timing_records %>%
@@ -179,8 +185,8 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   episode_windows <- episodes %>%
     select(person_id, episode_number, episode_start_date, episode_end_date) %>%
     mutate(
-      episode_start_date = safe_as_date(episode_start_date),
-      episode_end_date = safe_as_date(episode_end_date),
+      episode_start_date = as.Date(episode_start_date),
+      episode_end_date = as.Date(episode_end_date),
       window_start = episode_start_date - 30,
       window_end = episode_end_date + 30
     )
@@ -188,7 +194,7 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   # Use inner join with date conditions (more efficient than left join + filter)
   # This follows the All of Us pattern of filtering during the join
   episode_timing <- timing_records %>%
-    mutate(event_date = safe_as_date(event_date)) %>%
+    mutate(event_date = as.Date(event_date)) %>%
     inner_join(
       episode_windows,
       by = join_by(
@@ -238,17 +244,17 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     mutate(
       # Calculate implied start date for GW concepts
       implied_start_date = case_when(
-        GT_type == "GW" & !is.na(gestational_weeks) ~ safe_as_date(event_date) - (gestational_weeks * 7),
+        GT_type == "GW" & !is.na(gestational_weeks) ~ as.Date(event_date) - (gestational_weeks * 7),
         TRUE ~ as.Date(NA)
       ),
       
       # Calculate range for GR3m concepts
       range_start = case_when(
-        GT_type == "GR3m" & !is.na(max_month) ~ safe_as_date(event_date) - (max_month * DAYS_PER_MONTH),
+        GT_type == "GR3m" & !is.na(max_month) ~ as.Date(event_date) - (max_month * DAYS_PER_MONTH),
         TRUE ~ as.Date(NA)
       ),
       range_end = case_when(
-        GT_type == "GR3m" & !is.na(min_month) ~ safe_as_date(event_date) - (min_month * DAYS_PER_MONTH),
+        GT_type == "GR3m" & !is.na(min_month) ~ as.Date(event_date) - (min_month * DAYS_PER_MONTH),
         TRUE ~ as.Date(NA)
       )
     ) %>%
@@ -336,18 +342,18 @@ calculate_episode_esd <- function(episode_data) {
                      "person_id", "episode_number"))) %>%  # Remove grouping columns since .keep = TRUE
     mutate(
       # Ensure dates are Date type using safe conversion
-      episode_start_date = safe_as_date(coalesce(
+      episode_start_date = as.Date(coalesce(
         timing_result$inferred_start_date,
         episode_start_date
       )),
-      episode_end_date = safe_as_date(episode_end_date),
+      episode_end_date = as.Date(episode_end_date),
       
       # Add precision information
       precision_days = timing_result$precision_days,
       precision_category = assign_precision_category(timing_result$precision_days),
       
       # Recalculate gestational age with new start
-      gestational_age_days = as.numeric(safe_as_date(episode_end_date) - safe_as_date(episode_start_date))
+      gestational_age_days = as.numeric(as.Date(episode_end_date) - as.Date(episode_start_date))
     )
   
   return(result)
@@ -401,8 +407,8 @@ find_timing_intersection <- function(week_concepts, range_concepts) {
       # Check overlap with GR3m intersection if available
       if (!is.null(gr3m_intersection)) {
         # Extract intersection boundaries
-        interval_start <- safe_as_date(gr3m_intersection[4])  # max_start
-        interval_end <- safe_as_date(gr3m_intersection[3])    # min_start
+        interval_start <- as.Date(gr3m_intersection[4])  # max_start
+        interval_end <- as.Date(gr3m_intersection[3])    # min_start
         
         # Filter GW concepts that overlap with GR3m intersection
         overlapping_gw <- gw_dates_clean[
@@ -430,8 +436,8 @@ find_timing_intersection <- function(week_concepts, range_concepts) {
     }
   } else if (!is.null(gr3m_intersection)) {
     # Only GR3m concepts available
-    interval_start <- safe_as_date(gr3m_intersection[4])
-    interval_end <- safe_as_date(gr3m_intersection[3])
+    interval_start <- as.Date(gr3m_intersection[4])
+    interval_end <- as.Date(gr3m_intersection[3])
     
     # Use midpoint of intersection
     result$inferred_start_date <- interval_start + 
@@ -534,12 +540,12 @@ findIntersection <- function(intervals) {
   # Convert to data frame
   if (length(intervals) == 1) {
     intervals_df <- data.frame(
-      V1 = safe_as_date(intervals[[1]][1]),
-      V2 = safe_as_date(intervals[[1]][2])
+      V1 = as.Date(intervals[[1]][1]),
+      V2 = as.Date(intervals[[1]][2])
     )
   } else {
     intervals_df <- do.call(rbind, lapply(intervals, function(x) {
-      data.frame(V1 = safe_as_date(x[1]), V2 = safe_as_date(x[2]))
+      data.frame(V1 = as.Date(x[1]), V2 = as.Date(x[2]))
     }))
   }
   
@@ -616,7 +622,7 @@ remove_GW_outliers <- function(gw_concepts_list) {
   }
   
   # Flatten list and convert to dates using safe conversion
-  gw_dates <- safe_as_date(unlist(gw_concepts_list))
+  gw_dates <- as.Date(unlist(gw_concepts_list))
   
   if (length(gw_dates) <= 1) {
     return(gw_dates)
