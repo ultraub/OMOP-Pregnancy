@@ -35,12 +35,25 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
   
   # Process each episode
   # First, handle episodes with timing concepts
-  episodes_with_timing <- episodes %>%
+  # Need to preserve original episode dates through the join
+  episodes_for_join <- episodes %>%
+    select(person_id, episode_number, 
+           orig_episode_start_date = episode_start_date,
+           orig_episode_end_date = episode_end_date,
+           everything())
+  
+  episodes_with_timing <- episodes_for_join %>%
     inner_join(
       timing_concepts,
       by = c("person_id", "episode_number"),
       relationship = "many-to-many"
     ) %>%
+    # Ensure we keep the original episode dates
+    mutate(
+      episode_start_date = orig_episode_start_date,
+      episode_end_date = orig_episode_end_date
+    ) %>%
+    select(-orig_episode_start_date, -orig_episode_end_date) %>%
     group_by(person_id, episode_number) %>%
     group_modify(~calculate_episode_esd(.x), .keep = TRUE) %>%
     ungroup()
@@ -293,21 +306,24 @@ calculate_episode_esd <- function(episode_data) {
   # Get the original episode columns (first row has the episode info)
   original_episode <- episode_data[1, ]
   
-  # Ensure we have required date columns
-  if (!"episode_end_date" %in% names(original_episode)) {
-    if ("episode_start_date" %in% names(original_episode)) {
-      # If we have start but not end, estimate end as start + 280 days
-      original_episode$episode_end_date <- safe_as_date(original_episode$episode_start_date) + 280
-    } else {
-      # No dates at all, use current date as placeholder
-      original_episode$episode_end_date <- Sys.Date()
-      original_episode$episode_start_date <- Sys.Date() - 280
-    }
-  }
-  
-  if (!"episode_start_date" %in% names(original_episode)) {
-    # If we have end but not start, estimate start as end - 280 days
-    original_episode$episode_start_date <- safe_as_date(original_episode$episode_end_date) - 280
+  # Episode dates must be present - they come from the original episodes
+  if (!"episode_end_date" %in% names(original_episode) || 
+      !"episode_start_date" %in% names(original_episode)) {
+    # This should never happen - episodes must have dates
+    # Return with default precision indicating error
+    warning("Episode dates missing in calculate_episode_esd - this indicates a data flow error")
+    result <- original_episode[1, ] %>%
+      select(-any_of(c("implied_start_date", "gestational_weeks", 
+                       "range_start", "range_end", "event_date", "concept_id",
+                       "concept_name", "category", "gest_value",
+                       "value_as_number", "value_as_string",
+                       "min_month", "max_month",
+                       "person_id", "episode_number"))) %>%
+      mutate(
+        precision_category = "non-specific",
+        precision_days = 999
+      )
+    return(result)
   }
   
   # Update episode with refined start date

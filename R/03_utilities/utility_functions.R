@@ -63,13 +63,30 @@ safe_as_date <- function(x) {
   
   # If numeric (SQL Server date), convert
   if (is.numeric(x)) {
-    # SQL Server dates are days since 1900-01-01
-    # Check if it looks like SQL Server date (< 100000)
-    if (all(x[!is.na(x)] < 100000)) {
+    # Determine the likely date format based on the numeric range
+    # SQL Server dates are days since 1900-01-01 (origin 1899-12-30 due to Excel bug)
+    # Current dates (2020s) would be ~44000-45000 as SQL Server dates
+    # Unix timestamps are seconds since 1970-01-01
+    
+    # Get the maximum non-NA value for checking
+    max_val <- max(x[!is.na(x)], na.rm = TRUE)
+    
+    if (is.infinite(max_val) || is.na(max_val)) {
+      # If no valid values, return NA dates
+      return(as.Date(NA))
+    }
+    
+    if (max_val < 50000) {
+      # Likely SQL Server date (days since 1900)
+      # 50000 days from 1900 = year 2036
       return(as.Date(x, origin = "1899-12-30"))
-    } else {
-      # Likely Unix timestamp
+    } else if (max_val > 1000000) {
+      # Likely Unix timestamp (seconds since 1970)
       return(as.Date(x/86400, origin = "1970-01-01"))
+    } else {
+      # In between - could be days since 1970
+      # 50000 days from 1970 = year 2106
+      return(as.Date(x, origin = "1970-01-01"))
     }
   }
   
