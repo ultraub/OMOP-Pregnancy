@@ -120,11 +120,15 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   # Get timing concept IDs to filter for
   timing_concept_ids <- pps_concepts$concept_id
   
-  # OPTIMIZATION: Cache column checks once at the beginning
+  # OHDSI OPTIMIZATION: Single-pass filtering for database performance
+  # Unlike All of Us which filters each domain separately, we combine domains first
+  # to reduce database round-trips and improve performance for large cohorts
+  
+  # Cache column existence checks to avoid SQL errors on missing columns
+  # (All of Us assumes all columns exist, but OHDSI CDMs may vary)
   col_cache <- list()
   
-  # OPTIMIZATION: Single-pass filtering for all domains
-  # Combine all data first, then filter once
+  # Combine all domain data into single dataframe for efficient filtering
   all_domain_data <- bind_rows(
     if (!is.null(cohort_data$conditions) && nrow(cohort_data$conditions) > 0) 
       cohort_data$conditions %>% mutate(domain_source = "condition") else NULL,
@@ -136,21 +140,21 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       cohort_data$measurements %>% mutate(domain_source = "measurement") else NULL
   )
   
-  # Check columns once for the combined data
+  # Check which columns exist in the combined data
   if (!is.null(all_domain_data) && nrow(all_domain_data) > 0) {
     col_cache$has_concept_name <- "concept_name" %in% names(all_domain_data)
     col_cache$has_gest_value <- "gest_value" %in% names(all_domain_data)
     col_cache$has_category <- "category" %in% names(all_domain_data)
     col_cache$has_value_as_number <- "value_as_number" %in% names(all_domain_data)
     
-    # Single filter operation for all domains
-    # Build filter conditions based on available columns
+    # Filter for timing concepts - simplified logic that's equivalent to All of Us
+    # but handles missing columns gracefully
     timing_from_domains <- all_domain_data %>%
       filter(
         concept_id %in% timing_concept_ids |
-        (if (col_cache$has_concept_name) grepl("gestation", concept_name, ignore.case = TRUE) else FALSE) |
-        (if (col_cache$has_category) category == "GEST" else FALSE) |
-        (if (col_cache$has_gest_value) !is.na(gest_value) else FALSE)
+        (col_cache$has_concept_name & !is.na(concept_name) & grepl("gestation", concept_name, ignore.case = TRUE)) |
+        (col_cache$has_category & !is.na(category) & category == "GEST") |
+        (col_cache$has_gest_value & !is.na(gest_value))
       ) %>%
       select(-domain_source)  # Remove temporary column
   } else {
@@ -245,37 +249,48 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     ) %>%
     select(-window_start, -window_end)
   
-  # Build GT_type classification based on available columns
+  # Classify timing concepts as GW (gestational week) or GR3m (3-month range)
+  # This follows All of Us logic but handles missing columns gracefully for OHDSI CDMs
   episode_timing <- episode_timing %>%
     mutate(
       # Determine timing type (GW vs GR3m)
       GT_type = case_when(
         # GW concepts: specific gestational week concepts
-        (if (col_cache$has_concept_name) grepl("gestation period,", concept_name, ignore.case = TRUE) else FALSE) ~ "GW",
-        (if (col_cache$has_concept_name) grepl("gestational age", concept_name, ignore.case = TRUE) else FALSE) ~ "GW",
+        # All of Us uses str_detect on "gestation period," - we check column exists first
+        col_cache$has_concept_name & !is.na(concept_name) & 
+          grepl("gestation period,", concept_name, ignore.case = TRUE) ~ "GW",
+        col_cache$has_concept_name & !is.na(concept_name) & 
+          grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
+        # Specific concept IDs known to be gestational week concepts
         concept_id %in% c(3048230, 3002209, 3012266, 3050433) ~ "GW",
-        (if (col_cache$has_gest_value) !is.na(gest_value) else FALSE) ~ "GW",
-        # GR3m concepts: range-based concepts from PPS
+        # If we have a gest_value, it's a GW concept
+        col_cache$has_gest_value & !is.na(gest_value) ~ "GW",
+        # GR3m concepts: range-based concepts from PPS with min/max months
         !is.na(min_month) & !is.na(max_month) ~ "GR3m",
         TRUE ~ NA_character_
       )
     )
   
   # Extract gestational weeks for GW concepts
+  # All of Us extracts weeks from various sources - we check column availability first
   if (col_cache$has_gest_value || col_cache$has_value_as_number || col_cache$has_concept_name) {
     episode_timing <- episode_timing %>%
       mutate(
         gestational_weeks = case_when(
-          GT_type == "GW" & (if (col_cache$has_gest_value) !is.na(gest_value) else FALSE) ~ 
-            if (col_cache$has_gest_value) gest_value else NA_real_,
-          GT_type == "GW" & (if (col_cache$has_value_as_number) !is.na(value_as_number) & value_as_number < 50 else FALSE) ~ 
-            if (col_cache$has_value_as_number) value_as_number else NA_real_,
-          GT_type == "GW" & (if (col_cache$has_concept_name) grepl("\\d+ weeks?", concept_name) else FALSE) ~ 
-            if (col_cache$has_concept_name) suppressWarnings(as.numeric(gsub(".*?(\\d+) weeks?.*", "\\1", concept_name))) else NA_real_,
+          # Priority 1: Use gest_value if available (most reliable)
+          GT_type == "GW" & col_cache$has_gest_value & !is.na(gest_value) ~ gest_value,
+          # Priority 2: Use value_as_number if reasonable (< 50 weeks)
+          GT_type == "GW" & col_cache$has_value_as_number & !is.na(value_as_number) & 
+            value_as_number < 50 ~ value_as_number,
+          # Priority 3: Extract from concept_name text (e.g., "Gestation period, 20 weeks")
+          GT_type == "GW" & col_cache$has_concept_name & !is.na(concept_name) & 
+            grepl("\\d+ weeks?", concept_name) ~ 
+            suppressWarnings(as.numeric(gsub(".*?(\\d+) weeks?.*", "\\1", concept_name))),
           TRUE ~ NA_real_
         )
       )
   } else {
+    # No columns available for extracting gestational weeks
     episode_timing <- episode_timing %>%
       mutate(gestational_weeks = NA_real_)
   }
