@@ -290,7 +290,18 @@ create_spark_temp_table <- function(connection, data, table_name,
   }
   
   # Return reference with OHDSI # prefix for consistency
-  return(dplyr::tbl(connection, dbplyr::in_schema(resultsDatabaseSchema, spark_table_name)))
+  # If we created a view, just reference the view name
+  # If we created a table, reference with schema
+  if (inherits(data, c("tbl_lazy", "tbl_sql"))) {
+    # Created a temporary view - no schema needed
+    return(dplyr::tbl(connection, spark_table_name))
+  } else if (!is.null(resultsDatabaseSchema)) {
+    # Created a table with schema
+    return(dplyr::tbl(connection, dbplyr::in_schema(resultsDatabaseSchema, spark_table_name)))
+  } else {
+    # Created a table without schema
+    return(dplyr::tbl(connection, spark_table_name))
+  }
 }
 
 #' Create emulated temporary table
