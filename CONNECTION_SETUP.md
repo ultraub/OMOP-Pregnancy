@@ -13,6 +13,13 @@ This guide explains how to configure database connections for the OMOP Pregnancy
    ```bash
    # Copy the unified template to your project root
    cp inst/templates/.env.template .env
+   
+   # Note: Specialized templates are also available for reference:
+   # - .env.sqlserver.template
+   # - .env.sqlserver_windows.template
+   # - .env.sqlserver_crossdb.template
+   # - .env.databricks.template
+   # The unified .env.template includes all options from these specialized templates
    ```
 
 3. **Edit .env file with your settings**
@@ -149,9 +156,12 @@ con <- create_connection_from_env()
   - Default is `ENABLE_ARROW=FALSE` to avoid initialization errors
   - To enable Arrow, you must:
     1. Download complete Databricks JDBC driver with all dependencies
-    2. Set JVM options: `-Dio.netty.tryReflectionSetAccessible=true -Xmx8g`
-    3. Ensure sufficient memory allocation
+    2. Configure JVM options in `.Rprofile` (see lines 7-14)
+    3. Ensure sufficient memory allocation (8GB heap recommended)
     4. Set `ENABLE_ARROW=TRUE` in your .env file
+- **Batch Processing**: Optimization is achieved through:
+  - DatabaseConnector's bulk upload (`DATABASE_CONNECTOR_BULK_UPLOAD=TRUE`)
+  - Application-level batching (`DATABASE_CONNECTOR_BATCH_SIZE` environment variable)
 - Use SQL warehouse compute for better performance
 - Configure appropriate warehouse size for your workload
 

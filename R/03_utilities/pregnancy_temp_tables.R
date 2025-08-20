@@ -246,45 +246,49 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
         # Remove # prefix for Spark
         clean_table_name <- gsub("^#", "", table_name)
         
-        # Use full qualified name if schema is available
-        if (!is.null(results_schema)) {
-          # Check if the table name already includes schema
-          if (!grepl("\\.", clean_table_name)) {
-            full_table_name <- paste(results_schema, clean_table_name, sep = ".")
-          } else {
-            full_table_name <- clean_table_name
-          }
+        # Build full qualified name FIRST, before any DROP attempts
+        # This ensures we're looking for the table with the same name it was created with
+        if (!is.null(results_schema) && !grepl("\\.", clean_table_name)) {
+          # Add schema prefix if not already present
+          full_table_name <- paste(results_schema, clean_table_name, sep = ".")
         } else {
           full_table_name <- clean_table_name
         }
         
         # Try dropping as view first (for lazy queries)
+        # Use IF EXISTS to prevent errors
         drop_view_sql <- SqlRender::render(
           "DROP VIEW IF EXISTS @table_name",
           table_name = full_table_name
         )
         
         tryCatch(
-          DatabaseConnector::executeSql(connection, drop_view_sql),
+          {
+            DatabaseConnector::executeSql(connection, drop_view_sql)
+            dropped <- dropped + 1
+          },
           error = function(e) {
-            # Silently ignore if view doesn't exist
+            # Silently ignore - view might not exist
           }
         )
         
         # Also try dropping as table (for uploaded data)
+        # Use IF EXISTS to prevent errors
         drop_table_sql <- SqlRender::render(
           "DROP TABLE IF EXISTS @table_name",
           table_name = full_table_name
         )
         
         tryCatch(
-          DatabaseConnector::executeSql(connection, drop_table_sql),
+          {
+            DatabaseConnector::executeSql(connection, drop_table_sql)
+            dropped <- dropped + 1
+          },
           error = function(e) {
-            # Silently ignore if table doesn't exist
+            # Silently ignore - table might not exist
           }
         )
         
-        dropped <- dropped + 1
         next  # Skip the final execute at the end
       } else {
         # Generic SQL for other platforms
@@ -301,10 +305,17 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
         dropped <- dropped + 1
       }
     }, error = function(e) {
-      failed <- failed + 1
-      # Optionally log the error for debugging
-      if (interactive()) {
-        message(sprintf("    Failed to drop %s: %s", table_name, e$message))
+      # For Databricks, "table not found" errors are expected and should be silent
+      if (dbms %in% c("spark", "databricks") && 
+          grepl("(TABLE_OR_VIEW_NOT_FOUND|cannot be found|does not exist)", e$message, ignore.case = TRUE)) {
+        # This is expected - table was already dropped or never existed
+        # Don't increment failed counter or log
+      } else {
+        failed <- failed + 1
+        # Only log unexpected errors in interactive mode
+        if (interactive()) {
+          message(sprintf("    Warning: Unexpected error dropping %s: %s", table_name, e$message))
+        }
       }
     })
   }

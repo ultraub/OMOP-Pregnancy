@@ -15,6 +15,67 @@ NULL
 # Track full schema-qualified names for Spark/Databricks
 .temp_table_full_names <- new.env(parent = emptyenv())
 
+#' Get Full Qualified Table Name
+#'
+#' Helper function to get consistent table names across platforms.
+#' Ensures tables are referenced with the same name they were created with.
+#'
+#' @param connection Database connection
+#' @param table_name Base table name (may include # prefix)
+#' @param schema Optional schema name (used for Spark/Databricks)
+#' @param dbms Optional database type (auto-detected if not provided)
+#'
+#' @return Properly qualified table name for the platform
+#' @keywords internal
+get_full_table_name <- function(connection, table_name, schema = NULL, dbms = NULL) {
+  
+  # Get database type if not provided
+  if (is.null(dbms)) {
+    dbms <- attr(connection, "dbms")
+    if (is.null(dbms)) {
+      dbms <- "sql server"  # Default
+    }
+  }
+  
+  # Get schema from connection if not provided
+  if (is.null(schema)) {
+    schema <- attr(connection, "results_schema")
+    if (is.null(schema)) {
+      schema <- attr(connection, "resultsDatabaseSchema")
+    }
+  }
+  
+  # Handle platform-specific naming
+  if (dbms %in% c("spark", "databricks")) {
+    # Remove # prefix for Spark/Databricks
+    clean_name <- gsub("^#", "", table_name)
+    
+    # Check if already schema-qualified
+    if (grepl("\\.", clean_name)) {
+      return(clean_name)  # Already qualified
+    }
+    
+    # Add schema if available
+    if (!is.null(schema) && nchar(schema) > 0) {
+      return(paste(schema, clean_name, sep = "."))
+    } else {
+      return(clean_name)
+    }
+    
+  } else if (dbms == "sql server") {
+    # Ensure # prefix for SQL Server temp tables
+    if (!grepl("^#", table_name)) {
+      return(paste0("#", table_name))
+    } else {
+      return(table_name)
+    }
+    
+  } else {
+    # Other platforms - return as-is
+    return(table_name)
+  }
+}
+
 #' Create OHDSI-compliant temporary table
 #'
 #' Creates a temporary table following OHDSI conventions, using '#' prefix
@@ -177,11 +238,13 @@ create_spark_temp_table <- function(connection, data, table_name,
     
   } else {
     # For local data, create managed table in results schema
-    if (!is.null(resultsDatabaseSchema)) {
-      full_table_name <- paste(resultsDatabaseSchema, spark_table_name, sep = ".")
-    } else {
-      full_table_name <- spark_table_name
-    }
+    # Use helper to get consistent naming
+    full_table_name <- get_full_table_name(
+      connection, 
+      spark_table_name, 
+      schema = resultsDatabaseSchema,
+      dbms = "spark"
+    )
     
     # First drop if exists and overwrite is TRUE
     if (overwrite) {
@@ -243,11 +306,13 @@ create_emulated_temp_table <- function(connection, data, table_name,
   emulated_table_name <- paste0(emulated_table_name, "_", 
                                format(Sys.time(), "%Y%m%d%H%M%S"))
   
-  if (!is.null(resultsDatabaseSchema)) {
-    full_table_name <- paste(resultsDatabaseSchema, emulated_table_name, sep = ".")
-  } else {
-    full_table_name <- emulated_table_name
-  }
+  # Use helper to get consistent naming
+  full_table_name <- get_full_table_name(
+    connection,
+    emulated_table_name,
+    schema = resultsDatabaseSchema,
+    dbms = attr(connection, "dbms")
+  )
   
   # Drop if exists and overwrite is TRUE
   if (overwrite) {
@@ -319,8 +384,40 @@ ohdsi_drop_temp_table <- function(connection, table_name) {
   }
   
   if (dbms %in% c("spark", "databricks")) {
-    # Check if we have a stored full qualified name
-    # Create a unique connection ID using server and database attributes
+    # Use helper function to get consistent table name
+    spark_name <- get_full_table_name(connection, table_name, dbms = dbms)
+    
+    # Try dropping as view first (using IF EXISTS to prevent errors)
+    drop_view_sql <- sprintf("DROP VIEW IF EXISTS %s", spark_name)
+    view_dropped <- FALSE
+    tryCatch({
+      DatabaseConnector::executeSql(connection, drop_view_sql)
+      view_dropped <- TRUE
+    }, error = function(e) {
+      # Expected if view doesn't exist - ignore
+      if (!grepl("(does not exist|not found)", e$message, ignore.case = TRUE)) {
+        # Log unexpected errors in debug mode only
+        if (getOption("ohdsi.debug", FALSE)) {
+          message(sprintf("Debug: View drop failed for %s: %s", spark_name, e$message))
+        }
+      }
+    })
+    
+    # Also try dropping as table (using IF EXISTS to prevent errors)
+    if (!view_dropped) {
+      drop_table_sql <- sprintf("DROP TABLE IF EXISTS %s", spark_name)
+      tryCatch({
+        DatabaseConnector::executeSql(connection, drop_table_sql)
+      }, error = function(e) {
+        # Expected if table doesn't exist - ignore
+        if (!grepl("(does not exist|not found|TABLE_OR_VIEW_NOT_FOUND)", e$message, ignore.case = TRUE)) {
+          # Only throw error if it's not a "not found" error
+          stop(e)
+        }
+      })
+    }
+    
+    # Clean up stored name
     server <- attr(connection, "server")
     database <- attr(connection, "database")
     conn_id <- paste0("spark_", 
@@ -328,31 +425,6 @@ ohdsi_drop_temp_table <- function(connection, table_name) {
                      "_", 
                      ifelse(!is.null(database), database, "db"))
     
-    full_name <- NULL
-    
-    if (exists(conn_id, envir = .temp_table_full_names)) {
-      full_name <- .temp_table_full_names[[conn_id]][[table_name]]
-    }
-    
-    # Use full qualified name if available, otherwise use table name without # prefix
-    if (!is.null(full_name)) {
-      spark_name <- full_name
-    } else {
-      spark_name <- gsub("^#", "", table_name)
-    }
-    
-    # Try dropping as view first
-    drop_view_sql <- sprintf("DROP VIEW IF EXISTS %s", spark_name)
-    tryCatch(
-      DatabaseConnector::executeSql(connection, drop_view_sql),
-      error = function(e) {
-        # If view drop fails, try table
-        drop_table_sql <- sprintf("DROP TABLE IF EXISTS %s", spark_name)
-        DatabaseConnector::executeSql(connection, drop_table_sql)
-      }
-    )
-    
-    # Clean up stored name
     if (exists(conn_id, envir = .temp_table_full_names)) {
       .temp_table_full_names[[conn_id]][[table_name]] <- NULL
     }

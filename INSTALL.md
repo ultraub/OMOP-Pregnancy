@@ -6,26 +6,39 @@
 2. Java 8 or higher (for DatabaseConnector)
 3. JDBC driver for your database
 
-## Install from GitHub
+## Install Dependencies
 
 ```r
-# Install devtools if not already installed
-install.packages("devtools")
+# Install required packages
+install.packages(c(
+  "DatabaseConnector",
+  "SqlRender", 
+  "dplyr",
+  "lubridate",
+  "readr",
+  "DBI"
+))
 
-# Install OMOPPregnancyV2
-devtools::install_github("ultraub/OMOP-Pregnancy")
+# For development/testing
+install.packages(c("testthat", "knitr", "rmarkdown", "tidyr", "tibble"))
 ```
 
-## Install from Source
+## Setup Instructions
 
 ```bash
-# Clone the repository
+# 1. Clone or download the repository
 git clone https://github.com/ultraub/OMOP-Pregnancy.git
-cd OMOP-Pregnancy
+cd OMOPPregnancyV2
 
-# Build and install
-R CMD build .
-R CMD INSTALL OMOPPregnancyV2_2.0.0.tar.gz
+# 2. Setup environment configuration
+cp inst/templates/.env.template .env
+# Edit .env with your database settings
+
+# 3. Install JDBC drivers (from R)
+Rscript -e "source('inst/scripts/setup_jdbc_drivers.R')"
+
+# 4. Test your setup (from R)
+Rscript -e "source('inst/scripts/test_connection.R')"
 ```
 
 ## Database Setup
@@ -75,25 +88,26 @@ connectionDetails <- DatabaseConnector::createConnectionDetails(
 ```r
 connectionDetails <- DatabaseConnector::createConnectionDetails(
   dbms = "spark",
-  connectionString = Sys.getenv("DATABRICKS_TOKEN"),
-  user = "",
-  password = ""
+  connectionString = "jdbc:databricks://workspace.cloud.databricks.com:443;httpPath=/sql/1.0/warehouses/warehouse_id;AuthMech=3;UID=token;PWD=your_token",
+  pathToDriver = "jdbc_drivers"
 )
 ```
 
 ## Quick Test
 
 ```r
-library(OMOPPregnancyV2)
-library(DatabaseConnector)
+# Using environment-based configuration (recommended)
+source("R/00_connection/create_connection.R")
+source("R/main.R")
 
-# Connect to your database
-connection <- connect(connectionDetails)
+# Connect using .env file
+connection <- create_connection_from_env()
 
 # Test with a small cohort
 episodes <- run_pregnancy_identification(
   connection = connection,
-  cdm_schema = "your_cdm_schema",
+  cdm_database_schema = "your_cdm_schema",
+  results_database_schema = "your_results_schema",  # optional
   min_age = 15,
   max_age = 56,
   output_folder = "test_output/"
@@ -103,7 +117,7 @@ episodes <- run_pregnancy_identification(
 print(paste("Found", nrow(episodes), "pregnancy episodes"))
 
 # Disconnect
-disconnect(connection)
+DatabaseConnector::disconnect(connection)
 ```
 
 ## Troubleshooting

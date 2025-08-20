@@ -50,29 +50,40 @@ The V2 implementation follows a clean three-layer architecture:
 ```r
 # Install required packages
 install.packages(c("DatabaseConnector", "SqlRender", "dplyr", "lubridate", "readr"))
+
+# Setup JDBC drivers
+source("inst/scripts/setup_jdbc_drivers.R")
+
+# Create environment configuration
+cp inst/templates/.env.template .env
+# Edit .env with your database settings
 ```
 
-## Usage
+## Quick Start
+
+### 1. Setup Environment
+
+```bash
+# Copy the environment template
+cp inst/templates/.env.template .env
+# Edit .env with your database settings
+```
+
+### 2. Run Analysis
 
 ```r
-# Source the main script
-source("run_pregnancy_analysis.R")
+# Load connection functions
+source("R/00_connection/create_connection.R")
 
-# Create database connection
-connection <- DatabaseConnector::createConnectionDetails(
-  dbms = "postgresql",  # or "sql server", "spark", etc.
-  server = "localhost/cdm",
-  user = "user",
-  password = "password"
-)
-
-conn <- DatabaseConnector::connect(connection)
+# Create connection from environment
+conn <- create_connection_from_env()
 
 # Run pregnancy identification
+source("R/main.R")
 episodes <- run_pregnancy_identification(
   connection = conn,
-  cdm_schema = "cdm_53",
-  vocabulary_schema = "cdm_53",
+  cdm_database_schema = "cdm_schema",
+  results_database_schema = "results_schema",  # optional
   output_folder = "output/",
   min_age = 15,
   max_age = 56
@@ -81,32 +92,44 @@ episodes <- run_pregnancy_identification(
 DatabaseConnector::disconnect(conn)
 ```
 
+### 3. Alternative: Run Complete Pipeline
+
+```r
+# Run the full pipeline script
+source("inst/scripts/run_pregnancy_analysis.R")
+```
+
 ## Files and Structure
 
 ```
 OMOPPregnancyV2/
 ├── R/
-│   ├── 00_concepts/       # Concept loading and validation
-│   ├── 01_extraction/      # Database extraction layer
-│   ├── 02_algorithms/      # HIP, PPS, and merging algorithms
-│   └── 03_results/         # Result saving and export
+│   ├── 00_concepts/         # Concept loading and validation
+│   ├── 00_connection/       # Database connection management
+│   ├── 01_extraction/       # Database extraction layer
+│   ├── 02_algorithms/       # HIP, PPS, and merging algorithms
+│   ├── 03_results/          # Result saving and export
+│   ├── 03_utilities/        # Utility functions and helpers
+│   └── main.R               # Main analysis function
 ├── inst/
-│   ├── csv/               # Concept definition files
-│   └── sql/               # SQL templates
-├── run_pregnancy_analysis.R  # Main execution script
-├── review_implementation.R   # Implementation validation
-└── ARCHITECTURE.md          # Detailed architecture documentation
+│   ├── extdata/             # Concept definition CSV files
+│   ├── scripts/             # Utility and setup scripts
+│   ├── sql/                 # SQL templates
+│   └── templates/           # Environment configuration templates
+├── DESCRIPTION              # Package description
+├── NAMESPACE                # Exported functions
+└── README.md                # This file
 ```
 
 ## Concept Files
 
-The algorithm requires three CSV files with concept definitions:
+The algorithm requires concept definition files located in `inst/extdata/`:
 
 1. **hip_concepts.csv**: HIP algorithm concepts (outcomes, pregnancy indicators)
 2. **pps_concepts.csv**: PPS algorithm concepts with gestational timing
 3. **matcho_limits.csv**: Term duration limits for different outcomes
-
-These are provided in `inst/csv/` directory.
+4. **matcho_outcome_limits.csv**: Outcome-specific gestational limits
+5. **matcho_term_durations.csv**: Term duration definitions
 
 ## Algorithms
 
@@ -134,10 +157,14 @@ The analysis produces:
 
 ## Testing
 
-Run the implementation review to verify all components:
+Test your connection and run a sample analysis:
 
 ```r
-source("review_implementation.R")
+# Test database connection
+source("inst/scripts/test_connection.R")
+
+# Run full pipeline test
+source("inst/scripts/test_full_pipeline.R")
 ```
 
 ## Performance
