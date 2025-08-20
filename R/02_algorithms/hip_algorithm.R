@@ -1,7 +1,17 @@
 #' Run HIP Algorithm V2 (Aligned with All of Us)
 #'
 #' Implements the Hierarchical Identification of Pregnancy (HIP) algorithm
-#' with outcome-specific spacing as in the All of Us implementation.
+#' following the exact methodology from Matcho et al. and All of Us Research Program.
+#' 
+#' The algorithm processes pregnancy outcomes in strict hierarchical order:
+#' 1. Live Births (LB) - highest priority, establishes primary episode dates
+#' 2. Stillbirths (SB) - added with spacing constraints relative to LB
+#' 3. Ectopic pregnancies (ECT) - added with spacing constraints relative to LB/SB
+#' 4. Abortions (AB/SA) - lowest priority outcomes, strictest spacing requirements
+#' 5. Delivery records (DELIV) - delivery-only records, may modify LB/SB dates
+#'
+#' Each outcome type has specific minimum spacing requirements from Matcho et al.
+#' that prevent overlapping or implausibly close pregnancies.
 #'
 #' @param cohort_data List containing extracted cohort data
 #' @param matcho_limits Data frame with outcome hierarchy and term limits
@@ -32,20 +42,34 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
   # Source database utilities for compute operations
   source("R/03_utilities/database_utils.R")
   
-  # Step 2: Process outcomes hierarchically following All of Us approach
-  # Start with Live Births
+  # Step 2: Process outcomes hierarchically following Matcho et al. methodology
+  # HIERARCHY STEP 1: Live Births (LB) - Highest Priority
+  # Live births are processed first as they represent the most definitive pregnancy 
+  # outcomes and establish the primary timeline for episode identification.
+  # Minimum spacing between LB episodes: defined in matcho_outcome_limits table.
+  # All subsequent outcome types must respect LB episode boundaries.
   lb_episodes <- process_outcome_category(
     initial_cohort, 
     categories = "LB",
     matcho_outcome_limits
   )
   
-  # Compute after processing (like All of Us aou_compute())
+  # DATABASE OPTIMIZATION: Compute intermediate results (mirrors All of Us aou_compute())
+  # The All of Us implementation uses aou_compute() to materialize intermediate
+  # query results at strategic points, preventing memory issues with large datasets
+  # and complex joins. Our omop_compute() serves the same function for OMOP CDM.
+  # Critical after each hierarchical step to ensure stable data for subsequent joins.
   if ("tbl_lazy" %in% class(lb_episodes) || "tbl_sql" %in% class(lb_episodes)) {
     lb_episodes <- omop_compute(lb_episodes)
   }
   
-  # Add Stillbirths
+  # HIERARCHY STEP 2: Add Stillbirths (SB) with spacing constraints
+  # Stillbirths are added only if they maintain required minimum spacing from 
+  # existing live birth episodes. The spacing requirements prevent implausible 
+  # scenarios where deliveries occur too close together.
+  # - SB after LB: minimum days from matcho_outcome_limits (LB->SB)
+  # - LB after SB: minimum days from matcho_outcome_limits (SB->LB)
+  # Episodes that violate spacing constraints are excluded from final results.
   sb_episodes <- process_outcome_category(
     initial_cohort,
     categories = "SB", 
@@ -69,7 +93,13 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     lb_sb_episodes <- omop_compute(lb_sb_episodes)
   }
   
-  # Add Ectopic pregnancies
+  # HIERARCHY STEP 3: Add Ectopic Pregnancies (ECT) with complex spacing logic
+  # Ectopic pregnancies have different spacing requirements relative to deliveries:
+  # - ECT after LB/SB: minimum days from matcho_outcome_limits  
+  # - LB after ECT: different minimum days (typically shorter than LB->ECT)
+  # - SB after ECT: different minimum days (typically shorter than SB->ECT)
+  # The asymmetric spacing reflects biological reality that ectopic pregnancies
+  # can be followed more quickly by normal pregnancies than vice versa.
   ect_episodes <- process_outcome_category(
     initial_cohort,
     categories = "ECT",
@@ -92,7 +122,12 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     lb_sb_ect_episodes <- omop_compute(lb_sb_ect_episodes)
   }
   
-  # Add Abortions (AB and SA together)
+  # HIERARCHY STEP 4: Add Abortions (AB/SA) - Lowest Priority Outcomes
+  # Spontaneous abortions (SA) and induced abortions (AB) are treated identically
+  # in the hierarchy and have the most restrictive spacing requirements.
+  # Combined processing (SA converted to AB internally) ensures consistent spacing
+  # logic between the two abortion types while maintaining separate outcome codes.
+  # Must respect minimum spacing from ALL higher-priority outcomes (LB, SB, ECT).
   ab_sa_episodes <- process_outcome_category(
     initial_cohort,
     categories = c("AB", "SA"),
@@ -115,7 +150,12 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     all_outcome_episodes <- omop_compute(all_outcome_episodes)
   }
   
-  # Add Delivery episodes
+  # HIERARCHY STEP 5: Add Delivery-only records (DELIV) with date modification
+  # Delivery records without specific outcomes are processed last and have special
+  # behavior: if a DELIV record precedes an LB/SB within the minimum spacing window,
+  # the LB/SB date is moved BACK to match the earlier delivery date.
+  # This handles cases where the delivery procedure is recorded separately from
+  # the birth outcome, ensuring the actual delivery date is captured.
   deliv_episodes <- process_outcome_category(
     initial_cohort,
     categories = "DELIV",
@@ -153,7 +193,15 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
   return(validated_episodes)
 }
 
-#' Process a specific outcome category
+#' Process a specific outcome category with same-type spacing
+#' 
+#' Identifies distinct episodes within a single outcome category (e.g., multiple
+#' live births for the same person) using minimum spacing requirements from 
+#' matcho_outcome_limits. Each outcome category has self-spacing rules that
+#' prevent episodes of the same type from being implausibly close.
+#' 
+#' For AB/SA categories processed together, uses the minimum spacing between
+#' AB and SA types to ensure proper episode separation.
 #' @noRd
 process_outcome_category <- function(initial_cohort, categories, matcho_outcome_limits) {
   
@@ -214,7 +262,16 @@ process_outcome_category <- function(initial_cohort, categories, matcho_outcome_
   return(episodes)
 }
 
-#' Add stillbirth episodes with proper spacing
+#' Add stillbirth episodes with proper spacing following Matcho et al.
+#' 
+#' Implements the complex spacing logic for stillbirths relative to live births:
+#' 1. SB episodes are validated against existing LB episodes in both directions
+#' 2. before_min: minimum days that must pass after LB before SB is valid
+#' 3. after_min: minimum days that must pass after SB before LB is valid  
+#' 4. SB episodes failing either constraint are excluded from final results
+#' 
+#' The asymmetric spacing accounts for different biological constraints in
+#' each direction and follows Matcho et al. evidence-based recommendations.
 #' @noRd
 add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_limits) {
   
@@ -267,7 +324,16 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
   return(result)
 }
 
-#' Add ectopic episodes with proper spacing
+#' Add ectopic episodes with asymmetric spacing constraints
+#' 
+#' Ectopic pregnancies have the most complex spacing rules due to their unique
+#' clinical characteristics:
+#' - Different minimum spacing when ECT follows LB vs SB (delivery outcomes)
+#' - Different minimum spacing when LB/SB follows ECT (typically shorter)
+#' - Must validate against ALL existing higher-priority episodes (LB, SB)
+#' 
+#' The asymmetric nature reflects that ectopic pregnancies can be followed by
+#' normal pregnancies sooner than normal pregnancies can be followed by ectopic.
 #' @noRd
 add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_limits) {
   
@@ -327,7 +393,16 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
   return(result)
 }
 
-#' Add abortion episodes with proper spacing
+#' Add abortion episodes with comprehensive spacing validation
+#' 
+#' Abortions (AB/SA) are processed with the most restrictive spacing requirements:
+#' 1. Must respect minimum spacing from ALL higher-priority outcomes (LB, SB, ECT)
+#' 2. Different spacing requirements based on preceding outcome type  
+#' 3. SA and AB treated identically for spacing but maintain separate codes
+#' 4. Uses comprehensive lookup from matcho_outcome_limits for all combinations
+#' 
+#' The restrictive spacing prevents implausible rapid repeat pregnancies ending
+#' in abortion, following Matcho et al. clinical evidence guidelines.
 #' @noRd
 add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_limits) {
   
@@ -374,7 +449,16 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
   return(result)
 }
 
-#' Add delivery episodes with proper spacing
+#' Add delivery-only episodes with backwards date modification capability
+#' 
+#' Delivery records have unique processing logic:
+#' 1. Standard forward spacing validation like other outcome types
+#' 2. SPECIAL FEATURE: Can modify existing LB/SB dates backwards in time
+#' 3. If DELIV precedes LB/SB within minimum spacing, LB/SB date moves to DELIV date
+#' 4. Handles cases where delivery procedure and birth outcome recorded separately
+#' 
+#' This backwards modification ensures capture of actual delivery timing when
+#' administrative records split the delivery event across multiple entries.
 #' @noRd
 add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_limits) {
   
@@ -424,7 +508,19 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
   return(result)
 }
 
-#' Add gestational age information
+#' Add gestational age information following All of Us methodology
+#' 
+#' Integrates gestational age data from multiple concept types:
+#' - Explicit gestational age concepts (3002209, 3048230, 3012266, 3050433)
+#' - Value_as_number fields containing gestational weeks
+#' - PREG category records with timing information
+#' 
+#' Gestational records are linked to episodes within biologically plausible
+#' windows (up to 280 days before outcome). Multiple gestational records per
+#' episode are consolidated using maximum gestational age approach.
+#' 
+#' CRITICAL: Also identifies gestation-only episodes (pregnancies identified
+#' only through gestational age records without specific outcomes).
 #' @noRd
 add_gestational_age_info <- function(episodes, all_records) {
   
@@ -487,7 +583,16 @@ add_gestational_age_info <- function(episodes, all_records) {
   return(result)
 }
 
-#' Calculate HIP start dates V2
+#' Calculate pregnancy start dates using hierarchical estimation approach
+#' 
+#' Start date calculation follows Matcho et al. methodology with preference order:
+#' 1. PREFERRED: Gestational age-based calculation (outcome_date - gestational_weeks * 7)
+#' 2. FALLBACK: Term duration-based calculation (outcome_date - max_term from category)
+#' 3. DEFAULT: Standard pregnancy duration (outcome_date - 280 days)
+#' 
+#' Gestational age takes precedence when available as it provides the most
+#' accurate pregnancy timeline. Term duration estimates vary by outcome category
+#' based on Matcho et al. clinical evidence for typical pregnancy lengths.
 #' @noRd
 calculate_hip_start_dates <- function(episodes, matcho_limits) {
   
@@ -535,7 +640,23 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
   return(result)
 }
 
-#' Identify gestation-only episodes (pregnancies with only gestational timing)
+#' Identify gestation-only episodes following All of Us episode detection logic
+#' 
+#' Creates pregnancy episodes from gestational age records alone, using the same
+#' episode boundary detection as the All of Us gestation_episodes() function:
+#' 
+#' NEW EPISODE TRIGGERS:
+#' 1. Gestational age decreases from previous record (new pregnancy started)
+#' 2. Time gap >70 days between records (minimum episode separation)  
+#' 3. Time progression inconsistent with gestational progression (gap too large)
+#' 
+#' EPISODE VALIDATION:
+#' - Buffer of 28 days added to expected gestational progression
+#' - Episodes validated against outcome-based episodes to prevent double-counting
+#' - Final outcome date estimated as last_gest_date + remaining pregnancy time
+#' 
+#' This captures pregnancies that appear only in gestational monitoring without
+#' recorded outcomes, critical for comprehensive pregnancy identification.
 #' @noRd
 identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
   
@@ -630,7 +751,20 @@ identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
   return(result)
 }
 
-#' Validate HIP episodes V2
+#' Validate and clean pregnancy episodes following All of Us quality standards
+#' 
+#' QUALITY FILTERS:
+#' 1. Gestational age plausibility (0-320 days, ~45 weeks maximum)
+#' 2. Temporal validity (no future start dates, end >= start)  
+#' 3. Overlap resolution (adjust start dates to prevent episode overlap)
+#' 
+#' OVERLAP HANDLING:
+#' When episodes overlap after initial processing, start dates are adjusted
+#' forward to prevent overlap while maintaining episode validity. Episodes
+#' that become invalid after adjustment (duration <= 0) are removed.
+#' 
+#' This final validation ensures all returned episodes meet clinical plausibility
+#' standards and maintain temporal consistency for downstream analysis.
 #' @noRd
 validate_hip_episodes <- function(episodes) {
   

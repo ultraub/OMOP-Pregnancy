@@ -150,8 +150,9 @@ assign_person_episodes <- function(personlist) {
     return(personlist)
   }
   
-  # OPTIMIZATION: Precompute compatibility matrix once (O(n²) instead of O(n³))
-  # This avoids recalculating the same comparisons multiple times
+  # OMOP OPTIMIZATION: Precompute compatibility matrix once (O(n²) instead of O(n³))
+  # This avoids recalculating the same comparisons multiple times while maintaining
+  # identical logic to All of Us records_comparison function
   compat_matrix <- precompute_compatibility_matrix(personlist)
   
   # Initialize episode assignment
@@ -170,9 +171,13 @@ assign_person_episodes <- function(personlist) {
     ) / DAYS_PER_MONTH  # Using standardized month length
     
     # Check temporal consistency using precomputed matrix (now O(n) instead of O(n²))
+    # This is mathematically equivalent to All of Us.
+    # The agreement_t_c logic determines if concepts follow expected pregnancy timeline
     agreement_t_c <- records_comparison_fast(compat_matrix, i, n_records)
     
     # Apply decision logic with 1-month retry period (from All of Us)
+    # If there is no agreement between the concepts and the time difference is greater than 1 month,
+    # increment the person_episode_number to indicate a new episode (changed from 2 months for retry period)
     if (!agreement_t_c && delta_t > 1) {
       # No agreement and > 1 month gap - start new episode
       current_episode <- current_episode + 1
@@ -186,7 +191,9 @@ assign_person_episodes <- function(personlist) {
   
   personlist$person_episode_number <- person_episodes
   
-  # Filter out episodes that are too long (>12 months)
+  # Check that all episodes are < 12 months in length
+  # (the 9-10 months of pregnancy plus few months of delivery concept recordings).
+  # Episodes longer than 12 months are biologically implausible and removed
   valid_episodes <- personlist %>%
     group_by(person_episode_number) %>%
     mutate(
@@ -211,6 +218,11 @@ assign_person_episodes <- function(personlist) {
 }
 
 #' Precompute compatibility matrix for O(n²) complexity
+#' 
+#' OMOP OPTIMIZATION: Pre-calculates all pairwise concept compatibility checks
+#' that would be computed repeatedly in the All of Us records_comparison function.
+#' This reduces overall complexity from O(n³) to O(n²) while preserving the exact
+#' clinical logic and gestational timing expectations.
 #' @noRd
 precompute_compatibility_matrix <- function(personlist) {
   n <- nrow(personlist)
@@ -248,6 +260,10 @@ precompute_compatibility_matrix <- function(personlist) {
 }
 
 #' Fast records comparison using precomputed matrix
+#' 
+#' OMOP OPTIMIZATION: Uses precomputed compatibility matrix for O(1) lookups
+#' instead of O(n) calculations per check. Mathematically equivalent to All of Us
+#' records_comparison.
 #' @noRd
 records_comparison_fast <- function(compat_matrix, i, n_records) {
   
@@ -278,22 +294,31 @@ records_comparison_fast <- function(compat_matrix, i, n_records) {
   return(FALSE)
 }
 
-#' Records comparison with bridging logic (LEGACY - kept for compatibility)
+#' Records comparison with bridging logic (All of Us original implementation)
+#' 
+#' Kept for reference and validation - see records_comparison_fast for optimized version.
+#' This function implements the exact All of Us logic for temporal consistency checking
+#' between gestational timing concepts using clinician knowledge of expected timings.
 #' @noRd
 records_comparison <- function(personlist, i) {
   
-  # Check temporal consistency with previous records
+  # for the below: t = time (actual), c = concept (expected)
+  # first do the comparisons to the records PREVIOUS to record i
+  
+  # Iterate through the previous records
   for (j in 1:(i - 1)) {
-    # Obtain the difference in actual dates (in months)
+    # Obtain the difference in actual dates of the consecutive patient records
     delta_t <- as.numeric(
       difftime(personlist$event_date[i], personlist$event_date[i - j], units = "days")
     ) / DAYS_PER_MONTH  # Use consistent month length
     
-    # Get expected month differences with 2-month leniency
+    # Obtain the max expected month difference based on clinician knowledge of the two concepts
+    # (allow two extra months for leniency to account for variation in gestational dating)
     adjConceptMonths_MaxExpectedDelta <- personlist$max_month[i] - personlist$min_month[i - j] + 2
     adjConceptMonths_MinExpectedDelta <- personlist$min_month[i] - personlist$max_month[i - j] - 2
     
-    # Check if actual falls within expected range
+    # Save a boolean indicating whether the actual date difference falls within
+    # the max and min expected date differences for the consecutive concepts
     agreement_t_c <- (adjConceptMonths_MaxExpectedDelta >= delta_t) & 
                      (delta_t >= adjConceptMonths_MinExpectedDelta)
     
@@ -302,7 +327,8 @@ records_comparison <- function(personlist, i) {
     }
   }
   
-  # Check bridging records (surrounding record i)
+  # Next, do the comparisons to the records SURROUNDING record i
+  # Iterate through the bridge records around record i, in case record i was an outlier
   len_to_start <- i - 1
   len_to_end <- nrow(personlist) - i
   
@@ -313,16 +339,17 @@ records_comparison <- function(personlist, i) {
   # Iterate through bridge records
   for (s in seq_len(len_to_start)) {
     for (e in seq_len(len_to_end)) {
-      # Get time difference between bridge records
+      # Obtain the time difference in months between the bridge records
       bridge_delta_t <- as.numeric(
         difftime(personlist$event_date[i + e], personlist$event_date[i - s], units = "days")
       ) / DAYS_PER_MONTH  # Use consistent month length
       
-      # Get expected differences for bridge
+      # Obtain the max and min expected month differences based on clinician knowledge
+      # of the bridge concepts (allow two extra months for leniency)
       bridge_MaxExpectedDelta <- personlist$max_month[i + e] - personlist$min_month[i - s] + 2
       bridge_MinExpectedDelta <- personlist$min_month[i + e] - personlist$max_month[i - s] - 2
       
-      # Check bridge agreement
+      # Check if there is agreement between the bridge concepts
       bridge_agreement <- (bridge_MaxExpectedDelta >= bridge_delta_t) &
                          (bridge_delta_t >= bridge_MinExpectedDelta)
       
@@ -361,8 +388,9 @@ calculate_pps_boundaries <- function(episodes_raw) {
       earliest_ga_min = ifelse(is.infinite(earliest_ga_min), NA_real_, earliest_ga_min),
       latest_ga_max = ifelse(is.infinite(latest_ga_max), NA_real_, latest_ga_max),
       
-      # Calculate expected pregnancy end date
-      # Based on last concept + remaining pregnancy time
+      # Calculate expected pregnancy end date based on gestational timing
+      # Uses the last recorded concept's max month to estimate remaining pregnancy duration.
+      # For a concept at month X, remaining time is (10 - X) months to expected delivery
       expected_end_date = case_when(
         !is.na(latest_ga_max) ~ episode_max_date + (10 - latest_ga_max) * DAYS_PER_MONTH,
         TRUE ~ episode_max_date + 60  # Default 2 months

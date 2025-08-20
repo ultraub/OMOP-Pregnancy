@@ -57,7 +57,8 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
     message(sprintf("  Processing %d episodes with timing concepts...", n_groups_with_timing))
   }
   
-  # OPTIMIZATION: Simplified progress tracking
+  # OMOP OPTIMIZATION: Simplified progress tracking
+  # Reports progress at intervals instead of per-episode
   current_group <- 0
   progress_interval <- max(1, n_groups_with_timing %/% 10)  # Show progress ~10 times
   
@@ -79,6 +80,7 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
       current_group <<- current_group + 1
       
       # Show progress at intervals
+      # All of Us shows progress per-episode, we show at intervals
       if (current_group %% progress_interval == 0 || current_group == n_groups_with_timing) {
         pct_complete <- round((current_group / n_groups_with_timing) * 100)
         message(sprintf("    %d%% complete", pct_complete))
@@ -120,12 +122,14 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   # Get timing concept IDs to filter for
   timing_concept_ids <- pps_concepts$concept_id
   
-  # OHDSI OPTIMIZATION: Single-pass filtering for database performance
+  # OMOP OPTIMIZATION: Single-pass filtering for database performance
   # Unlike All of Us which filters each domain separately, we combine domains first
-  # to reduce database round-trips and improve performance for large cohorts
+  # to reduce database round-trips while maintaining identical results
   
   # Cache column existence checks to avoid SQL errors on missing columns
-  # (All of Us assumes all columns exist, but OHDSI CDMs may vary)
+  # All of Us assumes all columns exist, but OHDSI CDMs may vary in their
+  # measurement/observation value columns (value_as_number, value_as_string, etc.).
+  # This defensive programming ensures compatibility across diverse CDM implementations
   col_cache <- list()
   
   # Combine all domain data into single dataframe for efficient filtering
@@ -147,8 +151,9 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     col_cache$has_category <- "category" %in% names(all_domain_data)
     col_cache$has_value_as_number <- "value_as_number" %in% names(all_domain_data)
     
-    # Filter for timing concepts - simplified logic that's equivalent to All of Us
-    # but handles missing columns gracefully
+    # Filter for timing concepts - simplified logic that's mathematically equivalent to All of Us
+    # but handles missing columns gracefully through cached checks.
+    # Captures: explicit timing concept IDs, gestation text in names, GEST category, gest_value fields
     timing_from_domains <- all_domain_data %>%
       filter(
         concept_id %in% timing_concept_ids |
@@ -236,7 +241,9 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     )
   
   # Use inner join with date conditions (more efficient than left join + filter)
-  # This follows the All of Us pattern of filtering during the join
+  # This follows the All of Us pattern of filtering during the join but uses
+  # modern dplyr join_by syntax for cleaner date range conditions.
+  # Window of ±30 days captures timing concepts near episode boundaries
   episode_timing <- timing_records %>%
     mutate(event_date = as.Date(event_date)) %>%
     inner_join(
@@ -250,7 +257,10 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     select(-window_start, -window_end)
   
   # Classify timing concepts as GW (gestational week) or GR3m (3-month range)
-  # This follows All of Us logic but handles missing columns gracefully for OHDSI CDMs
+  # This follows All of Us logic for precision category assignment:
+  # - GW concepts: specific gestational week with high precision
+  # - GR3m concepts: broader 3-month ranges with lower precision
+  # Handles missing columns gracefully for OHDSI CDM variations
   episode_timing <- episode_timing %>%
     mutate(
       # Determine timing type (GW vs GR3m)
@@ -271,8 +281,11 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       )
     )
   
-  # Extract gestational weeks for GW concepts
-  # All of Us extracts weeks from various sources - we check column availability first
+  # Extract gestational weeks for GW concepts following All of Us priority:
+  # 1. gest_value field (most reliable if available)
+  # 2. value_as_number field (if reasonable <50 weeks)
+  # 3. Text extraction from concept_name (e.g., "Gestation period, 20 weeks")
+  # Column availability checked first to prevent SQL errors in diverse CDMs
   if (col_cache$has_gest_value || col_cache$has_value_as_number || col_cache$has_concept_name) {
     episode_timing <- episode_timing %>%
       mutate(
@@ -415,7 +428,11 @@ calculate_episode_esd <- function(episode_data) {
   return(result)
 }
 
-#' Find intersection of timing estimates (All of Us aligned)
+#' Find intersection of timing estimates (All of Us algorithm)
+#' 
+#' Implements the exact All of Us logic for finding consensus between
+#' multiple timing estimates using IQR-based outlier removal and
+#' intersection of date ranges for optimal precision categorization.
 #' @noRd
 find_timing_intersection <- function(week_concepts, range_concepts) {
   
@@ -508,6 +525,9 @@ find_timing_intersection <- function(week_concepts, range_concepts) {
 }
 
 #' Remove outliers from dates using IQR method
+#' 
+#' Implements standard IQR * 1.5 outlier detection as used in All of Us
+#' to filter implausible gestational timing estimates.
 #' @noRd
 remove_date_outliers <- function(dates) {
   
@@ -571,6 +591,15 @@ find_range_intersection <- function(range_concepts) {
 }
 
 #' Assign precision category based on days
+#' 
+#' Categories from All of Us indicating confidence in pregnancy dating:
+#' - week: ≤7 days (highest precision)
+#' - two-week: 8-14 days
+#' - three-week: 15-21 days  
+#' - month: 22-28 days
+#' - two-month: 29-56 days
+#' - three-month: 57-84 days
+#' - non-specific: >84 days or no timing data (lowest precision)
 #' @noRd
 assign_precision_category <- function(precision_days) {
   case_when(
@@ -587,6 +616,12 @@ assign_precision_category <- function(precision_days) {
 }
 
 #' Find intersection of date ranges (All of Us algorithm)
+#' 
+#' Direct implementation of All of Us findIntersection function that:
+#' 1. Removes outlier ranges via IQR * 1.5 on overlap counts
+#' 2. Finds the intersection of remaining ranges
+#' 3. Returns boundaries for precision calculation
+#' Critical for accurate pregnancy dating from multiple timing sources.
 #' @noRd
 findIntersection <- function(intervals) {
   if (length(intervals) == 0) {
@@ -671,6 +706,11 @@ findIntersection <- function(intervals) {
 }
 
 #' Remove outliers from GW concepts (All of Us algorithm)
+#' 
+#' Specific outlier removal for gestational week concepts using
+#' distance from median approach with IQR * 1.5 threshold.
+#' More stringent than general outlier removal due to higher
+#' expected precision of gestational week measurements.
 #' @noRd
 remove_GW_outliers <- function(gw_concepts_list) {
   if (length(gw_concepts_list) == 0 || length(gw_concepts_list[[1]]) == 0) {

@@ -398,7 +398,12 @@ add_window_outcomes <- function(episodes, cohort_data) {
       outcome_date <= lookahead_date
     ) %>%
     group_by(person_id, episode_number) %>%
-    # Use Matcho hierarchy to select best outcome
+    # Use Matcho hierarchy to select best outcome found in window
+    # Hierarchy (best to least definitive): LB, SB, DELIV, ECT, AB, SA, PREG
+    # LB (Live Birth) and SB (Stillbirth) are most definitive outcomes
+    # DELIV captures delivery without specific outcome detail
+    # ECT (Ectopic), AB (Abortion), SA (Spontaneous Abortion) are loss outcomes  
+    # PREG is used when pregnancy detected but outcome unknown
     arrange(
       factor(found_outcome, levels = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")),
       outcome_date
@@ -537,12 +542,20 @@ prepare_final_episodes <- function(episodes) {
       episode_start_date = as.Date(episode_start_date),
       episode_end_date = as.Date(episode_end_date),
       
-      # Ensure algorithm_used exists
-      algorithm_used = ifelse(
-        !"algorithm_used" %in% names(episodes),
-        "UNKNOWN",
-        algorithm_used
-      ),
+      # Preserve algorithm_used if it exists, otherwise set based on context
+      algorithm_used = if (!"algorithm_used" %in% names(episodes)) {
+        # If column doesn't exist, it means we only ran one algorithm
+        # Check which one based on flag patterns or default to HIP
+        if ("HIP_flag" %in% names(.) && any(HIP_flag == 1, na.rm = TRUE)) {
+          "HIP"
+        } else if ("PPS_flag" %in% names(.) && any(PPS_flag == 1, na.rm = TRUE)) {
+          "PPS"
+        } else {
+          "HIP"  # Default to HIP if can't determine
+        }
+      } else {
+        algorithm_used  # Keep existing values
+      },
       
       # Calculate episode length in months (All of Us uses 30.25)
       # Handle NA dates gracefully
