@@ -582,67 +582,44 @@ identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
     ) %>%
     group_by(person_id, episode_num) %>%
     summarise(
-      first_gest_date = min(gest_date),
       last_gest_date = max(gest_date),
-      min_gest_weeks = min(gest_weeks),
       max_gest_weeks = max(gest_weeks),
       n_gest_records = n(),
       .groups = "drop"
     )
   
-  # Calculate episode start and end dates based on gestational progression
+  # Create gestation-only episodes
+  # Let calculate_hip_start_dates handle date calculations to avoid redundancy
   gest_episodes <- potential_episodes %>%
     mutate(
-      # Start date: first gestation date minus gestational weeks at that time
-      episode_start_date = as.Date(first_gest_date - (min_gest_weeks * 7)),
       # End date: last gestation date plus remaining pregnancy time
-      episode_end_date = as.Date(last_gest_date + ((40 - max_gest_weeks) * 7)),
+      outcome_date = as.Date(last_gest_date + ((40 - max_gest_weeks) * 7)),
       # Category is PREG for gestation-only
       outcome_category = "PREG",
-      outcome_date = episode_end_date,
       has_gestational_info = TRUE,
       gestational_weeks = max_gest_weeks,
-      gestational_age_days = as.numeric(episode_end_date - episode_start_date)
+      episode_number = NA_integer_  # Will be renumbered later
     )
   
   # Remove episodes that overlap with existing outcome-based episodes
-  # This prevents double-counting
-  if (nrow(existing_episodes) > 0) {
+  # Check based on outcome dates to prevent double-counting
+  if (nrow(existing_episodes) > 0 && "outcome_date" %in% names(existing_episodes)) {
     gest_episodes <- gest_episodes %>%
       anti_join(
         existing_episodes %>%
-          select(person_id, start = episode_start_date, end = episode_end_date),
+          select(person_id, outcome_date),
         by = join_by(
           person_id,
-          between(episode_start_date, start, end)
-        )
-      ) %>%
-      anti_join(
-        existing_episodes %>%
-          select(person_id, start = episode_start_date, end = episode_end_date),
-        by = join_by(
-          person_id,
-          between(episode_end_date, start, end)
+          outcome_date == outcome_date
         )
       )
   }
   
-  # Format to match existing episode structure
+  # Return minimal structure - let existing pipeline handle the rest
   result <- gest_episodes %>%
-    filter(
-      # Valid pregnancy duration (20-320 days)
-      gestational_age_days >= 140,
-      gestational_age_days <= 320
-    ) %>%
-    mutate(
-      episode_number = NA_integer_,  # Will be renumbered later
-      n_gest_records = as.numeric(n_gest_records)
-    ) %>%
     select(
       person_id,
       episode_number,
-      episode_start_date,
-      episode_end_date,
       outcome_date,
       outcome_category,
       has_gestational_info,
