@@ -113,8 +113,8 @@ assign_pps_episodes <- function(timing_data) {
   
   message(sprintf("  Processing PPS episodes for %d persons...", n_persons))
   
-  # Track progress milestones
-  progress_shown <- c()
+  # OPTIMIZATION: Simplified progress tracking
+  progress_interval <- max(1, n_persons %/% 20)  # Show progress ~20 times
   
   # Process each person separately with progress updates
   episodes <- timing_data %>%
@@ -123,16 +123,10 @@ assign_pps_episodes <- function(timing_data) {
       # Get current person index for progress
       person_idx <- which(unique_persons == keys$person_id)
       
-      # Calculate percentage
-      pct_complete <- round((person_idx / n_persons) * 100)
-      
-      # Show progress every 5% or at completion
-      if (pct_complete %% 5 == 0 && pct_complete > 0) {
-        # Only show if we haven't shown this percentage yet
-        if (!pct_complete %in% progress_shown) {
-          message(sprintf("    %d%% complete", pct_complete))
-          progress_shown <<- c(progress_shown, pct_complete)
-        }
+      # Show progress at intervals
+      if (person_idx %% progress_interval == 0 || person_idx == n_persons) {
+        pct_complete <- round((person_idx / n_persons) * 100)
+        message(sprintf("    %d%% complete", pct_complete))
       }
       
       assign_person_episodes(person_data)
@@ -156,6 +150,10 @@ assign_person_episodes <- function(personlist) {
     return(personlist)
   }
   
+  # OPTIMIZATION: Precompute compatibility matrix once (O(n²) instead of O(n³))
+  # This avoids recalculating the same comparisons multiple times
+  compat_matrix <- precompute_compatibility_matrix(personlist)
+  
   # Initialize episode assignment
   person_episodes <- numeric(n_records)
   person_episodes[1] <- 1
@@ -171,9 +169,8 @@ assign_person_episodes <- function(personlist) {
       personlist$event_date[i] - personlist$event_date[i-1]
     ) / DAYS_PER_MONTH  # Using standardized month length
     
-    # Check temporal consistency with retry logic
-    # This is O(n²) for each record, making overall O(n³)
-    agreement_t_c <- records_comparison(personlist, i)
+    # Check temporal consistency using precomputed matrix (now O(n) instead of O(n²))
+    agreement_t_c <- records_comparison_fast(compat_matrix, i, n_records)
     
     # Apply decision logic with 1-month retry period (from All of Us)
     if (!agreement_t_c && delta_t > 1) {
@@ -213,7 +210,75 @@ assign_person_episodes <- function(personlist) {
   return(valid_episodes)
 }
 
-#' Records comparison with bridging logic (from All of Us)
+#' Precompute compatibility matrix for O(n²) complexity
+#' @noRd
+precompute_compatibility_matrix <- function(personlist) {
+  n <- nrow(personlist)
+  
+  # Create matrix to store compatibility between all pairs
+  # This is computed once instead of repeatedly in records_comparison
+  compat_matrix <- matrix(FALSE, n, n)
+  
+  # Vectorized computation for better performance
+  for (i in 1:n) {
+    if (i < n) {
+      # Vectorized calculation for all j > i
+      j_indices <- (i + 1):n
+      
+      # Calculate all deltas at once
+      delta_t <- as.numeric(
+        difftime(personlist$event_date[j_indices], 
+                personlist$event_date[i], 
+                units = "days")
+      ) / DAYS_PER_MONTH
+      
+      # Calculate expected ranges
+      max_delta <- personlist$max_month[j_indices] - personlist$min_month[i] + 2
+      min_delta <- personlist$min_month[j_indices] - personlist$max_month[i] - 2
+      
+      # Check compatibility
+      compat_matrix[i, j_indices] <- (max_delta >= delta_t) & (delta_t >= min_delta)
+      
+      # Matrix is symmetric for time differences
+      compat_matrix[j_indices, i] <- compat_matrix[i, j_indices]
+    }
+  }
+  
+  return(compat_matrix)
+}
+
+#' Fast records comparison using precomputed matrix
+#' @noRd
+records_comparison_fast <- function(compat_matrix, i, n_records) {
+  
+  # Check direct compatibility with previous records (O(n) instead of O(n²))
+  if (i > 1 && any(compat_matrix[1:(i-1), i])) {
+    return(TRUE)
+  }
+  
+  # Check bridging compatibility
+  len_to_start <- i - 1
+  len_to_end <- n_records - i
+  
+  if (len_to_start == 0 || len_to_end == 0) {
+    return(FALSE)
+  }
+  
+  # Use precomputed matrix for bridge checking (O(n²) instead of O(n³))
+  for (s in 1:len_to_start) {
+    if ((i + 1) <= n_records) {
+      for (e in 1:len_to_end) {
+        if ((i + e) <= n_records && compat_matrix[i - s, i + e]) {
+          return(TRUE)
+        }
+      }
+    }
+  }
+  
+  return(FALSE)
+}
+
+#' Records comparison with bridging logic (LEGACY - kept for compatibility)
 #' @noRd
 records_comparison <- function(personlist, i) {
   

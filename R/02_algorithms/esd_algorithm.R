@@ -57,9 +57,9 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
     message(sprintf("  Processing %d episodes with timing concepts...", n_groups_with_timing))
   }
   
-  # Track progress
+  # OPTIMIZATION: Simplified progress tracking
   current_group <- 0
-  progress_shown <- c()
+  progress_interval <- max(1, n_groups_with_timing %/% 10)  # Show progress ~10 times
   
   episodes_with_timing <- episodes_for_join %>%
     inner_join(
@@ -78,15 +78,10 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
       # Update progress
       current_group <<- current_group + 1
       
-      # Calculate percentage
-      pct_complete <- round((current_group / n_groups_with_timing) * 100)
-      
-      # Show progress every 5%
-      if (pct_complete %% 5 == 0 && pct_complete > 0) {
-        if (!pct_complete %in% progress_shown) {
-          message(sprintf("    %d%% complete", pct_complete))
-          progress_shown <<- c(progress_shown, pct_complete)
-        }
+      # Show progress at intervals
+      if (current_group %% progress_interval == 0 || current_group == n_groups_with_timing) {
+        pct_complete <- round((current_group / n_groups_with_timing) * 100)
+        message(sprintf("    %d%% complete", pct_complete))
       }
       
       # Call the original function
@@ -125,41 +120,41 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   # Get timing concept IDs to filter for
   timing_concept_ids <- pps_concepts$concept_id
   
-  # Helper function to filter domain data for timing concepts
-  get_domain_timing_concepts <- function(domain_data, concept_ids) {
-    if (is.null(domain_data) || nrow(domain_data) == 0) {
-      return(NULL)
-    }
-    
-    # Check which columns exist
-    has_concept_name <- "concept_name" %in% names(domain_data)
-    has_gest_value <- "gest_value" %in% names(domain_data)
-    has_category <- "category" %in% names(domain_data)
-    
-    # Filter for timing concepts FIRST (before any joins)
-    filtered <- domain_data
-    
-    if (has_concept_name || has_gest_value || has_category) {
-      filtered <- domain_data %>%
-        filter(
-          concept_id %in% concept_ids |
-          (has_concept_name & grepl("gestation", concept_name, ignore.case = TRUE)) |
-          (has_category & category == "GEST") |
-          (has_gest_value & !is.na(gest_value))
-        )
-    } else {
-      filtered <- domain_data %>%
-        filter(concept_id %in% concept_ids)
-    }
-    
-    return(filtered)
-  }
+  # OPTIMIZATION: Cache column checks once at the beginning
+  col_cache <- list()
   
-  # Filter each domain FIRST (aligned with All of Us approach)
-  conditions_timing <- get_domain_timing_concepts(cohort_data$conditions, timing_concept_ids)
-  procedures_timing <- get_domain_timing_concepts(cohort_data$procedures, timing_concept_ids)
-  observations_timing <- get_domain_timing_concepts(cohort_data$observations, timing_concept_ids)
-  measurements_timing <- get_domain_timing_concepts(cohort_data$measurements, timing_concept_ids)
+  # OPTIMIZATION: Single-pass filtering for all domains
+  # Combine all data first, then filter once
+  all_domain_data <- bind_rows(
+    if (!is.null(cohort_data$conditions) && nrow(cohort_data$conditions) > 0) 
+      cohort_data$conditions %>% mutate(domain_source = "condition") else NULL,
+    if (!is.null(cohort_data$procedures) && nrow(cohort_data$procedures) > 0) 
+      cohort_data$procedures %>% mutate(domain_source = "procedure") else NULL,
+    if (!is.null(cohort_data$observations) && nrow(cohort_data$observations) > 0) 
+      cohort_data$observations %>% mutate(domain_source = "observation") else NULL,
+    if (!is.null(cohort_data$measurements) && nrow(cohort_data$measurements) > 0) 
+      cohort_data$measurements %>% mutate(domain_source = "measurement") else NULL
+  )
+  
+  # Check columns once for the combined data
+  if (!is.null(all_domain_data) && nrow(all_domain_data) > 0) {
+    col_cache$has_concept_name <- "concept_name" %in% names(all_domain_data)
+    col_cache$has_gest_value <- "gest_value" %in% names(all_domain_data)
+    col_cache$has_category <- "category" %in% names(all_domain_data)
+    col_cache$has_value_as_number <- "value_as_number" %in% names(all_domain_data)
+    
+    # Single filter operation for all domains
+    timing_from_domains <- all_domain_data %>%
+      filter(
+        concept_id %in% timing_concept_ids |
+        (col_cache$has_concept_name & grepl("gestation", concept_name, ignore.case = TRUE)) |
+        (col_cache$has_category & category == "GEST") |
+        (col_cache$has_gest_value & !is.na(gest_value))
+      ) %>%
+      select(-domain_source)  # Remove temporary column
+  } else {
+    timing_from_domains <- NULL
+  }
   
   # Handle gestational_timing separately since it's already timing-specific
   gestational_timing_normalized <- NULL
@@ -177,12 +172,9 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
                       "min_month", "max_month")))
   }
   
-  # Combine ONLY the filtered timing records (much smaller dataset)
+  # Combine the filtered timing records
   timing_records <- bind_rows(
-    conditions_timing,
-    procedures_timing,
-    observations_timing,
-    measurements_timing,
+    timing_from_domains,
     gestational_timing_normalized
   )
   
@@ -200,11 +192,12 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     timing_records <- omop_compute(timing_records)
   }
   
-  # Check which columns exist in the combined timing records
-  # These are needed later for GT_type classification
-  has_concept_name <- "concept_name" %in% names(timing_records)
-  has_gest_value <- "gest_value" %in% names(timing_records)
-  has_value_as_number <- "value_as_number" %in% names(timing_records)
+  # Use cached column checks or check now if not already cached
+  if (length(col_cache) == 0) {
+    col_cache$has_concept_name <- "concept_name" %in% names(timing_records)
+    col_cache$has_gest_value <- "gest_value" %in% names(timing_records)
+    col_cache$has_value_as_number <- "value_as_number" %in% names(timing_records)
+  }
   
   # Join with PPS concepts to get min_month and max_month (if not already present)
   if (!"min_month" %in% names(timing_records) || !"max_month" %in% names(timing_records)) {
@@ -257,10 +250,10 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       # Determine timing type (GW vs GR3m)
       GT_type = case_when(
         # GW concepts: specific gestational week concepts
-        has_concept_name & grepl("gestation period,", concept_name, ignore.case = TRUE) ~ "GW",
-        has_concept_name & grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
+        col_cache$has_concept_name & grepl("gestation period,", concept_name, ignore.case = TRUE) ~ "GW",
+        col_cache$has_concept_name & grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
         concept_id %in% c(3048230, 3002209, 3012266, 3050433) ~ "GW",
-        has_gest_value & !is.na(gest_value) ~ "GW",
+        col_cache$has_gest_value & !is.na(gest_value) ~ "GW",
         # GR3m concepts: range-based concepts from PPS
         !is.na(min_month) & !is.na(max_month) ~ "GR3m",
         TRUE ~ NA_character_
@@ -268,13 +261,13 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     )
   
   # Extract gestational weeks for GW concepts
-  if (has_gest_value || has_value_as_number || has_concept_name) {
+  if (col_cache$has_gest_value || col_cache$has_value_as_number || col_cache$has_concept_name) {
     episode_timing <- episode_timing %>%
       mutate(
         gestational_weeks = case_when(
-          GT_type == "GW" & has_gest_value & !is.na(gest_value) ~ gest_value,
-          GT_type == "GW" & has_value_as_number & !is.na(value_as_number) & value_as_number < 50 ~ value_as_number,
-          GT_type == "GW" & has_concept_name & grepl("\\d+ weeks?", concept_name) ~ suppressWarnings(
+          GT_type == "GW" & col_cache$has_gest_value & !is.na(gest_value) ~ gest_value,
+          GT_type == "GW" & col_cache$has_value_as_number & !is.na(value_as_number) & value_as_number < 50 ~ value_as_number,
+          GT_type == "GW" & col_cache$has_concept_name & grepl("\\d+ weeks?", concept_name) ~ suppressWarnings(
             as.numeric(gsub(".*?(\\d+) weeks?.*", "\\1", concept_name))
           ),
           TRUE ~ NA_real_
