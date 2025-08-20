@@ -129,49 +129,93 @@ create_concept_temp_table <- function(connection, concepts, table_name) {
   message(sprintf("  Creating concept temp table %s with %d concepts...", 
                   table_name, nrow(concepts)))
   
-  # Prepare concepts data frame (use domain_name to avoid SQL reserved keyword)
-  concept_df <- concepts %>%
-    select(any_of(c("concept_id", "concept_name", "domain_name", "category", 
-                    "gest_value", "min_month", "max_month", "certainty")))
-  
-  # Ensure required columns exist
-  if (!"concept_id" %in% names(concept_df)) {
-    stop("concept_id column is required")
-  }
-  
   # Get database type
   dbms <- attr(connection, "dbms")
   if (is.null(dbms)) {
     dbms <- "sql server"
   }
   
-  # Get results schema for Spark/Databricks
-  results_schema <- attr(connection, "results_schema")
-  
-  # Adjust table name based on platform
-  if (dbms == "sql server" && !grepl("^#", table_name)) {
-    table_name <- paste0("#", table_name)
-  } else if (dbms %in% c("spark", "databricks")) {
+  # For Databricks/Spark: Use temporary view to avoid random prefix issues
+  if (dbms %in% c("spark", "databricks")) {
     # Remove # prefix for Spark
-    table_name <- gsub("^#", "", table_name)
-  }
-  
-  # Use the unified temp table creation function
-  temp_table <- ohdsi_create_temp_table(
-    connection = connection,
-    data = concept_df,
-    table_name = table_name,
-    resultsDatabaseSchema = results_schema,
-    overwrite = TRUE
-  )
-  
-  message(sprintf("  Created temp table %s", table_name))
-  
-  # Return the table name for backward compatibility
-  if (inherits(temp_table, "tbl")) {
-    return(table_name)
+    view_name <- gsub("^#", "", table_name)
+    
+    # Prepare concepts data frame
+    concept_df <- concepts %>%
+      select(any_of(c("concept_id", "concept_name", "domain_name", "category", 
+                      "gest_value", "min_month", "max_month", "certainty")))
+    
+    # Build VALUES clause for the view
+    # Format each row as (value1, value2, ...)
+    values_rows <- apply(concept_df, 1, function(row) {
+      # Convert each value to appropriate SQL format
+      formatted_values <- sapply(row, function(val) {
+        if (is.na(val)) {
+          "NULL"
+        } else if (is.numeric(val)) {
+          as.character(val)
+        } else {
+          # Escape single quotes and wrap in quotes
+          sprintf("'%s'", gsub("'", "''", as.character(val)))
+        }
+      })
+      sprintf("(%s)", paste(formatted_values, collapse = ","))
+    })
+    
+    # Get column names
+    col_names <- names(concept_df)
+    col_def <- paste(col_names, collapse = ",")
+    
+    # Create the view with VALUES clause
+    sql <- sprintf(
+      "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM (VALUES %s) AS t(%s)",
+      view_name,
+      paste(values_rows, collapse = ","),
+      col_def
+    )
+    
+    DatabaseConnector::executeSql(connection, sql)
+    message(sprintf("  Created temp view %s", view_name))
+    return(view_name)
+    
   } else {
-    return(temp_table)
+    # For SQL Server and other platforms: Use existing approach
+    
+    # Prepare concepts data frame
+    concept_df <- concepts %>%
+      select(any_of(c("concept_id", "concept_name", "domain_name", "category", 
+                      "gest_value", "min_month", "max_month", "certainty")))
+    
+    # Ensure required columns exist
+    if (!"concept_id" %in% names(concept_df)) {
+      stop("concept_id column is required")
+    }
+    
+    # Get results schema for non-SQL Server platforms
+    results_schema <- attr(connection, "results_schema")
+    
+    # Adjust table name based on platform
+    if (dbms == "sql server" && !grepl("^#", table_name)) {
+      table_name <- paste0("#", table_name)
+    }
+    
+    # Use the unified temp table creation function
+    temp_table <- ohdsi_create_temp_table(
+      connection = connection,
+      data = concept_df,
+      table_name = table_name,
+      resultsDatabaseSchema = results_schema,
+      overwrite = TRUE
+    )
+    
+    message(sprintf("  Created temp table %s", table_name))
+    
+    # Return the table name for backward compatibility
+    if (inherits(temp_table, "tbl")) {
+      return(table_name)
+    } else {
+      return(temp_table)
+    }
   }
 }
 
@@ -221,10 +265,11 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
         # Remove # prefix for Spark
         clean_table_name <- gsub("^#", "", table_name)
         
-        # For person_cohort, it's created as a TEMPORARY VIEW without schema
-        # For other tables, they might have schema qualification
-        if (clean_table_name == "person_cohort") {
-          # person_cohort is created as a temporary view without schema prefix
+        # For views created with CREATE TEMPORARY VIEW (person_cohort and concept tables)
+        # they don't have schema qualification
+        if (clean_table_name %in% c("person_cohort", "hip_conditions", "hip_procedures", 
+                                     "hip_observations", "hip_measurements", "pps_concepts")) {
+          # These are created as temporary views without schema prefix
           drop_view_sql <- SqlRender::render(
             "DROP VIEW IF EXISTS @table_name",
             table_name = clean_table_name

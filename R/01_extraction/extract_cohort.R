@@ -102,91 +102,127 @@ extract_pregnancy_cohort <- function(
       # Create concept temp tables by domain
       message("  Creating concept temp tables...")
       
-      # HIP concepts by domain
+      # HIP concepts by domain - initialize variables
+      hip_cond_temp <- NULL
+      hip_proc_temp <- NULL
+      hip_obs_temp <- NULL
+      hip_meas_temp <- NULL
+      pps_temp <- NULL
+      
       hip_conditions <- hip_concepts %>% 
         filter(!is.na(domain_name) & domain_name == "Condition")
       if (nrow(hip_conditions) > 0) {
         hip_cond_temp <- create_concept_temp_table(connection, hip_conditions, "#hip_conditions")
-        temp_tables_created <- c(temp_tables_created, hip_cond_temp)
+        if (!is.null(hip_cond_temp)) {
+          temp_tables_created <- c(temp_tables_created, hip_cond_temp)
+        }
       }
       
       hip_procedures <- hip_concepts %>% 
         filter(!is.na(domain_name) & domain_name == "Procedure")
       if (nrow(hip_procedures) > 0) {
         hip_proc_temp <- create_concept_temp_table(connection, hip_procedures, "#hip_procedures")
-        temp_tables_created <- c(temp_tables_created, hip_proc_temp)
+        if (!is.null(hip_proc_temp)) {
+          temp_tables_created <- c(temp_tables_created, hip_proc_temp)
+        }
       }
       
       hip_observations <- hip_concepts %>% 
         filter(!is.na(domain_name) & domain_name == "Observation")
       if (nrow(hip_observations) > 0) {
         hip_obs_temp <- create_concept_temp_table(connection, hip_observations, "#hip_observations")
-        temp_tables_created <- c(temp_tables_created, hip_obs_temp)
+        if (!is.null(hip_obs_temp)) {
+          temp_tables_created <- c(temp_tables_created, hip_obs_temp)
+        }
       }
       
       hip_measurements <- hip_concepts %>% 
         filter(!is.na(domain_name) & domain_name == "Measurement")
       if (nrow(hip_measurements) > 0) {
         hip_meas_temp <- create_concept_temp_table(connection, hip_measurements, "#hip_measurements")
-        temp_tables_created <- c(temp_tables_created, hip_meas_temp)
+        if (!is.null(hip_meas_temp)) {
+          temp_tables_created <- c(temp_tables_created, hip_meas_temp)
+        }
       }
       
       # PPS concepts
       if (nrow(pps_concepts) > 0) {
         pps_temp <- create_concept_temp_table(connection, pps_concepts, "#pps_concepts")
-        temp_tables_created <- c(temp_tables_created, pps_temp)
+        if (!is.null(pps_temp)) {
+          temp_tables_created <- c(temp_tables_created, pps_temp)
+        }
       }
       
-      # Extract using temp tables
+      # Extract using temp tables (use the actual returned names)
       message(sprintf("  Extracting conditions (%d concepts)...", nrow(hip_conditions)))
-      conditions <- extract_domain_with_temp_table(
-        connection, cdm_schema, target_dialect,
-        table_name = "condition_occurrence",
-        concept_column = "condition_concept_id",
-        date_column = "condition_start_date",
-        person_temp_table = person_temp,
-        concept_temp_table = "#hip_conditions"
-      )
+      conditions <- if (!is.null(hip_cond_temp)) {
+        extract_domain_with_temp_table(
+          connection, cdm_schema, target_dialect,
+          table_name = "condition_occurrence",
+          concept_column = "condition_concept_id",
+          date_column = "condition_start_date",
+          person_temp_table = person_temp,
+          concept_temp_table = hip_cond_temp
+        )
+      } else {
+        data.frame()
+      }
       
       message(sprintf("  Extracting procedures (%d concepts)...", nrow(hip_procedures)))
-      procedures <- extract_domain_with_temp_table(
-        connection, cdm_schema, target_dialect,
-        table_name = "procedure_occurrence",
-        concept_column = "procedure_concept_id",
-        date_column = "procedure_date",
-        person_temp_table = person_temp,
-        concept_temp_table = "#hip_procedures"
-      )
+      procedures <- if (!is.null(hip_proc_temp)) {
+        extract_domain_with_temp_table(
+          connection, cdm_schema, target_dialect,
+          table_name = "procedure_occurrence",
+          concept_column = "procedure_concept_id",
+          date_column = "procedure_date",
+          person_temp_table = person_temp,
+          concept_temp_table = hip_proc_temp
+        )
+      } else {
+        data.frame()
+      }
       
       message(sprintf("  Extracting observations (%d concepts)...", nrow(hip_observations)))
-      observations <- extract_domain_with_temp_table(
-        connection, cdm_schema, target_dialect,
-        table_name = "observation",
-        concept_column = "observation_concept_id",
-        date_column = "observation_date",
-        person_temp_table = person_temp,
-        concept_temp_table = "#hip_observations",
-        include_value = TRUE
-      )
+      observations <- if (!is.null(hip_obs_temp)) {
+        extract_domain_with_temp_table(
+          connection, cdm_schema, target_dialect,
+          table_name = "observation",
+          concept_column = "observation_concept_id",
+          date_column = "observation_date",
+          person_temp_table = person_temp,
+          concept_temp_table = hip_obs_temp,
+          include_value = TRUE
+        )
+      } else {
+        data.frame()
+      }
       
       message(sprintf("  Extracting measurements (%d concepts)...", nrow(hip_measurements)))
-      measurements <- extract_domain_with_temp_table(
-        connection, cdm_schema, target_dialect,
-        table_name = "measurement",
-        concept_column = "measurement_concept_id",
-        date_column = "measurement_date",
-        person_temp_table = person_temp,
-        concept_temp_table = "#hip_measurements",
-        include_value = TRUE
-      )
+      measurements <- if (!is.null(hip_meas_temp)) {
+        extract_domain_with_temp_table(
+          connection, cdm_schema, target_dialect,
+          table_name = "measurement",
+          concept_column = "measurement_concept_id",
+          date_column = "measurement_date",
+          person_temp_table = person_temp,
+          concept_temp_table = hip_meas_temp,
+          include_value = TRUE
+        )
+      } else {
+        data.frame()
+      }
       
       # Extract gestational timing data
       message("  Extracting gestational timing data...")
-      gestational_timing <- extract_gestational_timing_with_temp_table(
-        connection, cdm_schema, target_dialect,
-        person_temp_table = person_temp,
-        pps_temp_table = "#pps_concepts"
-      )
+      gestational_timing <- if (!is.null(pps_temp)) {
+        extract_gestational_timing_with_temp_table(
+          connection, cdm_schema, target_dialect,
+          person_temp_table = person_temp,
+          pps_temp_table = pps_temp
+        )
+      } else {
+        data.frame()
+      }
       
     } else {
       # Fall back to original method for small cohorts
