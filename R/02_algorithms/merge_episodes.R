@@ -590,20 +590,28 @@ prepare_final_episodes <- function(episodes) {
         ifelse(PPS_flag == 1, episode_end_date, as.Date(NA))
       }
     ) %>%
-    select(
+    # Select columns in All of Us order but keep both naming conventions
+    # episode_start_date/episode_end_date for ESD compatibility
+    # recorded_episode_start/recorded_episode_end for All of Us compatibility
+    transmute(
       person_id,
       episode_number,
-      episode_start_date,  # Keep original names for ESD compatibility
-      episode_end_date,
+      # All of Us naming
       recorded_episode_start = episode_start_date,
       recorded_episode_end = episode_end_date,
       recorded_episode_length,
+      # Also keep original names for ESD algorithm
+      episode_start_date,
+      episode_end_date,
+      # Outcome information
       HIP_outcome_category,
       PPS_outcome_category,
       HIP_end_date,
       PPS_end_date,
       HIP_flag,
       PPS_flag,
-      everything()  # Include any other columns like outcome_category, gestational_age_days
+      outcome_category,
+      gestational_age_days,
+      algorithm_used
     )
 }
