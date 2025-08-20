@@ -29,6 +29,9 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     return(data.frame())
   }
   
+  # Source database utilities for compute operations
+  source("R/03_utilities/database_utils.R")
+  
   # Step 2: Process outcomes hierarchically following All of Us approach
   # Start with Live Births
   lb_episodes <- process_outcome_category(
@@ -37,12 +40,22 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     matcho_outcome_limits
   )
   
+  # Compute after processing (like All of Us aou_compute())
+  if ("tbl_lazy" %in% class(lb_episodes) || "tbl_sql" %in% class(lb_episodes)) {
+    lb_episodes <- omop_compute(lb_episodes)
+  }
+  
   # Add Stillbirths
   sb_episodes <- process_outcome_category(
     initial_cohort,
     categories = "SB", 
     matcho_outcome_limits
   )
+  
+  # Compute after processing
+  if ("tbl_lazy" %in% class(sb_episodes) || "tbl_sql" %in% class(sb_episodes)) {
+    sb_episodes <- omop_compute(sb_episodes)
+  }
   
   # Combine LB and SB, checking spacing
   lb_sb_episodes <- add_stillbirth_episodes(
@@ -51,6 +64,11 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     matcho_outcome_limits
   )
   
+  # Compute combined result
+  if ("tbl_lazy" %in% class(lb_sb_episodes) || "tbl_sql" %in% class(lb_sb_episodes)) {
+    lb_sb_episodes <- omop_compute(lb_sb_episodes)
+  }
+  
   # Add Ectopic pregnancies
   ect_episodes <- process_outcome_category(
     initial_cohort,
@@ -58,11 +76,21 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     matcho_outcome_limits
   )
   
+  # Compute after processing
+  if ("tbl_lazy" %in% class(ect_episodes) || "tbl_sql" %in% class(ect_episodes)) {
+    ect_episodes <- omop_compute(ect_episodes)
+  }
+  
   lb_sb_ect_episodes <- add_ectopic_episodes(
     lb_sb_episodes,
     ect_episodes,
     matcho_outcome_limits
   )
+  
+  # Compute combined result
+  if ("tbl_lazy" %in% class(lb_sb_ect_episodes) || "tbl_sql" %in% class(lb_sb_ect_episodes)) {
+    lb_sb_ect_episodes <- omop_compute(lb_sb_ect_episodes)
+  }
   
   # Add Abortions (AB and SA together)
   ab_sa_episodes <- process_outcome_category(
@@ -71,11 +99,21 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     matcho_outcome_limits
   )
   
+  # Compute after processing
+  if ("tbl_lazy" %in% class(ab_sa_episodes) || "tbl_sql" %in% class(ab_sa_episodes)) {
+    ab_sa_episodes <- omop_compute(ab_sa_episodes)
+  }
+  
   all_outcome_episodes <- add_abortion_episodes(
     lb_sb_ect_episodes,
     ab_sa_episodes,
     matcho_outcome_limits
   )
+  
+  # Compute combined result
+  if ("tbl_lazy" %in% class(all_outcome_episodes) || "tbl_sql" %in% class(all_outcome_episodes)) {
+    all_outcome_episodes <- omop_compute(all_outcome_episodes)
+  }
   
   # Add Delivery episodes
   deliv_episodes <- process_outcome_category(
@@ -84,11 +122,21 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     matcho_outcome_limits
   )
   
+  # Compute after processing
+  if ("tbl_lazy" %in% class(deliv_episodes) || "tbl_sql" %in% class(deliv_episodes)) {
+    deliv_episodes <- omop_compute(deliv_episodes)
+  }
+  
   final_episodes <- add_delivery_episodes(
     all_outcome_episodes,
     deliv_episodes,
     matcho_outcome_limits
   )
+  
+  # Compute final result
+  if ("tbl_lazy" %in% class(final_episodes) || "tbl_sql" %in% class(final_episodes)) {
+    final_episodes <- omop_compute(final_episodes)
+  }
   
   # Step 3: Add gestational age information
   episodes_with_gest <- add_gestational_age_info(final_episodes, all_records)

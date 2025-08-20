@@ -93,6 +93,20 @@ prepare_pps_data <- function(timing_data, persons_data) {
 #' @noRd
 assign_pps_episodes <- function(timing_data) {
   
+  # Check if we need to collect data first (if it's still a lazy tbl)
+  if ("tbl_lazy" %in% class(timing_data) || "tbl_sql" %in% class(timing_data)) {
+    # Source database utilities for paginated collection
+    source("R/03_utilities/database_utils.R")
+    
+    # Compute intermediate result to temp table (like All of Us aou_compute)
+    message("  Computing timing data to temp table...")
+    timing_data <- omop_compute(timing_data)
+    
+    # Collect with pagination (like All of Us collect(page_size = 50000))
+    message("  Collecting timing data with pagination...")
+    timing_data <- paginated_collect(timing_data, page_size = 50000)
+  }
+  
   # Get unique persons for progress tracking
   unique_persons <- unique(timing_data$person_id)
   n_persons <- length(unique_persons)

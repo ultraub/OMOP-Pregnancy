@@ -190,6 +190,16 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     return(data.frame())
   }
   
+  # Add compute step if this is a lazy tbl (like All of Us's aou_compute())
+  if ("tbl_lazy" %in% class(timing_records) || "tbl_sql" %in% class(timing_records)) {
+    # Source database utilities
+    source("R/03_utilities/database_utils.R")
+    
+    # Compute to temp table for better performance
+    message("    Computing filtered timing records to temp table...")
+    timing_records <- omop_compute(timing_records)
+  }
+  
   # Check which columns exist in the combined timing records
   # These are needed later for GT_type classification
   has_concept_name <- "concept_name" %in% names(timing_records)
