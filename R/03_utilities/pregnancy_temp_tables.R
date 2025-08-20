@@ -50,7 +50,7 @@ create_person_temp_table <- function(connection, person_ids, table_name = "#pers
       # For very large lists, create a temp table instead
       # But do it efficiently with CREATE TABLE AS SELECT
       results_schema <- attr(connection, "results_schema")
-      full_table_name <- get_full_table_name(connection, view_name, schema = results_schema)
+      full_table_name <- get_full_table_name(connection, view_name, schema = results_schema, dbms = "spark")
       
       # Create table with first batch
       first_batch <- person_ids[1:max_ids_per_query]

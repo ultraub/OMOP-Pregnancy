@@ -396,7 +396,8 @@ ohdsi_drop_temp_table <- function(connection, table_name) {
   
   if (dbms %in% c("spark", "databricks")) {
     # Use helper function to get consistent table name
-    spark_name <- get_full_table_name(connection, table_name, dbms = dbms)
+    results_schema <- attr(connection, "results_schema")
+    spark_name <- get_full_table_name(connection, table_name, schema = results_schema, dbms = dbms)
     
     # Try dropping as view first (using IF EXISTS to prevent errors)
     drop_view_sql <- sprintf("DROP VIEW IF EXISTS %s", spark_name)
@@ -556,34 +557,4 @@ ohdsi_list_temp_tables <- function(connection) {
 #' @export
 is_temp_table <- function(table_name) {
   grepl("^#", table_name)
-}
-
-#' Get full table name with schema
-#'
-#' Constructs full table name with schema prefix if needed.
-#'
-#' @param table_name Table name (may include # prefix)
-#' @param schema Database schema
-#' @param dbms Database platform
-#'
-#' @return Full table name with schema
-#' @export
-get_full_table_name <- function(table_name, schema = NULL, dbms = NULL) {
-  
-  # Temp tables don't use schema prefix in SQL Server
-  if (is_temp_table(table_name) && dbms == "sql server") {
-    return(table_name)
-  }
-  
-  # For Spark/Databricks, remove # prefix
-  if (dbms %in% c("spark", "databricks")) {
-    table_name <- gsub("^#", "", table_name)
-  }
-  
-  # Add schema if provided
-  if (!is.null(schema) && !is_temp_table(table_name)) {
-    return(paste(schema, table_name, sep = "."))
-  }
-  
-  return(table_name)
 }
