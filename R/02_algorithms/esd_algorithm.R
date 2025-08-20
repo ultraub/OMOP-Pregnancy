@@ -73,62 +73,71 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
 #' @noRd
 get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   
-  # Prepare gestational_timing data with normalized columns
+  # Get timing concept IDs to filter for
+  timing_concept_ids <- pps_concepts$concept_id
+  
+  # Helper function to filter domain data for timing concepts
+  get_domain_timing_concepts <- function(domain_data, concept_ids) {
+    if (is.null(domain_data) || nrow(domain_data) == 0) {
+      return(NULL)
+    }
+    
+    # Check which columns exist
+    has_concept_name <- "concept_name" %in% names(domain_data)
+    has_gest_value <- "gest_value" %in% names(domain_data)
+    has_category <- "category" %in% names(domain_data)
+    
+    # Filter for timing concepts FIRST (before any joins)
+    filtered <- domain_data
+    
+    if (has_concept_name || has_gest_value || has_category) {
+      filtered <- domain_data %>%
+        filter(
+          concept_id %in% concept_ids |
+          (has_concept_name & grepl("gestation", concept_name, ignore.case = TRUE)) |
+          (has_category & category == "GEST") |
+          (has_gest_value & !is.na(gest_value))
+        )
+    } else {
+      filtered <- domain_data %>%
+        filter(concept_id %in% concept_ids)
+    }
+    
+    return(filtered)
+  }
+  
+  # Filter each domain FIRST (aligned with All of Us approach)
+  conditions_timing <- get_domain_timing_concepts(cohort_data$conditions, timing_concept_ids)
+  procedures_timing <- get_domain_timing_concepts(cohort_data$procedures, timing_concept_ids)
+  observations_timing <- get_domain_timing_concepts(cohort_data$observations, timing_concept_ids)
+  measurements_timing <- get_domain_timing_concepts(cohort_data$measurements, timing_concept_ids)
+  
+  # Handle gestational_timing separately since it's already timing-specific
   gestational_timing_normalized <- NULL
   if (!is.null(cohort_data$gestational_timing) && nrow(cohort_data$gestational_timing) > 0) {
-    # Normalize gestational_timing to match other domain structures
     gestational_timing_normalized <- cohort_data$gestational_timing %>%
       mutate(
-        # Add missing columns that other domains have
-        concept_name = NA_character_,
-        category = "GEST",  # Mark these as gestational timing
-        gest_value = NA_real_,
-        # Ensure we have value columns
-        value_as_number = if ("value_as_number" %in% names(.)) value_as_number else NA_real_,
-        value_as_string = if ("value_as_string" %in% names(.)) value_as_string else NA_character_
+        concept_name = if (!"concept_name" %in% names(.)) NA_character_ else concept_name,
+        category = "GEST",
+        gest_value = if (!"gest_value" %in% names(.)) NA_real_ else gest_value,
+        value_as_number = if (!"value_as_number" %in% names(.)) NA_real_ else value_as_number,
+        value_as_string = if (!"value_as_string" %in% names(.)) NA_character_ else value_as_string
       ) %>%
-      # Keep the important timing columns
       select(any_of(c("person_id", "concept_id", "event_date", "concept_name", 
                       "category", "gest_value", "value_as_number", "value_as_string",
                       "min_month", "max_month")))
   }
   
-  # Combine all records that might have gestational timing
-  all_records <- bind_rows(
-    cohort_data$conditions,
-    cohort_data$procedures,
-    cohort_data$observations,
-    cohort_data$measurements,
-    gestational_timing_normalized  # Include the gestational timing data!
+  # Combine ONLY the filtered timing records (much smaller dataset)
+  timing_records <- bind_rows(
+    conditions_timing,
+    procedures_timing,
+    observations_timing,
+    measurements_timing,
+    gestational_timing_normalized
   )
   
-  # Check which columns exist
-  has_concept_name <- "concept_name" %in% names(all_records)
-  has_gest_value <- "gest_value" %in% names(all_records)
-  has_value_as_number <- "value_as_number" %in% names(all_records)
-  
-  # Filter to gestational timing concepts
-  timing_records <- all_records
-  
-  if (has_concept_name || has_gest_value) {
-    timing_records <- timing_records %>%
-      filter(
-        # Gestational age concepts
-        (has_concept_name & grepl("gestation", concept_name, ignore.case = TRUE)) |
-        concept_id %in% pps_concepts$concept_id |
-        category == "GEST" |
-        (has_gest_value & !is.na(gest_value))
-      )
-  } else {
-    # Fallback to just concept_id and category
-    timing_records <- timing_records %>%
-      filter(
-        concept_id %in% pps_concepts$concept_id |
-        category == "GEST"
-      )
-  }
-  
-  if (nrow(timing_records) == 0) {
+  if (is.null(timing_records) || nrow(timing_records) == 0) {
     return(data.frame())
   }
   
@@ -153,25 +162,29 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       select(-pps_min, -pps_max)
   }
   
-  # Join with episodes to get relevant timing for each episode
-  episode_timing <- episodes %>%
+  # Prepare episode windows for efficient joining
+  episode_windows <- episodes %>%
     select(person_id, episode_number, episode_start_date, episode_end_date) %>%
     mutate(
-      # Ensure episode dates are properly converted
       episode_start_date = safe_as_date(episode_start_date),
-      episode_end_date = safe_as_date(episode_end_date)
-    ) %>%
-    left_join(
-      timing_records %>%
-        mutate(event_date = safe_as_date(event_date)),
-      by = "person_id",
-      relationship = "many-to-many"
-    ) %>%
-    filter(
-      # Timing must be within episode window (with some buffer)
-      event_date >= episode_start_date - 30,
-      event_date <= episode_end_date + 30
+      episode_end_date = safe_as_date(episode_end_date),
+      window_start = episode_start_date - 30,
+      window_end = episode_end_date + 30
     )
+  
+  # Use inner join with date conditions (more efficient than left join + filter)
+  # This follows the All of Us pattern of filtering during the join
+  episode_timing <- timing_records %>%
+    mutate(event_date = safe_as_date(event_date)) %>%
+    inner_join(
+      episode_windows,
+      by = join_by(
+        person_id,
+        event_date >= window_start,
+        event_date <= window_end
+      )
+    ) %>%
+    select(-window_start, -window_end)
   
   # Build GT_type classification based on available columns
   episode_timing <- episode_timing %>%
