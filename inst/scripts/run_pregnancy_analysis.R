@@ -292,20 +292,8 @@ tryCatch({
   
   message(sprintf("  ✓ ESD refined %d episodes", nrow(final_episodes)))
   
-  # Step 7: Add confidence scores
-  message("\nStep 7: Assigning confidence scores...")
-  final_episodes <- assign_confidence_scores(final_episodes)
-  
-  if ("confidence_score" %in% names(final_episodes)) {
-    conf_summary <- final_episodes %>%
-      count(confidence_score) %>%
-      arrange(desc(n))
-    message("  Confidence distribution:")
-    print(conf_summary)
-  }
-  
-  # Step 8: Correct date issues and save results
-  message("\nStep 8: Validating and saving results...")
+  # Step 7: Correct date issues and save results
+  message("\nStep 7: Validating and saving results...")
   
   # Apply date correction for SQL Server epoch issues
   final_episodes <- correct_epoch_dates(final_episodes)

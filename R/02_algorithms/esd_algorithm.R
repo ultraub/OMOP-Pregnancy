@@ -73,12 +73,33 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
 #' @noRd
 get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   
+  # Prepare gestational_timing data with normalized columns
+  gestational_timing_normalized <- NULL
+  if (!is.null(cohort_data$gestational_timing) && nrow(cohort_data$gestational_timing) > 0) {
+    # Normalize gestational_timing to match other domain structures
+    gestational_timing_normalized <- cohort_data$gestational_timing %>%
+      mutate(
+        # Add missing columns that other domains have
+        concept_name = NA_character_,
+        category = "GEST",  # Mark these as gestational timing
+        gest_value = NA_real_,
+        # Ensure we have value columns
+        value_as_number = if ("value_as_number" %in% names(.)) value_as_number else NA_real_,
+        value_as_string = if ("value_as_string" %in% names(.)) value_as_string else NA_character_
+      ) %>%
+      # Keep the important timing columns
+      select(any_of(c("person_id", "concept_id", "event_date", "concept_name", 
+                      "category", "gest_value", "value_as_number", "value_as_string",
+                      "min_month", "max_month")))
+  }
+  
   # Combine all records that might have gestational timing
   all_records <- bind_rows(
     cohort_data$conditions,
     cohort_data$procedures,
     cohort_data$observations,
-    cohort_data$measurements
+    cohort_data$measurements,
+    gestational_timing_normalized  # Include the gestational timing data!
   )
   
   # Check which columns exist
@@ -111,12 +132,26 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     return(data.frame())
   }
   
-  # Join with PPS concepts to get min_month and max_month
-  timing_records <- timing_records %>%
-    left_join(
-      pps_concepts %>% select(concept_id, min_month, max_month),
-      by = "concept_id"
-    )
+  # Join with PPS concepts to get min_month and max_month (if not already present)
+  if (!"min_month" %in% names(timing_records) || !"max_month" %in% names(timing_records)) {
+    timing_records <- timing_records %>%
+      left_join(
+        pps_concepts %>% select(concept_id, min_month, max_month),
+        by = "concept_id"
+      )
+  } else {
+    # If min_month/max_month already exist from gestational_timing, use coalesce to fill gaps
+    timing_records <- timing_records %>%
+      left_join(
+        pps_concepts %>% select(concept_id, pps_min = min_month, pps_max = max_month),
+        by = "concept_id"
+      ) %>%
+      mutate(
+        min_month = coalesce(min_month, pps_min),
+        max_month = coalesce(max_month, pps_max)
+      ) %>%
+      select(-pps_min, -pps_max)
+  }
   
   # Join with episodes to get relevant timing for each episode
   episode_timing <- episodes %>%

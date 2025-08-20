@@ -38,43 +38,6 @@ calculate_episode_dates <- function(episodes, gestational_data) {
   return(episodes)
 }
 
-#' Assign Confidence Scores
-#'
-#' Assigns confidence scores to pregnancy episodes based on data quality
-#' and algorithm consistency.
-#'
-#' @param episodes Data frame of pregnancy episodes
-#'
-#' @return Episodes with confidence_score column added
-#' @export
-assign_confidence_scores <- function(episodes) {
-  
-  if (nrow(episodes) == 0) {
-    return(episodes)
-  }
-  
-  episodes <- episodes %>%
-    mutate(
-      confidence_score = case_when(
-        # High confidence: HIP episodes with gestational age
-        algorithm_used == "HIP" & !is.na(gestational_age_days) ~ "High",
-        
-        # High confidence: Merged episodes (both algorithms agree)
-        algorithm_used == "MERGED" ~ "High",
-        
-        # Medium confidence: HIP episodes without gestational age
-        algorithm_used == "HIP" & is.na(gestational_age_days) ~ "Medium",
-        
-        # Medium confidence: PPS episodes with multiple supporting records
-        algorithm_used == "PPS" ~ "Medium",
-        
-        # Low confidence: Everything else
-        TRUE ~ "Low"
-      )
-    )
-  
-  return(episodes)
-}
 
 #' Save Results
 #'

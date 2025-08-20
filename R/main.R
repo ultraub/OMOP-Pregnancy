@@ -18,7 +18,6 @@
 #'   - outcome_category: Type of outcome (LB, SB, AB, SA, ECT, DELIV, PREG)
 #'   - gestational_age_days: Estimated gestational age at outcome
 #'   - algorithm_used: HIP, PPS, or MERGED
-#'   - confidence_score: High, Medium, or Low based on data quality
 #'
 #' @export
 #'
@@ -118,16 +117,12 @@ run_pregnancy_identification <- function(
     gestational_data = cohort_data$gestational_timing
   )
   
-  # Step 7: Quality scoring
-  message("\nStep 7: Assigning confidence scores...")
-  final_episodes <- assign_confidence_scores(final_episodes)
-  
   # Print summary statistics
   print_summary_statistics(final_episodes)
   
-  # Step 8: Optional - Save results
+  # Step 7: Optional - Save results
   if (!is.null(output_folder)) {
-    message(sprintf("\nStep 8: Saving results to %s", output_folder))
+    message(sprintf("\nStep 7: Saving results to %s", output_folder))
     save_results(
       episodes = final_episodes,
       output_folder = output_folder,
@@ -207,16 +202,4 @@ print_summary_statistics <- function(episodes) {
                     100 * algo_counts$n[i] / nrow(episodes)))
   }
   
-  # By confidence
-  message("\nEpisodes by confidence:")
-  conf_counts <- episodes %>%
-    count(confidence_score) %>%
-    arrange(desc(n))
-  
-  for (i in 1:nrow(conf_counts)) {
-    message(sprintf("  %s: %d (%.1f%%)", 
-                    conf_counts$confidence_score[i],
-                    conf_counts$n[i],
-                    100 * conf_counts$n[i] / nrow(episodes)))
-  }
 }

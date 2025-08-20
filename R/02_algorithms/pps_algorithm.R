@@ -17,20 +17,30 @@ run_pps_algorithm <- function(cohort_data, pps_concepts) {
     return(data.frame())
   }
   
+  message("Running PPS algorithm (this may take several minutes for large cohorts)...")
+  
   # Step 1: Prepare timing data with age filtering
+  message("  Step 1: Preparing gestational timing data...")
   eligible_timing <- prepare_pps_data(timing_data, cohort_data$persons)
   
   if (nrow(eligible_timing) == 0) {
     return(data.frame())
   }
   
+  n_records <- nrow(eligible_timing)
+  n_persons <- length(unique(eligible_timing$person_id))
+  message(sprintf("  Found %d gestational timing records for %d persons", n_records, n_persons))
+  
   # Step 2: Assign episodes with retry and bridging logic
+  message("  Step 2: Assigning episodes (most time-consuming step)...")
   episodes_raw <- assign_pps_episodes(eligible_timing)
   
   # Step 3: Calculate episode boundaries
+  message("  Step 3: Calculating episode boundaries...")
   episode_boundaries <- calculate_pps_boundaries(episodes_raw)
   
   # Step 4: Identify outcomes for each episode
+  message("  Step 4: Identifying pregnancy outcomes...")
   episodes_with_outcomes <- identify_pps_outcomes(
     episode_boundaries, 
     cohort_data,
@@ -38,10 +48,14 @@ run_pps_algorithm <- function(cohort_data, pps_concepts) {
   )
   
   # Step 5: Validate and finalize episodes
+  message("  Step 5: Validating episodes...")
   final_episodes <- validate_pps_episodes(episodes_with_outcomes)
   
   # Add algorithm identifier
   final_episodes$algorithm_used <- "PPS"
+  
+  n_episodes <- nrow(final_episodes)
+  message(sprintf("PPS algorithm completed: identified %d pregnancy episodes", n_episodes))
   
   return(final_episodes)
 }
@@ -79,11 +93,31 @@ prepare_pps_data <- function(timing_data, persons_data) {
 #' @noRd
 assign_pps_episodes <- function(timing_data) {
   
-  # Process each person separately
+  # Get unique persons for progress tracking
+  unique_persons <- unique(timing_data$person_id)
+  n_persons <- length(unique_persons)
+  
+  message(sprintf("  Processing PPS episodes for %d persons...", n_persons))
+  
+  # Process each person separately with progress updates
   episodes <- timing_data %>%
     group_by(person_id) %>%
-    group_modify(~assign_person_episodes(.x)) %>%
+    group_modify(function(person_data, keys) {
+      # Get current person index for progress
+      person_idx <- which(unique_persons == keys$person_id)
+      
+      # Show progress every 100 persons or at milestones
+      if (person_idx %% 100 == 0 || person_idx == 1 || person_idx == n_persons) {
+        message(sprintf("    Processing person %d of %d (%.1f%%)", 
+                       person_idx, n_persons, 
+                       (person_idx / n_persons) * 100))
+      }
+      
+      assign_person_episodes(person_data)
+    }) %>%
     ungroup()
+  
+  message("  Completed PPS episode assignment")
   
   return(episodes)
 }
@@ -105,6 +139,11 @@ assign_person_episodes <- function(personlist) {
   person_episodes[1] <- 1
   current_episode <- 1
   
+  # Show progress for persons with many records (potential bottleneck)
+  if (n_records > 50) {
+    message(sprintf("      Person has %d records (may take longer)", n_records))
+  }
+  
   # Iterate through records to assign episodes
   for (i in 2:n_records) {
     
@@ -114,6 +153,7 @@ assign_person_episodes <- function(personlist) {
     ) / 30.44  # Average days per month
     
     # Check temporal consistency with retry logic
+    # This is O(n²) for each record, making overall O(n³)
     agreement_t_c <- records_comparison(personlist, i)
     
     # Apply decision logic with 1-month retry period (from All of Us)

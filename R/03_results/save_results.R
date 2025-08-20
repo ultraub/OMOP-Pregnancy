@@ -63,7 +63,6 @@ save_to_database_tables <- function(episodes, connection, results_schema) {
       outcome_category VARCHAR(20),
       gestational_age_days INT,
       algorithm_used VARCHAR(20),
-      confidence_score VARCHAR(20),
       analysis_date DATE,
       analysis_version VARCHAR(20)
     );
@@ -153,18 +152,6 @@ create_episode_summary <- function(episodes) {
       .groups = "drop"
     )
   
-  # By confidence (if available)
-  if ("confidence_score" %in% names(episodes)) {
-    confidence_summary <- episodes %>%
-      group_by(confidence_score) %>%
-      summarise(
-        count = n(),
-        pct = n() / nrow(episodes) * 100,
-        .groups = "drop"
-      )
-  } else {
-    confidence_summary <- NULL
-  }
   
   # Gestational age distribution
   gest_summary <- episodes %>%
@@ -194,7 +181,6 @@ create_episode_summary <- function(episodes) {
     overall = as.data.frame(summary_stats),
     by_outcome = outcome_summary,
     by_algorithm = algorithm_summary,
-    by_confidence = confidence_summary,
     gestational_age = gest_summary,
     by_year = temporal_summary
   )
