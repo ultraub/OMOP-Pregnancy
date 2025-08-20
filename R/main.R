@@ -90,7 +90,8 @@ run_pregnancy_identification <- function(
   message("\nStep 3: Running HIP algorithm (pure R)...")
   hip_episodes <- run_hip_algorithm(
     cohort_data = cohort_data,
-    matcho_limits = concepts$matcho_limits
+    matcho_limits = concepts$matcho_limits,
+    matcho_outcome_limits = concepts$matcho_outcome_limits
   )
   message(sprintf("  - Identified %d HIP episodes", nrow(hip_episodes)))
   

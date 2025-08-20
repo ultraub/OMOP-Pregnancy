@@ -63,15 +63,24 @@ add_episode_windows <- function(episodes, source) {
       lookback_date = episode_end_date - 14,
       
       # Calculate expected end based on gestational info
-      expected_end = case_when(
-        # If we have gestational age column and it's not NA, use it
-        has_gest_days & !is.na(gestational_age_days) ~ 
-          episode_start_date + gestational_age_days + 30,
-        # Otherwise use outcome-based estimate
-        outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + 30,
-        outcome_category %in% c("ECT", "AB", "SA") ~ episode_end_date + 60,
-        TRUE ~ episode_end_date + 90
-      )
+      expected_end = if (has_gest_days) {
+        case_when(
+          # If we have gestational age value, use it
+          !is.na(gestational_age_days) ~ 
+            episode_start_date + gestational_age_days + 30,
+          # Otherwise use outcome-based estimate
+          outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + 30,
+          outcome_category %in% c("ECT", "AB", "SA") ~ episode_end_date + 60,
+          TRUE ~ episode_end_date + 90
+        )
+      } else {
+        case_when(
+          # Use outcome-based estimate when no gestational_age_days column
+          outcome_category %in% c("LB", "SB", "DELIV") ~ episode_end_date + 30,
+          outcome_category %in% c("ECT", "AB", "SA") ~ episode_end_date + 60,
+          TRUE ~ episode_end_date + 90
+        )
+      }
     ) %>%
     group_by(person_id) %>%
     arrange(episode_start_date) %>%
@@ -81,14 +90,14 @@ add_episode_windows <- function(episodes, source) {
       
       # Lookahead window: minimum of next episode or expected end
       lookahead_date = pmin(
-        coalesce(next_episode_start - 1, as.Date("2999-01-01")),
+        coalesce(next_episode_start - 1, safe_as_date("2999-01-01")),
         expected_end,
         na.rm = TRUE
       ),
       
       # Create expanded window for overlap detection
-      window_start = as.Date(pmin(episode_start_date, lookback_date)),
-      window_end = as.Date(pmax(episode_end_date, lookahead_date))
+      window_start = safe_as_date(pmin(episode_start_date, lookback_date)),
+      window_end = safe_as_date(pmax(episode_end_date, lookahead_date))
     ) %>%
     ungroup()
   
@@ -159,12 +168,12 @@ identify_episode_overlaps <- function(hip_episodes, pps_episodes) {
     ) %>%
     mutate(
       # Calculate overlap metrics
-      core_overlap_start = as.Date(pmax(hip_start, pps_start)),
-      core_overlap_end = as.Date(pmin(hip_end, pps_end)),
+      core_overlap_start = safe_as_date(pmax(hip_start, pps_start)),
+      core_overlap_end = safe_as_date(pmin(hip_end, pps_end)),
       core_overlap_days = pmax(0, as.numeric(core_overlap_end - core_overlap_start + 1)),
       
       # Calculate window overlap
-      window_overlap_start = as.Date(pmax(hip_window_start, pps_window_start)),
+      window_overlap_start = safe_as_date(pmax(hip_window_start, pps_window_start)),
       window_overlap_end = as.Date(pmin(hip_window_end, pps_window_end)),
       window_overlap_days = as.numeric(window_overlap_end - window_overlap_start + 1),
       

@@ -77,7 +77,7 @@ prepare_pps_data <- function(timing_data, persons_data) {
       day_of_birth = ifelse(is.na(day_of_birth), 1, day_of_birth),
       
       # Calculate age at event
-      birth_date = as.Date(paste(year_of_birth, month_of_birth, day_of_birth, sep = "-")),
+      birth_date = safe_as_date(paste(year_of_birth, month_of_birth, day_of_birth, sep = "-")),
       age_at_event = as.numeric(event_date - birth_date) / 365.25,
       
       # Filter to reproductive age (15-55)
@@ -106,11 +106,16 @@ assign_pps_episodes <- function(timing_data) {
       # Get current person index for progress
       person_idx <- which(unique_persons == keys$person_id)
       
-      # Show progress every 100 persons or at milestones
-      if (person_idx %% 100 == 0 || person_idx == 1 || person_idx == n_persons) {
-        message(sprintf("    Processing person %d of %d (%.1f%%)", 
-                       person_idx, n_persons, 
-                       (person_idx / n_persons) * 100))
+      # Calculate percentage
+      pct_complete <- round((person_idx / n_persons) * 100)
+      
+      # Show progress every 5% or at completion
+      if (pct_complete %% 5 == 0 && pct_complete != 0) {
+        # Only show if we haven't shown this percentage yet
+        if (!exists("last_pct_shown") || last_pct_shown < pct_complete) {
+          message(sprintf("    %d%% complete", pct_complete))
+          assign("last_pct_shown", pct_complete, envir = parent.frame())
+        }
       }
       
       assign_person_episodes(person_data)
@@ -139,10 +144,7 @@ assign_person_episodes <- function(personlist) {
   person_episodes[1] <- 1
   current_episode <- 1
   
-  # Show progress for persons with many records (potential bottleneck)
-  if (n_records > 50) {
-    message(sprintf("      Person has %d records (may take longer)", n_records))
-  }
+  # Progress is tracked at the parent level, no need for per-person warnings
   
   # Iterate through records to assign episodes
   for (i in 2:n_records) {
@@ -174,8 +176,8 @@ assign_person_episodes <- function(personlist) {
   valid_episodes <- personlist %>%
     group_by(person_episode_number) %>%
     mutate(
-      episode_start = as.Date(min(event_date)),
-      episode_end = as.Date(max(event_date)),
+      episode_start = safe_as_date(min(event_date)),
+      episode_end = safe_as_date(max(event_date)),
       episode_length_months = as.numeric(episode_end - episode_start) / 30.44,
       is_valid = episode_length_months <= 12
     ) %>%
@@ -203,7 +205,7 @@ records_comparison <- function(personlist, i) {
     # Obtain the difference in actual dates (in months)
     delta_t <- as.numeric(
       difftime(personlist$event_date[i], personlist$event_date[i - j], units = "days")
-    ) / 30
+    ) / 30.44  # Use consistent month length
     
     # Get expected month differences with 2-month leniency
     adjConceptMonths_MaxExpectedDelta <- personlist$max_month[i] - personlist$min_month[i - j] + 2
@@ -232,7 +234,7 @@ records_comparison <- function(personlist, i) {
       # Get time difference between bridge records
       bridge_delta_t <- as.numeric(
         difftime(personlist$event_date[i + e], personlist$event_date[i - s], units = "days")
-      ) / 30
+      ) / 30.44  # Use consistent month length
       
       # Get expected differences for bridge
       bridge_MaxExpectedDelta <- personlist$max_month[i + e] - personlist$min_month[i - s] + 2
@@ -259,8 +261,8 @@ calculate_pps_boundaries <- function(episodes_raw) {
     group_by(person_id, person_episode_number) %>%
     summarise(
       # Episode boundaries
-      episode_min_date = as.Date(min(event_date)),
-      episode_max_date = as.Date(max(event_date)),
+      episode_min_date = safe_as_date(min(event_date)),
+      episode_max_date = safe_as_date(max(event_date)),
       
       # Gestational timing info
       earliest_ga_min = min(min_month, na.rm = TRUE),
@@ -324,7 +326,7 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
       
       # Lookahead window: minimum of next episode or expected end
       lookahead_date = pmin(
-        coalesce(next_episode_start - 1, as.Date("2999-01-01")),
+        coalesce(next_episode_start - 1, safe_as_date("2999-01-01")),
         expected_end_date,
         na.rm = TRUE
       )
@@ -381,15 +383,15 @@ validate_pps_episodes <- function(episodes) {
   validated <- episodes %>%
     mutate(
       # Calculate estimated start date
-      episode_start_date = as.Date(case_when(
+      episode_start_date = safe_as_date(case_when(
         # Use gestational timing if available
-        !is.na(earliest_ga_min) ~ as.Date(episode_min_date) - (earliest_ga_min * 30),
+        !is.na(earliest_ga_min) ~ safe_as_date(episode_min_date) - (earliest_ga_min * 30),
         # Otherwise assume start is 3 months before first concept
-        TRUE ~ as.Date(episode_min_date) - 90
+        TRUE ~ safe_as_date(episode_min_date) - 90
       )),
       
       # End date is outcome date
-      episode_end_date = as.Date(outcome_date),
+      episode_end_date = safe_as_date(outcome_date),
       
       # Calculate gestational age
       gestational_age_days = as.numeric(episode_end_date - episode_start_date)

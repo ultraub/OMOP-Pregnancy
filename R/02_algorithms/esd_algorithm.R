@@ -617,40 +617,6 @@ remove_GW_outliers <- function(gw_concepts_list) {
   return(filtered_dates)
 }
 
-#' Safely convert to Date type
-#' @noRd
-safe_as_date <- function(x) {
-  # If already Date, return as-is
-  if (inherits(x, "Date")) {
-    return(x)
-  }
-  
-  # If POSIXct/POSIXlt, convert
-  if (inherits(x, c("POSIXct", "POSIXlt"))) {
-    return(as.Date(x))
-  }
-  
-  # If numeric (SQL Server date), convert
-  if (is.numeric(x)) {
-    # SQL Server dates are days since 1900-01-01
-    # Check if it looks like SQL Server date (< 100000)
-    if (all(x[!is.na(x)] < 100000)) {
-      return(as.Date(x, origin = "1899-12-30"))
-    } else {
-      # Likely Unix timestamp
-      return(as.Date(x/86400, origin = "1970-01-01"))
-    }
-  }
-  
-  # If character, parse
-  if (is.character(x)) {
-    return(as.Date(x))
-  }
-  
-  # Default: try as.Date
-  return(as.Date(x))
-}
-
 #' Apply ESD refinement to episodes
 #' @export
 refine_episode_dates <- function(episodes, cohort_data, pps_concepts) {
