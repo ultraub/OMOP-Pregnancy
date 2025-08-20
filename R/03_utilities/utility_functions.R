@@ -1,6 +1,6 @@
 # Global constant for consistent month length calculations
-# Using 365.25/12 for accurate month-to-day conversions across all algorithms
-DAYS_PER_MONTH <- 30.437
+# Using 30 days per month to match All of Us implementation
+DAYS_PER_MONTH <- 30
 
 #' Calculate Episode Dates
 #'

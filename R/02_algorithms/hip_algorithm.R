@@ -429,10 +429,12 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
 add_gestational_age_info <- function(episodes, all_records) {
   
   # Get gestational age records
+  # Including concept 3050433 - Gestational age in weeks Calculated
   gest_records <- all_records %>%
     filter(
       !is.na(gest_value) | 
       category == "GEST" |
+      concept_id %in% c(3002209, 3048230, 3012266, 3050433) |  # Specific gestational age concepts
       grepl("gestation", concept_name, ignore.case = TRUE)
     )
   
@@ -473,6 +475,14 @@ add_gestational_age_info <- function(episodes, all_records) {
       has_gestational_info = !is.na(gestational_weeks),
       gestational_weeks = ifelse(is.infinite(gestational_weeks), NA_real_, gestational_weeks)
     )
+  
+  # NEW: Identify gestation-only episodes (pregnancies with only gestational timing, no outcomes)
+  gestation_only_episodes <- identify_gestation_only_episodes(gest_records, result)
+  
+  # Combine outcome-based episodes with gestation-only episodes
+  if (nrow(gestation_only_episodes) > 0) {
+    result <- bind_rows(result, gestation_only_episodes)
+  }
   
   return(result)
 }
@@ -520,6 +530,124 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
       outcome_category,
       gestational_age_days,
       has_gestational_info
+    )
+  
+  return(result)
+}
+
+#' Identify gestation-only episodes (pregnancies with only gestational timing)
+#' @noRd
+identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
+  
+  if (nrow(gest_records) == 0) {
+    return(data.frame())
+  }
+  
+  # Get gestational age values from specific concepts
+  gest_only <- gest_records %>%
+    filter(
+      !is.na(value_as_number) | !is.na(gest_value),
+      # Valid gestational weeks (0-44)
+      coalesce(gest_value, value_as_number) > 0,
+      coalesce(gest_value, value_as_number) <= 44
+    ) %>%
+    mutate(
+      gest_weeks = coalesce(gest_value, value_as_number)
+    ) %>%
+    select(person_id, gest_date = event_date, gest_weeks)
+  
+  if (nrow(gest_only) == 0) {
+    return(data.frame())
+  }
+  
+  # Group gestational records into potential episodes
+  # A new episode starts when gestational age decreases or there's a large time gap
+  potential_episodes <- gest_only %>%
+    group_by(person_id) %>%
+    arrange(gest_date) %>%
+    mutate(
+      prev_weeks = lag(gest_weeks),
+      prev_date = lag(gest_date),
+      days_diff = as.numeric(gest_date - prev_date),
+      weeks_diff = gest_weeks - prev_weeks,
+      
+      # New episode if: gestational age decreases OR large time gap (>70 days)
+      new_episode = is.na(prev_weeks) | 
+                    weeks_diff <= 0 | 
+                    days_diff > 70 |
+                    # Or if time progression doesn't match gestational progression
+                    (weeks_diff > 0 & days_diff > (weeks_diff * 7 + 28)),
+      
+      episode_num = cumsum(new_episode)
+    ) %>%
+    group_by(person_id, episode_num) %>%
+    summarise(
+      first_gest_date = min(gest_date),
+      last_gest_date = max(gest_date),
+      min_gest_weeks = min(gest_weeks),
+      max_gest_weeks = max(gest_weeks),
+      n_gest_records = n(),
+      .groups = "drop"
+    )
+  
+  # Calculate episode start and end dates based on gestational progression
+  gest_episodes <- potential_episodes %>%
+    mutate(
+      # Start date: first gestation date minus gestational weeks at that time
+      episode_start_date = as.Date(first_gest_date - (min_gest_weeks * 7)),
+      # End date: last gestation date plus remaining pregnancy time
+      episode_end_date = as.Date(last_gest_date + ((40 - max_gest_weeks) * 7)),
+      # Category is PREG for gestation-only
+      outcome_category = "PREG",
+      outcome_date = episode_end_date,
+      has_gestational_info = TRUE,
+      gestational_weeks = max_gest_weeks,
+      gestational_age_days = as.numeric(episode_end_date - episode_start_date)
+    )
+  
+  # Remove episodes that overlap with existing outcome-based episodes
+  # This prevents double-counting
+  if (nrow(existing_episodes) > 0) {
+    gest_episodes <- gest_episodes %>%
+      anti_join(
+        existing_episodes %>%
+          select(person_id, start = episode_start_date, end = episode_end_date),
+        by = join_by(
+          person_id,
+          between(episode_start_date, start, end)
+        )
+      ) %>%
+      anti_join(
+        existing_episodes %>%
+          select(person_id, start = episode_start_date, end = episode_end_date),
+        by = join_by(
+          person_id,
+          between(episode_end_date, start, end)
+        )
+      )
+  }
+  
+  # Format to match existing episode structure
+  result <- gest_episodes %>%
+    filter(
+      # Valid pregnancy duration (20-320 days)
+      gestational_age_days >= 140,
+      gestational_age_days <= 320
+    ) %>%
+    mutate(
+      episode_number = NA_integer_,  # Will be renumbered later
+      n_gest_records = as.numeric(n_gest_records)
+    ) %>%
+    select(
+      person_id,
+      episode_number,
+      episode_start_date,
+      episode_end_date,
+      outcome_date,
+      outcome_category,
+      has_gestational_info,
+      gestational_weeks,
+      n_gest_records
     )
   
   return(result)
