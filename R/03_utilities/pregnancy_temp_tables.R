@@ -20,117 +20,92 @@
 create_person_temp_table <- function(connection, person_ids, table_name = "#person_cohort") {
   
   if (length(person_ids) == 0) {
-    warning("No person IDs provided for temp table")
+    warning("No person IDs provided")
     return(NULL)
   }
   
-  message(sprintf("  Creating person cohort temp table with %d persons...", 
-                  length(person_ids)))
-  
-  # Get database type
   dbms <- attr(connection, "dbms")
   if (is.null(dbms)) {
     dbms <- "sql server"
   }
   
-  # Get results schema for Spark/Databricks
-  results_schema <- attr(connection, "results_schema")
+  message(sprintf("  Creating person cohort with %d persons...", length(person_ids)))
   
-  # Check batch size configuration
-  batch_size <- as.integer(Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "50000"))
-  
-  # For very large cohorts, process in batches to avoid memory issues
-  if (length(person_ids) > batch_size && dbms %in% c("spark", "databricks")) {
-    message(sprintf("  Large cohort detected. Processing in batches of %d...", batch_size))
+  # For Databricks/Spark: Use temporary view (instant, no data movement)
+  if (dbms %in% c("spark", "databricks")) {
+    view_name <- gsub("^#", "", table_name)
     
-    # Process first batch to create the table
-    first_batch <- person_ids[1:min(batch_size, length(person_ids))]
-    person_df <- data.frame(
-      person_id = first_batch,
-      stringsAsFactors = FALSE
-    )
+    # Create view with VALUES clause - much faster than inserting data
+    # Split into chunks if needed to avoid SQL length limits
+    max_ids_per_query <- 10000
     
-    # Adjust table name based on platform
-    if (dbms == "sql server" && !grepl("^#", table_name)) {
-      table_name <- paste0("#", table_name)
-    } else if (dbms %in% c("spark", "databricks")) {
-      # Remove # prefix for Spark
-      table_name <- gsub("^#", "", table_name)
-    }
-    
-    # Create initial table with first batch
-    temp_table <- ohdsi_create_temp_table(
-      connection = connection,
-      data = person_df,
-      table_name = table_name,
-      resultsDatabaseSchema = results_schema,
-      overwrite = TRUE
-    )
-    
-    # Append remaining batches if any
-    if (length(person_ids) > batch_size) {
-      for (i in seq(batch_size + 1, length(person_ids), by = batch_size)) {
-        batch_end <- min(i + batch_size - 1, length(person_ids))
-        batch_ids <- person_ids[i:batch_end]
+    if (length(person_ids) <= max_ids_per_query) {
+      sql <- sprintf(
+        "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM (VALUES %s) AS t(person_id)",
+        view_name,
+        paste0("(", person_ids, ")", collapse = ",")
+      )
+      DatabaseConnector::executeSql(connection, sql)
+    } else {
+      # For very large lists, create a temp table instead
+      # But do it efficiently with CREATE TABLE AS SELECT
+      results_schema <- attr(connection, "results_schema")
+      full_table_name <- get_full_table_name(connection, view_name, schema = results_schema)
+      
+      # Create table with first batch
+      first_batch <- person_ids[1:max_ids_per_query]
+      sql <- sprintf(
+        "CREATE OR REPLACE TABLE %s AS SELECT * FROM (VALUES %s) AS t(person_id)",
+        full_table_name,
+        paste0("(", first_batch, ")", collapse = ",")
+      )
+      DatabaseConnector::executeSql(connection, sql)
+      
+      # Insert remaining in larger batches using INSERT INTO
+      for (i in seq(max_ids_per_query + 1, length(person_ids), by = max_ids_per_query)) {
+        batch_end <- min(i + max_ids_per_query - 1, length(person_ids))
+        batch <- person_ids[i:batch_end]
         
-        batch_df <- data.frame(
-          person_id = batch_ids,
-          stringsAsFactors = FALSE
+        sql <- sprintf(
+          "INSERT INTO %s SELECT * FROM (VALUES %s) AS t(person_id)",
+          full_table_name,
+          paste0("(", batch, ")", collapse = ",")
         )
-        
-        message(sprintf("  Appending batch %d-%d...", i, batch_end))
-        
-        # Get the full table name for Spark
-        full_table_name <- table_name
-        if (dbms %in% c("spark", "databricks") && !is.null(results_schema)) {
-          full_table_name <- paste(results_schema, table_name, sep = ".")
-        }
-        
-        # Append to existing table
-        bulk_load <- as.logical(Sys.getenv("DATABASE_CONNECTOR_BULK_UPLOAD", "FALSE"))
-        DatabaseConnector::insertTable(
-          connection = connection,
-          tableName = full_table_name,
-          data = batch_df,
-          createTable = FALSE,  # Table already exists
-          tempTable = FALSE,
-          bulkLoad = bulk_load
-          # Note: insertTable appends by default when createTable = FALSE
-        )
+        DatabaseConnector::executeSql(connection, sql)
       }
+      view_name <- full_table_name
     }
+    
+    message(sprintf("  Created %s", view_name))
+    # Return the view name as it will be used in queries
+    # For temporary views, just the base name without schema
+    # For tables, the full qualified name
+    if (length(person_ids) <= max_ids_per_query) {
+      return(view_name)  # Just the base name for temporary view
+    } else {
+      return(full_table_name)  # Full qualified name for table
+    }
+    
   } else {
-    # Small cohort or non-Spark platform - process all at once
+    # SQL Server: Keep using temp tables (they're already fast)
+    if (!grepl("^#", table_name)) {
+      table_name <- paste0("#", table_name)
+    }
+    
     person_df <- data.frame(
       person_id = person_ids,
       stringsAsFactors = FALSE
     )
     
-    # Adjust table name based on platform
-    if (dbms == "sql server" && !grepl("^#", table_name)) {
-      table_name <- paste0("#", table_name)
-    } else if (dbms %in% c("spark", "databricks")) {
-      # Remove # prefix for Spark
-      table_name <- gsub("^#", "", table_name)
-    }
-    
-    # Use the unified temp table creation function
     temp_table <- ohdsi_create_temp_table(
       connection = connection,
       data = person_df,
       table_name = table_name,
-      resultsDatabaseSchema = results_schema,
       overwrite = TRUE
     )
-  }
-  
-  message(sprintf("  Created temp table %s", table_name))
-  
-  # Return the table name for backward compatibility
-  if (inherits(temp_table, "tbl")) {
-    return(table_name)
-  } else {
-    return(temp_table)
+    
+    message(sprintf("  Created temp table %s", table_name))
+    return(if (inherits(temp_table, "tbl")) table_name else temp_table)
   }
 }
 
@@ -246,48 +221,65 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
         # Remove # prefix for Spark
         clean_table_name <- gsub("^#", "", table_name)
         
-        # Build full qualified name FIRST, before any DROP attempts
-        # This ensures we're looking for the table with the same name it was created with
-        if (!is.null(results_schema) && !grepl("\\.", clean_table_name)) {
-          # Add schema prefix if not already present
-          full_table_name <- paste(results_schema, clean_table_name, sep = ".")
+        # For person_cohort, it's created as a TEMPORARY VIEW without schema
+        # For other tables, they might have schema qualification
+        if (clean_table_name == "person_cohort") {
+          # person_cohort is created as a temporary view without schema prefix
+          drop_view_sql <- SqlRender::render(
+            "DROP VIEW IF EXISTS @table_name",
+            table_name = clean_table_name
+          )
+          
+          tryCatch(
+            {
+              DatabaseConnector::executeSql(connection, drop_view_sql)
+              dropped <- dropped + 1
+            },
+            error = function(e) {
+              # Silently ignore - view might not exist
+            }
+          )
         } else {
-          full_table_name <- clean_table_name
+          # Other tables might have schema qualification
+          if (!is.null(results_schema) && !grepl("\\.", clean_table_name)) {
+            # Add schema prefix if not already present
+            full_table_name <- paste(results_schema, clean_table_name, sep = ".")
+          } else {
+            full_table_name <- clean_table_name
+          }
+          
+          # Try dropping as view first
+          drop_view_sql <- SqlRender::render(
+            "DROP VIEW IF EXISTS @table_name",
+            table_name = full_table_name
+          )
+          
+          tryCatch(
+            {
+              DatabaseConnector::executeSql(connection, drop_view_sql)
+              dropped <- dropped + 1
+            },
+            error = function(e) {
+              # Silently ignore - view might not exist
+            }
+          )
+          
+          # Also try dropping as table (for uploaded data)
+          drop_table_sql <- SqlRender::render(
+            "DROP TABLE IF EXISTS @table_name",
+            table_name = full_table_name
+          )
+          
+          tryCatch(
+            {
+              DatabaseConnector::executeSql(connection, drop_table_sql)
+              dropped <- dropped + 1
+            },
+            error = function(e) {
+              # Silently ignore - table might not exist
+            }
+          )
         }
-        
-        # Try dropping as view first (for lazy queries)
-        # Use IF EXISTS to prevent errors
-        drop_view_sql <- SqlRender::render(
-          "DROP VIEW IF EXISTS @table_name",
-          table_name = full_table_name
-        )
-        
-        tryCatch(
-          {
-            DatabaseConnector::executeSql(connection, drop_view_sql)
-            dropped <- dropped + 1
-          },
-          error = function(e) {
-            # Silently ignore - view might not exist
-          }
-        )
-        
-        # Also try dropping as table (for uploaded data)
-        # Use IF EXISTS to prevent errors
-        drop_table_sql <- SqlRender::render(
-          "DROP TABLE IF EXISTS @table_name",
-          table_name = full_table_name
-        )
-        
-        tryCatch(
-          {
-            DatabaseConnector::executeSql(connection, drop_table_sql)
-            dropped <- dropped + 1
-          },
-          error = function(e) {
-            # Silently ignore - table might not exist
-          }
-        )
         
         next  # Skip the final execute at the end
       } else {

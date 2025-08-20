@@ -39,20 +39,65 @@ extract_pregnancy_cohort <- function(
   
   tryCatch({
     
-    message("  Extracting person demographics...")
-    persons <- extract_persons(
-      connection, cdm_schema, target_dialect,
-      min_age, max_age, use_all_of_us_gender
-    )
+    message("  Creating person cohort view...")
     
-    # Get person IDs for filtering
-    person_ids <- unique(persons$person_id)
-    message(sprintf("  Found %d persons", length(person_ids)))
+    # For Databricks/Spark: Create view directly without extracting to R
+    if (target_dialect %in% c("spark", "databricks") && use_temp_tables) {
+      # Gender concept IDs
+      if (use_all_of_us_gender) {
+        gender_concepts <- c(45878463, 45880669, 903096, 903079, 1177221)
+      } else {
+        gender_concepts <- c(8532, 8507, 45878463)  # Female, FEMALE, Woman
+      }
+      
+      # Create view directly from SQL - no data extraction to R!
+      sql <- SqlRender::render("
+        CREATE OR REPLACE TEMPORARY VIEW person_cohort AS
+        SELECT DISTINCT person_id
+        FROM @cdm_schema.person
+        WHERE gender_concept_id IN (@gender_concepts)
+          AND year_of_birth >= YEAR(CURRENT_DATE) - @max_age
+          AND year_of_birth <= YEAR(CURRENT_DATE) - @min_age",
+        cdm_schema = cdm_schema,
+        gender_concepts = gender_concepts,
+        min_age = min_age,
+        max_age = max_age
+      )
+      
+      sql <- SqlRender::translate(sql, targetDialect = target_dialect)
+      DatabaseConnector::executeSql(connection, sql)
+      
+      person_temp <- "person_cohort"
+      temp_tables_created <- c(temp_tables_created, "person_cohort")
+      
+      # Still need persons data for demographics
+      persons <- extract_persons(
+        connection, cdm_schema, target_dialect,
+        min_age, max_age, use_all_of_us_gender
+      )
+      message(sprintf("  Created person cohort view with persons aged %d-%d", min_age, max_age))
+      
+    } else {
+      # For SQL Server or when not using temp tables: Keep existing approach
+      message("  Extracting person demographics...")
+      persons <- extract_persons(
+        connection, cdm_schema, target_dialect,
+        min_age, max_age, use_all_of_us_gender
+      )
+      
+      # Get person IDs for filtering
+      person_ids <- unique(persons$person_id)
+      message(sprintf("  Found %d persons", length(person_ids)))
+      
+      if (use_temp_tables && length(person_ids) > 0) {
+        # Create person cohort temp table
+        person_temp <- create_person_temp_table(connection, person_ids)
+        # Store the base name for cleanup tracking
+        temp_tables_created <- c(temp_tables_created, "person_cohort")
+      }
+    }
     
-    if (use_temp_tables && length(person_ids) > 0) {
-      # Create person cohort temp table
-      person_temp <- create_person_temp_table(connection, person_ids)
-      temp_tables_created <- c(temp_tables_created, person_temp)
+    if (use_temp_tables && exists("person_temp")) {
       
       # Create concept temp tables by domain
       message("  Creating concept temp tables...")
@@ -146,6 +191,11 @@ extract_pregnancy_cohort <- function(
     } else {
       # Fall back to original method for small cohorts
       message("  Using direct extraction (small cohort or temp tables disabled)...")
+      
+      # Make sure we have person_ids for non-temp table approach
+      if (!exists("person_ids")) {
+        person_ids <- unique(persons$person_id)
+      }
       
       conditions <- extract_domain_table(
         connection, cdm_schema, target_dialect,
