@@ -16,10 +16,14 @@ merge_pregnancy_episodes <- function(hip_episodes, pps_episodes, cohort_data = N
     if (is.null(pps_episodes) || nrow(pps_episodes) == 0) {
       return(data.frame())
     }
+    # Ensure PPS episodes have algorithm_used column
+    pps_episodes$algorithm_used <- "PPS"
     return(prepare_final_episodes(pps_episodes))
   }
   
   if (is.null(pps_episodes) || nrow(pps_episodes) == 0) {
+    # Ensure HIP episodes have algorithm_used column
+    hip_episodes$algorithm_used <- "HIP"
     return(prepare_final_episodes(hip_episodes))
   }
   
@@ -521,29 +525,46 @@ finalize_merged_episodes <- function(episodes) {
 #' Prepare final episode structure
 #' @noRd
 prepare_final_episodes <- function(episodes) {
+  
+  # Ensure required columns exist
+  if (!all(c("episode_start_date", "episode_end_date") %in% names(episodes))) {
+    stop("Episodes must have episode_start_date and episode_end_date columns")
+  }
+  
   episodes %>%
     mutate(
+      # Ensure dates are Date type (handle NA values safely)
+      episode_start_date = as.Date(episode_start_date),
+      episode_end_date = as.Date(episode_end_date),
+      
       # Ensure algorithm_used exists
       algorithm_used = ifelse(
-        !exists("algorithm_used", where = episodes),
+        !"algorithm_used" %in% names(episodes),
         "UNKNOWN",
         algorithm_used
       ),
       
       # Calculate episode length in months (All of Us uses 30.25)
-      recorded_episode_length = as.numeric(episode_end_date - episode_start_date) / 30.25,
+      # Handle NA dates gracefully
+      recorded_episode_length = ifelse(
+        !is.na(episode_end_date) & !is.na(episode_start_date),
+        as.numeric(episode_end_date - episode_start_date) / 30.25,
+        NA_real_
+      ),
       
       # Set flags based on algorithm
       HIP_flag = case_when(
         algorithm_used == "HIP" ~ 1L,
         algorithm_used == "MERGED" ~ 1L,
         algorithm_used == "HIP_chosen" ~ 1L,
+        algorithm_used == "HIP_only" ~ 1L,
         TRUE ~ 0L
       ),
       PPS_flag = case_when(
         algorithm_used == "PPS" ~ 1L,
         algorithm_used == "MERGED" ~ 1L,
         algorithm_used == "PPS_chosen" ~ 1L,
+        algorithm_used == "PPS_only" ~ 1L,
         TRUE ~ 0L
       ),
       
