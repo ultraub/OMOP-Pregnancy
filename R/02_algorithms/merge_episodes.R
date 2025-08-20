@@ -45,6 +45,9 @@ merge_pregnancy_episodes <- function(hip_episodes, pps_episodes, cohort_data = N
   # Step 5: Finalize and renumber episodes
   final_episodes <- finalize_merged_episodes(resolved_episodes)
   
+  # Step 6: Prepare final output structure matching All of Us
+  final_episodes <- prepare_final_episodes(final_episodes)
+  
   return(final_episodes)
 }
 
@@ -239,7 +242,13 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
       episode_start_date = as.Date(pmin(hip_start, pps_start)),
       episode_end_date = as.Date(pmax(hip_end, pps_end)),
       
-      # Use better outcome (lower hierarchy number)
+      # Keep BOTH outcomes separately for All of Us compatibility
+      HIP_outcome_category = hip_outcome,
+      PPS_outcome_category = pps_outcome,
+      HIP_end_date = as.Date(hip_end),
+      PPS_end_date = as.Date(pps_end),
+      
+      # For backward compatibility, also keep merged outcome
       outcome_category = ifelse(hip_priority <= pps_priority, hip_outcome, pps_outcome),
       
       # Average gestational age if both available
@@ -256,6 +265,8 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
       person_id = person_id
     ) %>%
     select(person_id, episode_start_date, episode_end_date, 
+           HIP_outcome_category, PPS_outcome_category,
+           HIP_end_date, PPS_end_date,
            outcome_category, gestational_age_days, algorithm_used, merge_status)
   
   # Get non-overlapping episodes
@@ -267,7 +278,12 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
     ) %>%
     mutate(
       algorithm_used = "HIP",
-      merge_status = "HIP_only"
+      merge_status = "HIP_only",
+      # Add All of Us compatible columns
+      HIP_outcome_category = outcome_category,
+      PPS_outcome_category = NA_character_,
+      HIP_end_date = episode_end_date,
+      PPS_end_date = as.Date(NA)
     )
   
   pps_keep <- pps_episodes %>%
@@ -278,7 +294,12 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
     ) %>%
     mutate(
       algorithm_used = "PPS",
-      merge_status = "PPS_only"
+      merge_status = "PPS_only",
+      # Add All of Us compatible columns
+      HIP_outcome_category = NA_character_,
+      PPS_outcome_category = outcome_category,
+      HIP_end_date = as.Date(NA),
+      PPS_end_date = episode_end_date
     )
   
   # Get episodes chosen from overlaps (not merged)
@@ -289,7 +310,12 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
     ) %>%
     mutate(
       algorithm_used = "HIP",
-      merge_status = "HIP_chosen"
+      merge_status = "HIP_chosen",
+      # Add All of Us compatible columns
+      HIP_outcome_category = outcome_category,
+      PPS_outcome_category = NA_character_,
+      HIP_end_date = episode_end_date,
+      PPS_end_date = as.Date(NA)
     )
   
   pps_chosen <- pps_episodes %>%
@@ -299,7 +325,12 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
     ) %>%
     mutate(
       algorithm_used = "PPS",
-      merge_status = "PPS_chosen"
+      merge_status = "PPS_chosen",
+      # Add All of Us compatible columns
+      HIP_outcome_category = NA_character_,
+      PPS_outcome_category = outcome_category,
+      HIP_end_date = as.Date(NA),
+      PPS_end_date = episode_end_date
     )
   
   # Combine all episodes
@@ -467,7 +498,19 @@ finalize_merged_episodes <- function(episodes) {
     ) %>%
     mutate(
       episode_start_date = adjusted_start,
-      gestational_age_days = adjusted_gest_days
+      gestational_age_days = adjusted_gest_days,
+      
+      # Also adjust HIP/PPS end dates if they match episode_end_date
+      HIP_end_date = if("HIP_end_date" %in% names(.)) {
+        as.Date(HIP_end_date)
+      } else {
+        as.Date(NA)
+      },
+      PPS_end_date = if("PPS_end_date" %in% names(.)) {
+        as.Date(PPS_end_date)
+      } else {
+        as.Date(NA)
+      }
     ) %>%
     select(-prev_end, -overlap_with_prev, -adjusted_start, -adjusted_gest_days) %>%
     ungroup()
@@ -480,20 +523,63 @@ finalize_merged_episodes <- function(episodes) {
 prepare_final_episodes <- function(episodes) {
   episodes %>%
     mutate(
+      # Ensure algorithm_used exists
       algorithm_used = ifelse(
         !exists("algorithm_used", where = episodes),
         "UNKNOWN",
         algorithm_used
-      )
+      ),
+      
+      # Calculate episode length in months (All of Us uses 30.25)
+      recorded_episode_length = as.numeric(episode_end_date - episode_start_date) / 30.25,
+      
+      # Set flags based on algorithm
+      HIP_flag = case_when(
+        algorithm_used == "HIP" ~ 1L,
+        algorithm_used == "MERGED" ~ 1L,
+        algorithm_used == "HIP_chosen" ~ 1L,
+        TRUE ~ 0L
+      ),
+      PPS_flag = case_when(
+        algorithm_used == "PPS" ~ 1L,
+        algorithm_used == "MERGED" ~ 1L,
+        algorithm_used == "PPS_chosen" ~ 1L,
+        TRUE ~ 0L
+      ),
+      
+      # Ensure HIP/PPS columns exist if not already present
+      HIP_outcome_category = if("HIP_outcome_category" %in% names(.)) {
+        HIP_outcome_category
+      } else {
+        ifelse(HIP_flag == 1, outcome_category, NA_character_)
+      },
+      PPS_outcome_category = if("PPS_outcome_category" %in% names(.)) {
+        PPS_outcome_category
+      } else {
+        ifelse(PPS_flag == 1, outcome_category, NA_character_)
+      },
+      HIP_end_date = if("HIP_end_date" %in% names(.)) {
+        HIP_end_date
+      } else {
+        ifelse(HIP_flag == 1, episode_end_date, as.Date(NA))
+      },
+      PPS_end_date = if("PPS_end_date" %in% names(.)) {
+        PPS_end_date
+      } else {
+        ifelse(PPS_flag == 1, episode_end_date, as.Date(NA))
+      }
     ) %>%
     select(
       person_id,
       episode_number,
-      episode_start_date,
-      episode_end_date,
-      outcome_category,
-      gestational_age_days,
-      algorithm_used,
-      any_of(c("n_GT_concepts", "n_records", "precision_category", "precision_days"))
+      recorded_episode_start = episode_start_date,
+      recorded_episode_end = episode_end_date,
+      recorded_episode_length,
+      HIP_outcome_category,
+      PPS_outcome_category,
+      HIP_end_date,
+      PPS_end_date,
+      HIP_flag,
+      PPS_flag
     )
 }
