@@ -50,7 +50,7 @@ extract_pregnancy_cohort <- function(
     if (target_dialect %in% c("spark", "databricks") && use_temp_tables) {
       # Gender concept IDs
       if (use_all_of_us_gender) {
-        gender_concepts <- c(45878463, 45880669, 903096, 903079, 1177221)
+        gender_concepts <- c(45878463, 46273637, 903096, 4124462, 1177221)
       } else {
         gender_concepts <- c(8532, 8507, 45878463)  # Female, FEMALE, Woman
       }
