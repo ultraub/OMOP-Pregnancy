@@ -305,8 +305,8 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
   
   # Filter SB episodes that don't meet spacing requirements
   valid_sb <- combined %>%
+    filter(outcome_category == "SB") %>%
     filter(
-      outcome_category == "SB",
       # Keep if isolated or properly spaced
       (is.na(prev_category) & is.na(next_category)) |
       
@@ -325,7 +325,7 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
   
   # Combine valid SB with all LB
   result <- bind_rows(
-    combined %>% ungroup() %>% filter(outcome_category == "LB"),
+    lb_episodes,  # Use original LB episodes
     valid_sb
   ) %>%
     select(-any_of(c("prev_category", "next_category", "days_after", "days_before"))) %>%
@@ -409,7 +409,7 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
   
   # Combine valid ECT with previous episodes
   result <- bind_rows(
-    combined %>% ungroup() %>% filter(outcome_category != "ECT"),
+    lb_sb_episodes,  # Use original LB+SB episodes
     valid_ect
   ) %>%
     select(-any_of(c("prev_category", "next_category", "days_after", "days_before"))) %>%
@@ -494,7 +494,7 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
   
   # Combine valid AB with previous episodes
   result <- bind_rows(
-    combined %>% ungroup() %>% filter(!outcome_category %in% c("AB", "SA")),
+    prev_episodes,  # Use original previous episodes
     valid_ab
   ) %>%
     select(-any_of(c("prev_category", "next_category", "days_after", "days_before"))) %>%
@@ -582,7 +582,7 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
   
   # Combine valid DELIV with previous episodes
   result <- bind_rows(
-    combined %>% ungroup() %>% filter(outcome_category != "DELIV"),
+    prev_episodes,  # Use original previous episodes
     valid_deliv
   ) %>%
     select(-any_of(c("prev_category", "next_category", "days_after", "days_before"))) %>%
