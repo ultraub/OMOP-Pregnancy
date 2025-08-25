@@ -310,16 +310,16 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
       # Keep if isolated or properly spaced
       (is.na(prev_category) & is.na(next_category)) |
       
-      (previous_category != "LB" & is.na(next_category)) |
+      (prev_category != "LB" & is.na(next_category)) |
       # same but opposite
-      (next_category != "LB" & is.na(previous_category)) |
-      (previous_category != "LB" & next_category != "LB") |
+      (next_category != "LB" & is.na(prev_category)) |
+      (prev_category != "LB" & next_category != "LB") |
       # the last episode was a live birth and this one happens after the minimum
       (prev_category == "LB" & days_after >= before_min & is.na(next_category)) |
       # the next episode is a live birth and happens after the minimum
-      (next_category == "LB" & days_before >= after_min & is.na(previous_category)) |
+      (next_category == "LB" & days_before >= after_min & is.na(prev_category)) |
       # or surrounded by two live births spaced sufficiently
-      (next_category == "LB" & days_before >= after_min & previous_category == "LB" & days_after >= before_min)
+      (next_category == "LB" & days_before >= after_min & prev_category == "LB" & days_after >= before_min)
     )
   
   # Combine valid SB with all LB
@@ -392,17 +392,17 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
 
       # the previous category was ectopic and there's no next category
       # or some configuration
-      (!previous_category %in% c("LB", "SB") & is.na(next_category)) |
-      (!next_category %in% c("LB", "SB") & is.na(previous_category)) |
-      (!previous_category %in% c("LB", "SB") & !next_category %in% c("LB", "SB")) |
+      (!prev_category %in% c("LB", "SB") & is.na(next_category)) |
+      (!next_category %in% c("LB", "SB") & is.na(prev_category)) |
+      (!prev_category %in% c("LB", "SB") & !next_category %in% c("LB", "SB")) |
       # the last episode was a delivery and this one happens after the minimum
-      (previous_category %in% c("LB", "SB") & days_after >= ect_after_lb & is.na(next_category)) |
+      (prev_category %in% c("LB", "SB") & days_after >= ect_after_lb & is.na(next_category)) |
       # there was no previous category and the next live birth happens after the minimum
-      (next_category == "LB" & days_before >= lb_after_ect & is.na(previous_category)) |
-      (next_category == "SB" & days_before >= sb_after_ect & is.na(previous_category)) |
+      (next_category == "LB" & days_before >= lb_after_ect & is.na(prev_category)) |
+      (next_category == "SB" & days_before >= sb_after_ect & is.na(prev_category)) |
       # surrounded by each, appropriately spaced
-      (next_category == "LB" & days_before >= lb_after_ect & previous_category %in% c("LB", "SB") & days_after >= ect_after_lb) |
-      (next_category == "SB" & days_before >= sb_after_ect & previous_category %in% c("LB", "SB") & days_after >= ect_after_lb)
+      (next_category == "LB" & days_before >= lb_after_ect & prev_category %in% c("LB", "SB") & days_after >= ect_after_lb) |
+      (next_category == "SB" & days_before >= sb_after_ect & prev_category %in% c("LB", "SB") & days_after >= ect_after_lb)
     )
   
   # Combine valid ECT with previous episodes
@@ -471,22 +471,22 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
       outcome_category %in% c("AB", "SA"),
       (is.na(prev_category) & is.na(next_category)) |
 
-      (!previous_category %in% c("LB", "SB", "ECT") & is.na(next_category)) |
-      (!next_category %in% c("LB", "SB", "ECT") & is.na(previous_category)) |
-      (!previous_category %in% c("LB", "SB", "ECT") & !next_category %in% c("LB", "SB", "ECT")) |
+      (!prev_category %in% c("LB", "SB", "ECT") & is.na(next_category)) |
+      (!next_category %in% c("LB", "SB", "ECT") & is.na(prev_category)) |
+      (!prev_category %in% c("LB", "SB", "ECT") & !next_category %in% c("LB", "SB", "ECT")) |
 
       # the last episode was a delivery and this one happens after the minimum
-      (previous_category %in% c("LB", "SB") & after_days >= ab_after_lb & is.na(next_category)) |
-      (next_category == "LB" & before_days >= lb_after_ab & is.na(previous_category)) |
-      (next_category == "SB" & before_days >= sb_after_ab & is.na(previous_category)) |
-      (next_category == "LB" & previous_category %in% c("LB", "SB") & before_days >= lb_after_ab & after_days >= ab_after_lb) |
-      (next_category == "SB" & previous_category %in% c("LB", "SB") & before_days >= sb_after_ab & after_days >= ab_after_lb) |
-      (previous_category == "ECT" & after_days >= ab_after_ect & is.na(next_category)) |
-      (next_category == "ECT" & before_days >= ect_after_ab & is.na(previous_category)) |
-      (next_category == "ECT" & previous_category == "ECT" & before_days >= ect_after_ab & after_days >= ab_after_ect) |
-      (next_category == "ECT" & previous_category %in% c("LB", "SB") & before_days >= ect_after_ab & after_days >= ab_after_lb) |
-      (next_category == "LB" & previous_category == "ECT" & before_days >= lb_after_ab & after_days >= ab_after_ect) |
-      (next_category == "SB" & previous_category == "ECT" & before_days >= sb_after_ab & after_days >= ab_after_ect)
+      (prev_category %in% c("LB", "SB") & days_after >= ab_after_lb & is.na(next_category)) |
+      (next_category == "LB" & days_before >= lb_after_ab & is.na(prev_category)) |
+      (next_category == "SB" & days_before >= sb_after_ab & is.na(prev_category)) |
+      (next_category == "LB" & prev_category %in% c("LB", "SB") & days_before >= lb_after_ab & days_after >= ab_after_lb) |
+      (next_category == "SB" & prev_category %in% c("LB", "SB") & days_before >= sb_after_ab & days_after >= ab_after_lb) |
+      (prev_category == "ECT" & days_after >= ab_after_ect & is.na(next_category)) |
+      (next_category == "ECT" & days_before >= ect_after_ab & is.na(prev_category)) |
+      (next_category == "ECT" & prev_category == "ECT" & days_before >= ect_after_ab & days_after >= ab_after_ect) |
+      (next_category == "ECT" & prev_category %in% c("LB", "SB") & days_before >= ect_after_ab & days_after >= ab_after_lb) |
+      (next_category == "LB" & prev_category == "ECT" & days_before >= lb_after_ab & days_after >= ab_after_ect) |
+      (next_category == "SB" & prev_category == "ECT" & days_before >= sb_after_ab & days_after >= ab_after_ect)
     )
   
   # Combine valid AB with previous episodes
@@ -559,21 +559,21 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
       outcome_category == "DELIV",
       (is.na(prev_category) & is.na(next_category)) |
 
-        (!previous_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(next_category)) |
-        (!next_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(previous_category)) |
-        (!previous_category %in% c("LB", "SB", "ECT", "AB", "SA") & !next_category %in% c("LB", "SB", "ECT", "AB", "SA")) |
+        (!prev_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(next_category)) |
+        (!next_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(prev_category)) |
+        (!prev_category %in% c("LB", "SB", "ECT", "AB", "SA") & !next_category %in% c("LB", "SB", "ECT", "AB", "SA")) |
         # timing
-        (previous_category %in% c("LB", "SB") & after_days >= deliv_after_lb & is.na(next_category)) |
-        (next_category == "LB" & before_days >= lb_after_deliv & is.na(previous_category)) |
-        (next_category == "SB" & before_days >= sb_after_deliv & is.na(previous_category)) |
-        (next_category == "LB" & previous_category %in% c("LB", "SB") & before_days >= lb_after_deliv & after_days >= deliv_after_lb) |
-        (next_category == "SB" & previous_category %in% c("LB", "SB") & before_days >= sb_after_deliv & after_days >= deliv_after_lb) |
-        (previous_category %in% c("ECT", "AB", "SA") & after_days >= deliv_after_ect & is.na(next_category)) |
-        (next_category %in% c("ECT", "AB", "SA") & before_days >= ect_after_deliv & is.na(previous_category)) |
-        (next_category %in% c("ECT", "AB", "SA") & previous_category %in% c("ECT", "AB", "SA") & before_days >= ect_after_deliv & after_days >= deliv_after_ect) |
-        (next_category %in% c("ECT", "AB", "SA") & previous_category %in% c("LB", "SB") & before_days >= ect_after_deliv & after_days >= deliv_after_lb) |
-        (next_category == "LB" & previous_category %in% c("ECT", "AB", "SA") & before_days >= lb_after_deliv & after_days >= deliv_after_ect) |
-        (next_category == "SB" & previous_category %in% c("ECT", "AB", "SA") & before_days >= sb_after_deliv & after_days >= deliv_after_ect)
+        (prev_category %in% c("LB", "SB") & days_after >= deliv_after_lb & is.na(next_category)) |
+        (next_category == "LB" & days_before >= lb_after_deliv & is.na(prev_category)) |
+        (next_category == "SB" & days_before >= sb_after_deliv & is.na(prev_category)) |
+        (next_category == "LB" & prev_category %in% c("LB", "SB") & days_before >= lb_after_deliv & days_after >= deliv_after_lb) |
+        (next_category == "SB" & prev_category %in% c("LB", "SB") & days_before >= sb_after_deliv & days_after >= deliv_after_lb) |
+        (prev_category %in% c("ECT", "AB", "SA") & days_after >= deliv_after_ect & is.na(next_category)) |
+        (next_category %in% c("ECT", "AB", "SA") & days_before >= ect_after_deliv & is.na(prev_category)) |
+        (next_category %in% c("ECT", "AB", "SA") & prev_category %in% c("ECT", "AB", "SA") & days_before >= ect_after_deliv & days_after >= deliv_after_ect) |
+        (next_category %in% c("ECT", "AB", "SA") & prev_category %in% c("LB", "SB") & days_before >= ect_after_deliv & days_after >= deliv_after_lb) |
+        (next_category == "LB" & prev_category %in% c("ECT", "AB", "SA") & days_before >= lb_after_deliv & days_after >= deliv_after_ect) |
+        (next_category == "SB" & prev_category %in% c("ECT", "AB", "SA") & days_before >= sb_after_deliv & days_after >= deliv_after_ect)
     )
   
   # Combine valid DELIV with previous episodes
