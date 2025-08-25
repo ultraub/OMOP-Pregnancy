@@ -324,7 +324,7 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
   
   # Combine valid SB with all LB
   result <- bind_rows(
-    combined %>% filter(outcome_category == "LB"),
+    combined %>% ungroup() %>% filter(outcome_category == "LB"),
     valid_sb
   ) %>%
     select(-prev_category, -next_category, -days_after, -days_before) %>%
@@ -407,7 +407,7 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
   
   # Combine valid ECT with previous episodes
   result <- bind_rows(
-    combined %>% filter(outcome_category == "ECT"),
+    combined %>% ungroup() %>% filter(outcome_category != "ECT"),
     valid_ect
   ) %>%
     select(-prev_category, -next_category, -days_after, -days_before) %>%
@@ -491,7 +491,7 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
   
   # Combine valid AB with previous episodes
   result <- bind_rows(
-    combined %>% filter(outcome_category %in% c("AB", "SA")),
+    combined %>% ungroup() %>% filter(!outcome_category %in% c("AB", "SA")),
     valid_ab
   ) %>%
     select(-prev_category, -next_category, -days_after, -days_before) %>%
@@ -578,7 +578,7 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
   
   # Combine valid DELIV with previous episodes
   result <- bind_rows(
-    combined %>% filter(outcome_category == "DELIV"),
+    combined %>% ungroup() %>% filter(outcome_category != "DELIV"),
     valid_deliv
   ) %>%
     select(-prev_category, -next_category, -days_after, -days_before) %>%
