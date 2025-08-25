@@ -320,7 +320,8 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
       (next_category == "LB" & days_before >= after_min & is.na(prev_category)) |
       # or surrounded by two live births spaced sufficiently
       (next_category == "LB" & days_before >= after_min & prev_category == "LB" & days_after >= before_min)
-    )
+    ) %>%
+    ungroup()
   
   # Combine valid SB with all LB
   result <- bind_rows(
@@ -403,7 +404,8 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
       # surrounded by each, appropriately spaced
       (next_category == "LB" & days_before >= lb_after_ect & prev_category %in% c("LB", "SB") & days_after >= ect_after_lb) |
       (next_category == "SB" & days_before >= sb_after_ect & prev_category %in% c("LB", "SB") & days_after >= ect_after_lb)
-    )
+    ) %>%
+    ungroup()
   
   # Combine valid ECT with previous episodes
   result <- bind_rows(
@@ -487,7 +489,8 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
       (next_category == "ECT" & prev_category %in% c("LB", "SB") & days_before >= ect_after_ab & days_after >= ab_after_lb) |
       (next_category == "LB" & prev_category == "ECT" & days_before >= lb_after_ab & days_after >= ab_after_ect) |
       (next_category == "SB" & prev_category == "ECT" & days_before >= sb_after_ab & days_after >= ab_after_ect)
-    )
+    ) %>%
+    ungroup()
   
   # Combine valid AB with previous episodes
   result <- bind_rows(
@@ -574,7 +577,8 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
         (next_category %in% c("ECT", "AB", "SA") & prev_category %in% c("LB", "SB") & days_before >= ect_after_deliv & days_after >= deliv_after_lb) |
         (next_category == "LB" & prev_category %in% c("ECT", "AB", "SA") & days_before >= lb_after_deliv & days_after >= deliv_after_ect) |
         (next_category == "SB" & prev_category %in% c("ECT", "AB", "SA") & days_before >= sb_after_deliv & days_after >= deliv_after_ect)
-    )
+    ) %>%
+    ungroup()
   
   # Combine valid DELIV with previous episodes
   result <- bind_rows(
