@@ -309,8 +309,17 @@ add_stillbirth_episodes <- function(lb_episodes, sb_episodes, matcho_outcome_lim
       outcome_category == "SB",
       # Keep if isolated or properly spaced
       (is.na(prev_category) & is.na(next_category)) |
-      (prev_category != "LB" | days_after >= before_min) |
-      (next_category != "LB" | days_before >= after_min)
+      
+      (previous_category != "LB" & is.na(next_category)) |
+      # same but opposite
+      (next_category != "LB" & is.na(previous_category)) |
+      (previous_category != "LB" & next_category != "LB") |
+      # the last episode was a live birth and this one happens after the minimum
+      (prev_category == "LB" & days_after >= before_min & is.na(next_category)) |
+      # the next episode is a live birth and happens after the minimum
+      (next_category == "LB" & days_before >= after_min & is.na(previous_category)) |
+      # or surrounded by two live births spaced sufficiently
+      (next_category == "LB" & days_before >= after_min & previous_category == "LB" & days_after >= before_min)
     )
   
   # Combine valid SB with all LB
@@ -359,8 +368,8 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
     pull(min_days)
   
   # Use minimum of the constraints
-  before_min <- min(ect_after_lb, ect_after_sb, na.rm = TRUE)
-  after_min <- min(lb_after_ect, sb_after_ect, na.rm = TRUE)
+  # before_min <- min(ect_after_lb, ect_after_sb, na.rm = TRUE)
+  # after_min <- min(lb_after_ect, sb_after_ect, na.rm = TRUE)
   
   # Apply spacing logic similar to stillbirths
   combined <- bind_rows(lb_sb_episodes, ect_episodes) %>%
@@ -379,12 +388,26 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
       outcome_category == "ECT",
       (is.na(prev_category) & is.na(next_category)) |
       (is.na(prev_category) | days_after >= before_min) |
-      (is.na(next_category) | days_before >= after_min)
+      (is.na(next_category) | days_before >= after_min) |
+
+      # the previous category was ectopic and there's no next category
+      # or some configuration
+      (!previous_category %in% c("LB", "SB") & is.na(next_category)) |
+      (!next_category %in% c("LB", "SB") & is.na(previous_category)) |
+      (!previous_category %in% c("LB", "SB") & !next_category %in% c("LB", "SB")) |
+      # the last episode was a delivery and this one happens after the minimum
+      (previous_category %in% c("LB", "SB") & days_after >= ect_after_lb & is.na(next_category)) |
+      # there was no previous category and the next live birth happens after the minimum
+      (next_category == "LB" & days_before >= lb_after_ect & is.na(previous_category)) |
+      (next_category == "SB" & days_before >= sb_after_ect & is.na(previous_category)) |
+      # surrounded by each, appropriately spaced
+      (next_category == "LB" & days_before >= lb_after_ect & previous_category %in% c("LB", "SB") & days_after >= ect_after_lb) |
+      (next_category == "SB" & days_before >= sb_after_ect & previous_category %in% c("LB", "SB") & days_after >= ect_after_lb)
     )
   
   # Combine valid ECT with previous episodes
   result <- bind_rows(
-    combined %>% filter(outcome_category != "ECT"),
+    combined %>% filter(outcome_category == "ECT"),
     valid_ect
   ) %>%
     select(-prev_category, -next_category, -days_after, -days_before) %>%
@@ -409,45 +432,76 @@ add_abortion_episodes <- function(prev_episodes, ab_sa_episodes, matcho_outcome_
   if (nrow(ab_sa_episodes) == 0) {
     return(prev_episodes)
   }
-  
-  # Get all relevant spacing constraints for AB/SA
-  spacing_rules <- matcho_outcome_limits %>%
-    filter(
-      outcome_preg_category %in% c("AB", "SA") | 
-      first_preg_category %in% c("AB", "SA")
-    )
-  
-  # Apply similar spacing logic
-  combined <- bind_rows(prev_episodes, ab_sa_episodes) %>%
-    group_by(person_id) %>%
-    arrange(outcome_date)
-  
-  # Look up minimum spacing for abortions from matcho_outcome_limits
-  # Get the minimum spacing between any previous outcome and AB/SA
-  min_spacing_values <- spacing_rules %>%
-    filter(!is.na(min_days)) %>%
+
+  # Get minimum days for AB/SA spacing
+  ab_after_lb <- matcho_outcome_limits %>%
+    filter(first_preg_category == "LB", outcome_preg_category == "AB") %>%
     pull(min_days)
   
-  min_spacing <- ifelse(length(min_spacing_values) > 0, min(min_spacing_values), 56)
+  ab_after_ect <- matcho_outcome_limits %>%
+    filter(first_preg_category == "ECT", outcome_preg_category == "AB") %>%
+    pull(min_days)
   
-  valid_ab_sa <- combined %>%
+  lb_after_ab <- matcho_outcome_limits %>%
+    filter(first_preg_category == "AB", outcome_preg_category == "LB") %>%
+    pull(min_days)
+  
+  sb_after_ab <- matcho_outcome_limits %>%
+    filter(first_preg_category == "AB", outcome_preg_category == "SB") %>%
+    pull(min_days)
+  
+  ect_after_ab <- matcho_outcome_limits %>%
+    filter(first_preg_category == "AB", outcome_preg_category == "ECT") %>%
+    pull(min_days)
+  
+  # Apply spacing logic similar to stillbirths
+  combined <- bind_rows(prev_episodes, ab_sa_episodes) %>%
+    group_by(person_id) %>%
+    arrange(outcome_date) %>%
     mutate(
-      days_from_prev = as.numeric(outcome_date - lag(outcome_date))
-    ) %>%
-    filter(
-      outcome_category %in% c("AB", "SA"),
-      is.na(days_from_prev) | days_from_prev >= min_spacing
+      prev_category = lag(outcome_category),
+      next_category = lead(outcome_category),
+      days_after = as.numeric(as.Date(outcome_date) - as.Date(lag(outcome_date))),
+      days_before = as.numeric(as.Date(lead(outcome_date)) - as.Date(outcome_date))
     )
   
+  # Filter AB episodes that meet spacing requirements
+  valid_ab <- combined %>%
+    filter(
+      outcome_category %in% c("AB", "SA"),
+      (is.na(prev_category) & is.na(next_category)) |
+
+      (!previous_category %in% c("LB", "SB", "ECT") & is.na(next_category)) |
+      (!next_category %in% c("LB", "SB", "ECT") & is.na(previous_category)) |
+      (!previous_category %in% c("LB", "SB", "ECT") & !next_category %in% c("LB", "SB", "ECT")) |
+
+      # the last episode was a delivery and this one happens after the minimum
+      (previous_category %in% c("LB", "SB") & after_days >= ab_after_lb & is.na(next_category)) |
+      (next_category == "LB" & before_days >= lb_after_ab & is.na(previous_category)) |
+      (next_category == "SB" & before_days >= sb_after_ab & is.na(previous_category)) |
+      (next_category == "LB" & previous_category %in% c("LB", "SB") & before_days >= lb_after_ab & after_days >= ab_after_lb) |
+      (next_category == "SB" & previous_category %in% c("LB", "SB") & before_days >= sb_after_ab & after_days >= ab_after_lb) |
+      (previous_category == "ECT" & after_days >= ab_after_ect & is.na(next_category)) |
+      (next_category == "ECT" & before_days >= ect_after_ab & is.na(previous_category)) |
+      (next_category == "ECT" & previous_category == "ECT" & before_days >= ect_after_ab & after_days >= ab_after_ect) |
+      (next_category == "ECT" & previous_category %in% c("LB", "SB") & before_days >= ect_after_ab & after_days >= ab_after_lb) |
+      (next_category == "LB" & previous_category == "ECT" & before_days >= lb_after_ab & after_days >= ab_after_ect) |
+      (next_category == "SB" & previous_category == "ECT" & before_days >= sb_after_ab & after_days >= ab_after_ect)
+    )
+  
+  # Combine valid AB with previous episodes
   result <- bind_rows(
-    combined %>% filter(!outcome_category %in% c("AB", "SA")),
-    valid_ab_sa
+    combined %>% filter(outcome_category %in% c("AB", "SA")),
+    valid_ab
   ) %>%
-    select(-any_of("days_from_prev")) %>%
+    select(-prev_category, -next_category, -days_after, -days_before) %>%
     arrange(person_id, outcome_date)
   
   return(result)
 }
+
+
+
 
 #' Add delivery-only episodes with backwards date modification capability
 #' 
@@ -465,45 +519,70 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
   if (nrow(deliv_episodes) == 0) {
     return(prev_episodes)
   }
-  
-  # Delivery episodes are added last with appropriate spacing
-  # Similar logic to other outcome additions
-  combined <- bind_rows(prev_episodes, deliv_episodes) %>%
-    group_by(person_id) %>%
-    arrange(outcome_date)
-  
-  # Look up minimum spacing for delivery from matcho_outcome_limits
-  deliv_spacing <- matcho_outcome_limits %>%
-    filter(
-      first_preg_category == "DELIV",
-      outcome_preg_category == "DELIV"
-    ) %>%
+
+  # Get minimum days for DELIV
+  deliv_after_lb <- matcho_outcome_limits %>%
+    filter(first_preg_category == "LB", outcome_preg_category == "DELIV") %>%
     pull(min_days)
   
-  min_spacing <- ifelse(length(deliv_spacing) > 0, deliv_spacing[1], 168)
+  deliv_after_ect <- matcho_outcome_limits %>%
+    filter(first_preg_category == "ECT", outcome_preg_category == "DELIV") %>%
+    pull(min_days)
+
   
-  valid_deliv <- combined %>%
+  lb_after_deliv <- matcho_outcome_limits %>%
+    filter(first_preg_category == "DELIV", outcome_preg_category == "LB") %>%
+    pull(min_days)
+  
+  sb_after_deliv <- matcho_outcome_limits %>%
+    filter(first_preg_category == "DELIV", outcome_preg_category == "SB") %>%
+    pull(min_days)
+  
+  ect_after_deliv <- matcho_outcome_limits %>%
+    filter(first_preg_category == "DELIV", outcome_preg_category == "ECT") %>%
+    pull(min_days)
+  
+  # Apply spacing logic similar to stillbirths
+  combined <- bind_rows(prev_episodes, deliv_episodes) %>%
+    group_by(person_id) %>%
+    arrange(outcome_date) %>%
     mutate(
-      days_from_prev = as.numeric(outcome_date - lag(outcome_date))
-    ) %>%
-    filter(
-      outcome_category == "DELIV",
-      is.na(days_from_prev) | days_from_prev >= min_spacing
+      prev_category = lag(outcome_category),
+      next_category = lead(outcome_category),
+      days_after = as.numeric(as.Date(outcome_date) - as.Date(lag(outcome_date))),
+      days_before = as.numeric(as.Date(lead(outcome_date)) - as.Date(outcome_date))
     )
   
+  # Filter DELIV episodes that meet spacing requirements
+  valid_deliv <- combined %>%
+    filter(
+      outcome_category == "DELIV",
+      (is.na(prev_category) & is.na(next_category)) |
+
+        (!previous_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(next_category)) |
+        (!next_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(previous_category)) |
+        (!previous_category %in% c("LB", "SB", "ECT", "AB", "SA") & !next_category %in% c("LB", "SB", "ECT", "AB", "SA")) |
+        # timing
+        (previous_category %in% c("LB", "SB") & after_days >= deliv_after_lb & is.na(next_category)) |
+        (next_category == "LB" & before_days >= lb_after_deliv & is.na(previous_category)) |
+        (next_category == "SB" & before_days >= sb_after_deliv & is.na(previous_category)) |
+        (next_category == "LB" & previous_category %in% c("LB", "SB") & before_days >= lb_after_deliv & after_days >= deliv_after_lb) |
+        (next_category == "SB" & previous_category %in% c("LB", "SB") & before_days >= sb_after_deliv & after_days >= deliv_after_lb) |
+        (previous_category %in% c("ECT", "AB", "SA") & after_days >= deliv_after_ect & is.na(next_category)) |
+        (next_category %in% c("ECT", "AB", "SA") & before_days >= ect_after_deliv & is.na(previous_category)) |
+        (next_category %in% c("ECT", "AB", "SA") & previous_category %in% c("ECT", "AB", "SA") & before_days >= ect_after_deliv & after_days >= deliv_after_ect) |
+        (next_category %in% c("ECT", "AB", "SA") & previous_category %in% c("LB", "SB") & before_days >= ect_after_deliv & after_days >= deliv_after_lb) |
+        (next_category == "LB" & previous_category %in% c("ECT", "AB", "SA") & before_days >= lb_after_deliv & after_days >= deliv_after_ect) |
+        (next_category == "SB" & previous_category %in% c("ECT", "AB", "SA") & before_days >= sb_after_deliv & after_days >= deliv_after_ect)
+    )
+  
+  # Combine valid DELIV with previous episodes
   result <- bind_rows(
-    combined %>% filter(outcome_category != "DELIV"),
+    combined %>% filter(outcome_category == "DELIV"),
     valid_deliv
   ) %>%
-    select(-any_of("days_from_prev")) %>%
-    arrange(person_id, outcome_date) %>%
-    ungroup()
-  
-  # Renumber episodes
-  result <- result %>%
-    group_by(person_id) %>%
-    mutate(episode_number = row_number()) %>%
-    ungroup()
+    select(-prev_category, -next_category, -days_after, -days_before) %>%
+    arrange(person_id, outcome_date)
   
   return(result)
 }

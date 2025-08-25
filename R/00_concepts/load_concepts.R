@@ -67,8 +67,34 @@ load_hip_concepts <- function(file_path = NULL) {
     )
   
   # Validate categories
-  valid_categories <- c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG", 
-                       "GEST", "PCONF", "AMEN", "UP", "CONTRA")
+  ### Additional info
+  # Outcome classification: 
+    # LB: live birth
+    # SB: stillbirth
+    # SA: spontaneous abortion
+    # AB: induced abortion
+    # DELIV: delivery
+    # ECT: ectopic pregnancy
+
+    # PREG: Pregnancy-only codes
+  # Pregnancy episode start marker types:
+    # LMP: Last menstrual period date
+    # GEST: Gestational age record
+    # FERT: Assisted conception procedure date
+    # ULS: Nuchal ultrasound date
+    # AFP: Alpha feto protein test date
+    # AMEN: Amenorrhea record date
+    # URINE: Urine pregnancy test date
+
+  # Event for adjusting start date:
+    # CONTRACEPTION: contraception
+    # PCONF: pregnancy confirmation
+  
+  # Categories in hip_concepts: ['PREG' 'LB' 'SB' 'AB' 'SA' 'ECT' 'DELIV']
+
+  valid_categories <- c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")
+
+
   invalid_cats <- setdiff(unique(concepts$category), valid_categories)
   if (length(invalid_cats) > 0) {
     warning(sprintf("Unexpected categories in HIP concepts: %s",
@@ -249,7 +275,7 @@ get_default_matcho_limits <- function() {
     category = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
     min_term = c(154, 140, 154, 30, 30, 30, 30),      # Days
     max_term = c(301, 301, 301, 84, 140, 140, 301),   # Days
-    hierarchy = c(1, 2, 3, 4, 5, 6, 7),
+    hierarchy = c(1, 2, 6, 3, 4, 5, 7),
     stringsAsFactors = FALSE
   )
 }
@@ -552,7 +578,10 @@ load_concept_sets <- function(
     # Default term durations
     matcho_term_durations <- data.frame(
       outcome = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
-      term_days = c(280, 280, 280, 63, 91, 91, 280),
+      max_term = c(301, 301, 301, 84, 168, 139, 301)
+      min_term = c(161, 100, 140, 42, 42, 28, 30),
+      term_days = c(140, 201, 161, 42, 126, 111, 271),
+      retry = c(28, 28, 28, 14, 14, 14, 28),
       stringsAsFactors = FALSE
     )
   }

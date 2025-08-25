@@ -27,31 +27,17 @@ get_matcho_tables <- function() {
     ),
     min_days = c(
       # From LB (Live Birth)
-      168, 168, 168, 168, 168, 168,
+      182, 168, 70, 70, 70, 168,
       # From SB (Still Birth)
-      168, 168, 168, 168, 168, 168,
+      182, 70, 70, 70, 70, 168,
       # From ECT (Ectopic)
-      70, 70, 56, 56, 56, 70,
+      168, 154, 56, 56, 56, 154,
       # From AB (Abortion)
-      56, 56, 56, 56, 56, 56,
+      168, 154, 56, 56, 56, 154,
       # From SA (Spontaneous Abortion)
-      56, 56, 56, 56, 56, 56,
+      168, 154, 56, 56, 56, 154,
       # From DELIV (Delivery)
-      168, 168, 168, 168, 168, 168
-    ),
-    retry = c(
-      # From LB
-      14, 14, 14, 14, 14, 14,
-      # From SB
-      14, 14, 14, 14, 14, 14,
-      # From ECT
-      14, 14, 14, 14, 14, 14,
-      # From AB
-      14, 14, 14, 14, 14, 14,
-      # From SA
-      14, 14, 14, 14, 14, 14,
-      # From DELIV
-      14, 14, 14, 14, 14, 14
+      182, 168, 70, 70, 70, 168
     ),
     stringsAsFactors = FALSE
   )
@@ -60,24 +46,24 @@ get_matcho_tables <- function() {
   term_durations <- data.frame(
     category = c("LB", "SB", "ECT", "AB", "SA", "DELIV", "PREG"),
     min_term = c(
-      140,  # LB: 20 weeks
+      161,  # LB: 23 weeks
       140,  # SB: 20 weeks
-      28,   # ECT: 4 weeks
-      21,   # AB: 3 weeks
-      21,   # SA: 3 weeks
+      42,   # ECT: 4 weeks
+      42,   # AB: 3 weeks
+      28,   # SA: 3 weeks
       140,  # DELIV: 20 weeks
-      0     # PREG: Unknown
+      30     # PREG: 4 weeks
     ),
     max_term = c(
       301,  # LB: 43 weeks
       301,  # SB: 43 weeks
-      126,  # ECT: 18 weeks
-      140,  # AB: 20 weeks
-      140,  # SA: 20 weeks
+      84,  # ECT: 18 weeks
+      168,  # AB: 20 weeks
+      139,  # SA: 20 weeks
       301,  # DELIV: 43 weeks
       301   # PREG: 43 weeks (default max)
     ),
-    retry = c(14, 14, 14, 14, 14, 14, 14),
+    retry = c(28, 28, 14, 14, 14, 28, 14),
     stringsAsFactors = FALSE
   )
   
@@ -104,7 +90,8 @@ get_min_days_between <- function(first_outcome, second_outcome) {
     pull(min_days)
   
   if (length(min_days) == 0) {
-    return(56)  # Default minimum
+    return(28)  # Default minimum
+                # Did not find the default days
   }
   
   return(min_days[1])
