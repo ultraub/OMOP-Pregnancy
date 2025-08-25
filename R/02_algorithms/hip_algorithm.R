@@ -368,8 +368,8 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
     pull(min_days)
   
   # Use minimum of the constraints
-  # before_min <- min(ect_after_lb, ect_after_sb, na.rm = TRUE)
-  # after_min <- min(lb_after_ect, sb_after_ect, na.rm = TRUE)
+  before_min <- min(ect_after_lb, ect_after_sb, na.rm = TRUE)
+  after_min <- min(lb_after_ect, sb_after_ect, na.rm = TRUE)
   
   # Apply spacing logic similar to stillbirths
   combined <- bind_rows(lb_sb_episodes, ect_episodes) %>%
