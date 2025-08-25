@@ -245,9 +245,9 @@ process_outcome_category <- function(initial_cohort, categories, matcho_outcome_
     mutate(
       days_since_last = as.numeric(event_date - lag(event_date)),
       new_episode = is.na(days_since_last) | days_since_last >= min_days,
-      episode_id = cumsum(new_episode)
+      episode_number = cumsum(new_episode)
     ) %>%
-    group_by(person_id, episode_id) %>%
+    group_by(person_id, episode_number) %>%
     summarise(
       outcome_date = max(as.Date(event_date)),
       outcome_category = first(category),
