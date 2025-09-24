@@ -1,0 +1,4941 @@
+---
+title: "EDA_pregnancy"
+output: pdf_document
+date: "2024-10-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+install.packages("allofus")
+install.packages("glue")
+install.packages("arsenal")
+install.packages("ggokabeito")
+install.packages("gtsummary")
+```
+
+```{r}
+library(allofus)
+library(glue)
+library(gtsummary)
+library(tidyverse)
+library(lubridate)
+library(tibble)
+library(arsenal)
+library(dbplyr)
+library(ggokabeito)
+theme_set(theme_classic())
+```
+
+```{r}
+con <- aou_connect()
+```
+
+```{r}
+data <- readRDS("shared/merged_episodes_with_metadata_df.rds")
+#view(data)
+```
+
+```{r}
+summary(data)
+```
+
+
+```{r}
+# follow recommendations by Louisa Smith to clean the data and merge with demographic characteristics
+# code from her paper to bring in indicators for the EHR data etc
+hipps_persons <- tbl(con, "cb_search_person") %>%
+  filter(person_id %in% !!unique(data$person_id)) %>% 
+  filter(sex_at_birth != "Male") %>%
+  inner_join(distinct(tbl(con, "ds_survey"), person_id), by = "person_id") %>%
+  select(person_id, dob, state_of_residence, starts_with("has"))
+```
+
+
+```{r}
+survey_data <- aou_survey(hipps_persons,
+  questions = c(
+    1586140, 1585899, 1585845, 1585375, #demographics
+    1585838, 1585892, 1585940, 1585811, #demographics
+    43530418, 43530559, 43530562, 43530593 #health care utilization (eventually would add)
+  ),
+  question_output = c(
+    "race_eth", "sexual_orientation", "sex_at_birth", "income",
+    "gender", "marital_status", "education", "pregnancy",
+    "insurance_insurnaceaccepted", "insurance_healthcarecoverage", "healthadvice_placeforhealthadvice", "healthadvice_whatkindofplace"
+  ),
+  collect = TRUE
+) %>%
+  mutate(across(where(is.character), ~ if_else(.x %in% c("PreferNotToAnswer", "DontKnow"), "Skip", .x))) %>%
+  rowwise(person_id) %>%
+  mutate(min_svy_date = min(c_across(ends_with("_date")), na.rm = TRUE)) %>%
+  ungroup()
+```
+
+
+```{r}
+hipps_w_demo <- data %>%
+  inner_join(survey_data, by = "person_id") %>%
+  mutate(
+    outcome_category = fct_collapse(final_outcome_category, "AB" = c("AB", "SA")),
+    outcome_category = fct_infreq(outcome_category),
+    outcome_category = fct_recode(outcome_category,
+      "Live birth" = "LB",
+      "Missing outcome" = "PREG",
+      "Delivery record only" = "DELIV",
+      "Abortion" = "AB",
+      "Stillbirth" = "SB",
+      "Ectopic pregnancy" = "ECT"
+    ),
+    preg_svy_after_basics_days = as.numeric(pregnancy_date - min_svy_date),
+    time_from_end = as.numeric(min_svy_date - inferred_episode_end),
+    time_to_start = as.numeric(inferred_episode_start - min_svy_date),
+    min_time = pmin(abs(time_from_end), abs(time_to_start), na.rm = TRUE)
+  ) %>%
+  group_by(person_id) %>%
+  mutate(
+    closest_pregnancy = case_when(
+      between(min_svy_date, inferred_episode_start, inferred_episode_end) ~ 1,
+      min_time == min(min_time) ~ 1,
+      TRUE ~ 0
+    ),
+    closest_pregnancy = case_when(
+      closest_pregnancy == 1 & !between(min_svy_date, inferred_episode_start, inferred_episode_end) &
+        any(between(min_svy_date, inferred_episode_start, inferred_episode_end)) ~ 0,
+      TRUE ~ closest_pregnancy
+    ),
+    length_closest = ifelse(closest_pregnancy == 1, gestational_age_days_calculated, 10000000),
+    # arbitrary due to durrent overlaps
+    closest_pregnancy = ifelse(sum(closest_pregnancy) > 1 & closest_pregnancy == 1 &
+      length_closest != max(length_closest),
+    0, closest_pregnancy
+    ),
+    closest_pregnancy = ifelse(sum(closest_pregnancy) > 1 & closest_pregnancy == 1 &
+      length_closest == length_closest[closest_pregnancy == 1][1], 0, closest_pregnancy),
+    closest_pregnancy = ifelse(sum(closest_pregnancy) == 0 & min_time == min(min_time), 1, closest_pregnancy)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    took_the_survey = case_when(
+      inferred_episode_end - days(30) < pregnancy_date & (pregnancy %in% c("No", "Skip") | is.na(pregnancy)) ~ "After",
+      inferred_episode_start > pregnancy_date & (pregnancy %in% c("No", "Skip") | is.na(pregnancy)) ~ "Before",
+      pregnancy == "Yes" & between(min_svy_date, inferred_episode_start, inferred_episode_end) ~ "During",
+      pregnancy == "Yes" & closest_pregnancy == 1 ~ "During",
+      pregnancy %in% c("No", "Skip") & between(min_svy_date, inferred_episode_start, inferred_episode_start + days(7 * 12)) ~ "During",
+      between(min_svy_date, inferred_episode_start, inferred_episode_end) & (is.na(pregnancy) | pregnancy == "Skip") ~ "During",
+      inferred_episode_end < min_svy_date ~ "After",
+      inferred_episode_start > min_svy_date ~ "Before",
+      TRUE ~ "Unclear"
+    )
+  )
+```
+
+
+```{r}
+hipps_w_demo %>%
+  mutate(outcome_concordance_score = fct_rev(factor(outcome_concordance_score))) %>%
+  janitor::tabyl(outcome_category, outcome_concordance_score) %>%
+  mutate(across(where(is.numeric), ~ ifelse(.x < 20 & .x > 0, "<20", as.character(.x))))
+```
+
+```{r}
+janitor::tabyl(hipps_w_demo, outcome_concordance_score)
+```
+
+```{r}
+hipps_w_demo %>%
+  mutate(outcome_category = fct_rev(outcome_category)) %>%
+  ggplot() +
+  geom_bar(aes(outcome_category,
+    fill = outcome_category,
+    alpha = factor(outcome_concordance_score)
+  ), position = "fill") +
+  scale_alpha_manual(values = c(.25, .5, 1)) +
+  scale_fill_okabe_ito() +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = ~ str_wrap(.x, 13)) +
+  coord_flip(expand = FALSE) +
+  theme(
+    legend.position = "none",
+    axis.title = element_blank()
+  )
+```
+
+
+```{r}
+hipps_w_demo %>%
+  janitor::tabyl(outcome_category, precision_category)
+```
+
+```{r}
+hipps_w_demo %>%
+  mutate(
+    resolution = case_when(
+      precision_category %in% c("week", "two-week", "three-week") ~ "Week-level",
+      precision_category %in% c("month", "two-month", "three-month") ~ "Month-level",
+      precision_category %in% c("week_poor-support") ~ "Week-level (1 concept)", precision_category %in% c("non-specific") ~ "Non-specific"
+    ),
+    resolution = fct_relevel(resolution, "Week-level", "Week-level (1 concept)", "Month-level", "Non-specific")
+  ) %>%
+  count(resolution) %>%
+  mutate(prop = n / sum(n))
+```
+
+```{r}
+hipps_w_demo %>%
+  mutate(
+    resolution = case_when(
+      precision_category %in% c("week", "two-week", "three-week") ~ "Week-level",
+      precision_category %in% c("month", "two-month", "three-month") ~ "Month-level",
+      precision_category %in% c("week_poor-support") ~ "Week-level (1 concept)", precision_category %in% c("non-specific") ~ "Non-specific"
+    ),
+    resolution = fct_relevel(resolution, "Week-level", "Week-level (1 concept)", "Month-level", "Non-specific")
+  ) %>%
+  count(resolution) %>%
+  mutate(prop = n / sum(n))
+```
+
+```{r}
+hipps_w_demo %>%
+  group_by(outcome_category) %>%
+  summarise(
+    mean = mean(gestational_age_days_calculated, na.rm = TRUE),
+    median = median(gestational_age_days_calculated, na.rm = TRUE),
+    min = min(gestational_age_days_calculated, na.rm = TRUE),
+    max = max(gestational_age_days_calculated, na.rm = TRUE),
+    q5 = quantile(gestational_age_days_calculated, .05, na.rm = TRUE),
+    q95 = quantile(gestational_age_days_calculated, .95, na.rm = TRUE)
+  ) %>%
+  mutate(across(where(is.numeric), ~ . / 7))
+```
+
+```{r}
+theme_set(theme_classic())
+```
+
+```{r}
+hipps_w_demo %>%
+  filter(
+    inferred_episode_start < inferred_episode_end,
+    HIP_flag == 1 & PPS_flag == 1,
+    inferred_episode_start > as.Date("2016-01-01")
+  ) %>%
+  mutate(conc = "Data-rich episodes") %>%
+  bind_rows(hipps_w_demo %>% mutate(conc = "All")) %>%
+  mutate(
+    resolution = case_when(
+      precision_category %in% c("week", "two-week", "three-week") ~ "Week-level",
+      precision_category %in% c("month", "two-month", "three-month") ~ "Month-level",
+      precision_category %in% c("non-specific") ~ "Non-specific",
+      precision_category %in% c("week_poor-support") ~ "Week (poor support)"
+    ),
+    resolution = fct_relevel(resolution, "Week-level", "Week (poor support)", "Month-level", "Non-specific"),
+    outcome_concordance_score = ifelse(outcome_concordance_score %in% c(0, 1), 1, outcome_concordance_score),
+    outcome_category = fct_rev(outcome_category)
+  ) %>%
+  ggplot(aes(outcome_category, fill = outcome_category)) +
+  # geom_bar() +
+  geom_bar(aes(
+    #    outcome_category,
+    # fill = outcome_category,
+    alpha = factor(outcome_concordance_score)
+  ), position = "stack") +
+  scale_alpha_manual(values = c(.4, 1)) +
+  coord_flip(expand = FALSE) +
+  scale_y_continuous(
+    limits = c(0, 14000),
+    breaks = seq(0, 12000, 3000)
+  ) +
+  facet_grid(
+    rows = vars(resolution),
+    cols = vars(conc),
+    labeller = label_wrap_gen(15)
+  ) +
+  scale_fill_okabe_ito() +
+  theme(legend.position = "none") +
+  labs(y = NULL, x = NULL)
+```
+
+
+```{r}
+hipps_w_demo %>%
+  filter(
+    inferred_episode_start < inferred_episode_end,
+    HIP_flag == 1 & PPS_flag == 1,
+    inferred_episode_start > as.Date("2016-01-01")
+  ) %>%
+  mutate(conc = "Data-rich episodes") %>%
+  bind_rows(hipps_w_demo %>% mutate(conc = "All")) %>%
+  mutate(
+    resolution = case_when(
+      precision_category %in% c("week", "two-week", "three-week") ~ "Week-level",
+      precision_category %in% c("month", "two-month", "three-month") ~ "Month-level",
+      precision_category %in% c("non-specific") ~ "Non-specific",
+      precision_category %in% c("week_poor-support") ~ "Week (poor support)"
+    ),
+    resolution = fct_relevel(resolution, "Week-level", "Week (poor support)", "Month-level", "Non-specific"),
+    outcome_concordance_score = ifelse(outcome_concordance_score %in% c(0, 1), 1, outcome_concordance_score)
+  ) %>% 
+    group_by(conc, resolution, outcome_concordance_score) %>% 
+    count(outcome_category) %>% 
+    group_by(conc, resolution, outcome_category) %>% 
+    mutate(prop = n / sum(n),
+           n = sum(n)) %>%
+    filter(outcome_concordance_score == 1) %>%
+    mutate(prop = 1 - prop) %>% 
+    select(-outcome_concordance_score) %>% 
+    pivot_wider(names_from = conc, names_glue = "{.value}_{conc}", values_from = c(n, prop)) %>% 
+    select(resolution, outcome_category, contains("All"), contains("rich")) %>% 
+    write_csv(here::here("shared/new_tbl.csv"))
+```
+
+```{r}
+states <- hipps_persons %>%
+  collect() %>%
+  select(person_id, state_of_residence, dob)
+
+hipps_cleaned <- hipps_w_demo %>%
+  left_join(states, by = "person_id") %>%
+  mutate(
+    race_eth_cat = case_when(
+      str_detect(race_eth, "Hispanic") ~ "Hispanic",
+      str_detect(race_eth, ",") ~ "Multiple",
+      race_eth == "RaceEthnicityNoneOfThese" ~ "Other",
+      TRUE ~ race_eth
+    ),
+    gender_cat = case_when(
+      gender %in% c(
+        "NonBinary", "Transgender",
+        "AdditionalOptions"
+      ) ~ "Other/multiple",
+      str_detect(gender, ",") ~ "Other/multiple",
+      gender == "Skip" ~ "No answer",
+      TRUE ~ gender
+    ),
+    gender_cat = fct_relevel(gender_cat, "Woman", "Man", "Other/multiple", "No answer"),
+    orientation_cat = case_when(
+      sexual_orientation %in% c("Gay", "Lesbian") ~ "Gay/lesbian",
+      str_detect(sexual_orientation, "Bisexual") ~ "Bisexual",
+      str_detect(sexual_orientation, "Gay") ~ "Gay/lesbian",
+      str_detect(sexual_orientation, "Lesbian") ~ "Gay/lesbian",
+      sexual_orientation == "Skip" ~ "No answer",
+      .default = sexual_orientation
+    ),
+    insurance_insuracneaccepted_cat = case_when(
+      insurance_insurnaceaccepted == "Skip" ~ "No answer",
+      TRUE ~ insurance_insurnaceaccepted),
+    insurance_healthcarecoverage_cat = case_when(
+      insurance_healthcarecoverage == "Skip" ~ "No answer",
+      TRUE ~ insurance_healthcarecoverage),
+    healthadvice_placeforhealthadvice_cat = case_when(
+      healthadvice_placeforhealthadvice == "Skip" ~ "No answer",
+      TRUE ~ healthadvice_placeforhealthadvice),
+    healthadvice_whatkindofplace_cat = case_when(
+      healthadvice_whatkindofplace == "Skip" ~ "No answer",
+      TRUE ~ healthadvice_whatkindofplace),
+    across(
+      where(is.character),
+      ~ fct_collapse(.x,
+        "No answer" = c(
+          "I prefer not to answer", "None Indicated", "Prefer Not to Answer",
+          "Prefer Not To Answer", "PreferNotToAnswer", "Skip", "DontKnow",
+          "PMI: Skip", "PMI: Prefer Not To Answer", "PMI: Dont Know", "Race Ethnicity None Of These"
+        ),
+        NULL = "No matching concept"
+      )
+    ),
+    race_eth_cat = fct_recode(
+      race_eth_cat,
+      "Black or African-American" = "Black",
+      "Hispanic or Latino" = "Hispanic",
+      "More than one race" = "Mixed",
+      "Native Hawaiian or Other Pacific Islander" = "NHPI",
+      "Middle Eastern or North African" = "MENA"
+    ),
+    income_cat = fct_collapse(income,
+      "< 10k" = "less10k",
+      "10-25k" = c("10k25k"),
+      "25-50k" = c("25k35k", "35k50k"),
+      "50-100k" = c("50k75k", "75k100k"),
+      "> 100k" = c(
+        "100k150k",
+        "150k200k", "more200k"
+      )
+    ),
+    income_cat = fct_relevel(income_cat, "< 10k", "10-25k", "25-50k", "50-100k", "> 100k"),
+    edu_cat = fct_collapse(education,
+      "Less than high school" = c(
+        "FiveThroughEight", "NeverAttended",
+        "NineThroughEleven", "OneThroughFour"
+      ),
+      "High school graduate" = c("TwelveOrGED"),
+      "Some college" = c("CollegeOnetoThree"),
+      "College graduate" = "CollegeGraduate",
+      "Advanced degree" = "AdvancedDegree"
+    ),
+    edu_cat = fct_relevel(
+      edu_cat,
+      "Less than high school", "High school graduate", "Some college", "College graduate", "Advanced degree"
+    ),
+    marital_status_cat = fct_collapse(marital_status,
+      "Married/partnered" = c("Married", "LivingWithPartner"),
+      "Divorced/separated/widowed" = c("Divorced", "Separated", "Widowed"),
+      "Never married" = "NeverMarried"
+    ),
+    across(
+      c(gender_cat, orientation_cat, race_eth_cat, edu_cat, income_cat, marital_status_cat),
+      ~ fct_drop(na_if(.x, "No answer"))
+    )
+  ) %>%
+  left_join(tibble(
+    state_of_residence = c(state.abb, "DC", "PR", "AS", "MP", "MH", "PW", "FM"),
+    state_cat = c(state.name, "District of Columbia", "Puerto Rico", "American Samoa", "Northern Mariana Islands", "Marshall Islands", "Palau", "Federated States of Micronesia")
+  )) %>%
+  mutate(
+    year_start = year(inferred_episode_start),
+    year_end = year(inferred_episode_end),
+    gestational_age_weeks = gestational_age_days_calculated / 7,
+    mom_age = as.numeric(difftime(inferred_episode_end, dob, units = "days")) / 365.25,
+    mom_age_cat = cut(mom_age, c(0, seq(15, 55, 5)), right = FALSE, include.lowest = TRUE)
+  ) %>%
+  separate(mom_age_cat, into = c("start", "stop"), sep = ",") %>%
+  mutate(across(c(start, stop), parse_number),
+    stop = stop - 1
+  ) %>%
+  unite(mom_age_cat, c(start, stop), sep = "-") %>%
+  mutate(
+    mom_age_cat = paste(mom_age_cat, "years"),
+    mom_age_cat = ifelse(mom_age_cat == "50-54 years", "50 years and over", mom_age_cat),
+    mom_age_cat = ifelse(is.na(mom_age), NA, mom_age_cat),
+    year_start_cat = cut(year_start,
+      breaks = c(-Inf, 2015:2022),
+      labels = c("2015 and earlier", as.character(2016:2022))
+    ),
+    year_end_cat = cut(year_end,
+      breaks = c(-Inf, 2015:2022),
+      labels = c("2015 and earlier", as.character(2016:2022))
+    ),
+    mom_age_cat_table = fct_collapse(mom_age_cat, "45 years and over" = c("45-49 years", "50 years and over")),
+    mom_age_cat_table = fct_drop(mom_age_cat_table),
+    across(where(is.factor), ~ fct_lump_min(.x, min = 20)),
+         across(c(state_cat, gender_cat, orientation_cat, race_eth_cat, marital_status_cat), fct_infreq),
+    state_cat = fct_lump_min(state_cat, min = 20)
+  )
+```
+
+```{r}
+write_rds(hipps_cleaned, here::here("shared/hipps_cleaned.rds"))
+#aou_workspace_to_bucket(here::here("shared/hipps_cleaned.rds"))
+```
+
+```{r}
+hipps_cleaned <- readRDS("shared/hipps_cleaned.rds")
+# hipps_cleaned_observation_20wks <- readRDS("shared/hipps_cleaned_observation_20wks.rds")
+```
+
+```{r}
+hipps_cleaned %>%
+  group_by(outcome_category) %>%
+  summarise(
+    n = sum(!is.na(gestational_age_days_calculated)),
+    pct_less_20wks = sum(gestational_age_days_calculated < 140, na.rm = TRUE) / n * 100,
+    mean = mean(gestational_age_days_calculated, na.rm = TRUE),
+    median = median(gestational_age_days_calculated, na.rm = TRUE),
+    min = min(gestational_age_days_calculated, na.rm = TRUE),
+    max = max(gestational_age_days_calculated, na.rm = TRUE),
+    q5 = quantile(gestational_age_days_calculated, .05, na.rm = TRUE),
+    q95 = quantile(gestational_age_days_calculated, .95, na.rm = TRUE)
+  ) %>%
+  mutate(across(c(mean, median, min, max, q5, q95), ~ . / 7))
+
+# First, create a label that combines outcome category and n
+summary_df <- hipps_cleaned %>%
+  group_by(outcome_category) %>%
+  summarise(
+    n = sum(!is.na(gestational_age_days_calculated)),
+    mean = mean(gestational_age_days_calculated, na.rm = TRUE),
+    median = median(gestational_age_days_calculated, na.rm = TRUE),
+    min = min(gestational_age_days_calculated, na.rm = TRUE),
+    max = max(gestational_age_days_calculated, na.rm = TRUE),
+    q5 = quantile(gestational_age_days_calculated, 0.05, na.rm = TRUE),
+    q95 = quantile(gestational_age_days_calculated, 0.95, na.rm = TRUE)
+  ) %>%
+ mutate(
+    across(c(mean, median, min, max, q5, q95), ~ . / 7),  # convert to weeks
+    label = paste0(outcome_category, "\n(n=", n, ")")     # add n to label
+  )
+
+# Plot with updated y-axis labels
+GA_plot <- ggplot(summary_df, aes(x = label, y = median)) +
+  geom_pointrange(aes(ymin = q5, ymax = q95), color = "#0072B2", size = 1) +
+  geom_point(aes(y = mean), color = "#D55E00", shape = 17, size = 3) +
+  labs(
+    x = "Outcome Category",
+    y = "Gestational Age (weeks)",
+    title = "Inferred Gestational Age by Outcome Category",
+    subtitle = "Median with 5th–95th percentile range, mean as triangle"
+  ) +
+  theme_minimal(base_size = 13) +
+  coord_flip()
+
+# Basic ridge plot
+GA_ridge_plot <- ggplot(hipps_cleaned, aes(
+  x = gestational_age_weeks,
+  y = outcome_category,
+  fill = outcome_category
+)) +
+  geom_density_ridges(scale = 1.5, alpha = 0.7, color = "white") +
+  labs(
+    title = "Distribution of Gestational Age by Outcome Category",
+    x = "Gestational Age (weeks)",
+    y = NULL
+  ) +
+  geom_vline(xintercept = 20, linetype = "dashed", color = "red", linewidth = 1) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+
+ggsave(GA_plot, file = here::here("shared/EDA/GA_plot.png"), dpi = 300)
+ggsave(GA_ridge_plot, file = here::here("shared/EDA/GA_ridge.png"), dpi = 300)
+
+```
+
+```{r}
+# exploring differences based on the outcome category to justify inclusion/exclusion
+demo_differences_algorithms <- hipps_cleaned %>%
+  tbl_summary(
+    include = c(gender_cat, race_eth_cat, income_cat, edu_cat, precision_category, inferred_episode_start, inferred_episode_end),
+    by = final_outcome_category,
+    label = list(
+      gender_cat ~ "Gender identity",
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      precision_category ~ "Level of precision of dates", 
+      inferred_episode_start ~ "Episode start", 
+      inferred_episode_end ~ "Episode end"
+    )
+  )
+demo_differences_algorithms
+
+demo_differences_algorithms |> 
+  as_gt() |> 
+  gt::gtsave(filename = "demo_differences_algorithms.docx", path = "shared/EDA") 
+
+
+```
+
+```{r}
+# EXCLUSIONS
+length(hipps_cleaned$person_id)
+sum(hipps_cleaned$outcome_category %in% c("Abortion", "Ectopic pregnancy", "Missing outcome"))
+sum(hipps_cleaned$outcome_category %in% c("Live birth", "Delivery record only", "Stillbirth"))
+
+hipps_cleaned <- hipps_cleaned %>%
+  filter(outcome_category %in% c("Live birth", "Delivery record only", "Stillbirth"))
+
+length(hipps_cleaned$person_id)
+summary(hipps_cleaned$gestational_age_weeks)
+
+sum(hipps_cleaned$gestational_age_weeks < 20)
+sum(hipps_cleaned$gestational_age_weeks > 45)
+
+hipps_cleaned <- hipps_cleaned %>%
+  filter(gestational_age_weeks >= 20 & gestational_age_weeks <= 45)
+
+length(hipps_cleaned$person_id)
+
+summary(hipps_cleaned$inferred_episode_start)
+
+```
+
+```{r}
+#examining the distribution of start dates and restriction by the start date
+hipps_cleaned %>%
+  mutate(year_start = lubridate::year(inferred_episode_start)) %>%
+  count(year_start) %>%
+  ggplot(aes(x = year_start, y = n)) +
+  geom_col() +
+  labs(title = "Distribution of Inferred Pregnancy Start Dates", x = "Year", y = "Count")
+
+hipps_cleaned <- hipps_cleaned %>%
+  filter(inferred_episode_start >= as.Date("2007-01-31"))
+
+length(hipps_cleaned$person_id)
+length(unique(hipps_cleaned$person_id))
+
+```
+
+```{r}
+library(dplyr)
+library(DBI)
+library(readr)
+library(purrr)
+
+# 1. Define condition groups and associated ICD codes
+icd_hdp = c("6423", "6424", "6425", "6426", "6427",
+                                            "O11", "O13", "O14", "O14.0", "O14.1", "O14.2", "O14.9",
+                                            "O15", "O15.0", "O15.1", "O15.2", "O15.9")
+
+icd_chd = c("745", "7455", "746", "7464", "7468", "74687", "7469", "74693", "74699",
+                                 "Q20", "Q20.1", "Q20.2", "Q20.3", "Q20.4", "Q20.5", "Q20.6", "Q20.8", "Q20.9",
+                                 "Q21", "Q21.0", "Q21.1", "Q21.2", "Q21.3", "Q21.4", "Q21.8", "Q21.9",
+                                 "Q22", "Q22.1", "Q22.2", "Q22.4", "Q22.5", "Q22.8", "Q22.9",
+                                 "Q23", "Q23.0", "Q23.1", "Q23.2", "Q23.3", "Q23.4", "Q23.8", "Q23.9",
+                                 "Q24", "Q24.0", "Q24.3", "Q24.4", "Q24.5", "Q24.6", "Q24.8", "Q24.9")
+
+icd_htn = c("401", "4010", "4011", "4019", "402", "4020", "4021", "4029",
+                     "403", "4031", "4039", "404", "4040", "4041", "4049", "405", "4050", "4051", "4059",
+                     "I10", "I11", "I11.0", "I11.9", "I12", "I12.0", "I12.9", "I13", "I13.0", "I13.1", "I13.2", "I13.9",
+                     "I15", "I15.0", "I15.1", "I15.2", "I15.8", "I15.9")
+
+icd_hyperlipidemia = c("E78.0", "E78.1", "E78.2", "E78.4", "E78.5")
+
+icd_DM = c("2500", "25000", "25001", "25009", "25011", "25019", "2503", "2504", "2505", "25099",
+                          "E10", "E10.1", "E10.2", "E10.3", "E10.4", "E10.5", "E10.6", "E10.7", "E10.8", "E10.9",
+                          "E11", "E11.0", "E11.1", "E11.2", "E11.3", "E11.4", "E11.5", "E11.6", "E11.7", "E11.8", "E11.9",
+                          "E12", "E12.1", "E12.8", "E12.9", "E13", "E13.1", "E13.2", "E13.3", "E13.5", "E13.6", "E13.7", "E13.8", "E13.9",
+                          "E14", "E14.1", "E14.2", "E14.3", "E14.4", "E14.5", "E14.6", "E14.7", "E14.8", "E14.9")
+
+icd_ckd = c("585", "5859", "I12.0", "I13.1", "I13.2", "N18", "N18.0", "N18.1", "N18.2", "N18.3", "N18.4", "N18.5", "N18.8", "N18.9")
+
+icd_CAD = c("410", "4109", "411", "4119", "412", "4129", "4140", "4148", "4149",
+                                "I21", "I21.0", "I21.1", "I21.2", "I21.3", "I21.4", "I21.9", "I22", "I22.0", "I22.1", "I22.8", "I22.9",
+                                "I23", "I23.0", "I23.1", "I23.2", "I23.3", "I23.4", "I23.5", "I23.6", "I23.8",
+                                "I24", "I24.0", "I24.1", "I24.8", "I24.9", "I25.1", "I25.2", "I25.5", "I25.6", "I25.8", "I25.9")
+
+icd_hf = c("4254", "4280", "4281", "4289", "I11.0", "I11.3", "I13.2", "I25.5",
+                      "I42.0", "I42.1", "I42.2", "I42.5", "I42.8", "I42.9", "I50", "I50.1", "I50.9")
+
+icd_aorticstenosis = c("I06.0", "I06.2", "I35.0", "I35.2")
+
+icd_mitral_regurg = c("3942", "I05.1", "I05.2", "I34.0")
+
+icd_afib = c("4273", "I48.0", "I48.1", "I48.2", "I48.3", "I48.4", "I48.9")
+
+icd_ischemic_stroke = c("434", "43401", "43411", "43491", "436",
+                        "I63.0", "I63.1", "I63.2", "I63.3", "I63.4", "I63.5", "I63.6", "I63.8", "I63.9", "I64")
+
+icd_PAD = c("4400", "4402", "4438", "4439",
+                                    "I70.0", "I70.00", "I70.01", "I70.2", "I70.20", "I70.21", "I70.8", "I70.80", "I70.9", "I70.90",
+                                    "I73.8", "I73.9")
+
+icd_venous_throm = c("4151", "4511", "126", "I26.0", "I26.9",
+                               "I80.0", "I80.1", "I80.2", "I80.3", "I80.8", "I80.9",
+                               "I81", "I82.0", "I82.2", "D68", "D68.0", "D68.1", "D68.2", "D68.3", "D68.4", "D68.5", "D68.6", "D68.8", "D68.9")
+
+
+map_icd_to_snomed <- function(icd_codes, concept_tbl, concept_relationship_tbl) {
+  concept_relationship_tbl %>%
+    filter(relationship_id == "Maps to") %>%
+    inner_join(
+      concept_tbl %>%
+        filter(vocabulary_id %in% c("ICD9CM", "ICD10CM")) %>%
+        filter(concept_code %in% icd_codes) %>%
+        select(concept_id, icd_code = concept_code, icd_name = concept_name),
+      by = c("concept_id_1" = "concept_id")
+    ) %>%
+    left_join(
+      concept_tbl %>%
+        select(concept_id, snomed_code = concept_code, snomed_name = concept_name),
+      by = c("concept_id_2" = "concept_id")
+    )
+      #select(icd_code, icd_name, snomed_code, snomed_name) %>%
+    #distinct()  # optional: remove duplicates
+}
+
+#just join entire concept table
+map_icd_to_snomed <- function(icd_codes, concept_tbl, concept_relationship_tbl) {
+  concept_relationship_tbl %>%
+    filter(relationship_id == "Maps to") %>%
+    inner_join(
+      concept_tbl %>%
+        filter(vocabulary_id %in% c("ICD9CM", "ICD10CM")) %>%
+        filter(concept_code %in% icd_codes) %>%
+        select(concept_id, icd_code = concept_code, icd_name = concept_name),
+      by = c("concept_id_1" = "concept_id")
+    ) %>%
+    left_join(
+      concept_tbl,
+      by = c("concept_id_2" = "concept_id")
+    )
+}
+
+```
+
+```{r}
+
+mapped_codes_hdp <- map_icd_to_snomed(icd_hdp, concept_tbl, concept_relationship_tbl)
+mapped_codes_chd <- map_icd_to_snomed(icd_chd, concept_tbl, concept_relationship_tbl)
+mapped_codes_htn <- map_icd_to_snomed(icd_htn, concept_tbl, concept_relationship_tbl)
+mapped_codes_hyperlipidemia <- map_icd_to_snomed(icd_hyperlipidemia, concept_tbl, concept_relationship_tbl)
+mapped_codes_DM <- map_icd_to_snomed(icd_DM, concept_tbl, concept_relationship_tbl)
+mapped_codes_ckd <- map_icd_to_snomed(icd_ckd, concept_tbl, concept_relationship_tbl)
+mapped_codes_cad <- map_icd_to_snomed(icd_CAD, concept_tbl, concept_relationship_tbl)
+mapped_codeshf <- map_icd_to_snomed(icd_hf, concept_tbl, concept_relationship_tbl)
+mapped_codes_aorticstenosis <- map_icd_to_snomed(icd_aorticstenosis, concept_tbl, concept_relationship_tbl)
+mapped_codes_mitral_regurg <- map_icd_to_snomed(icd_mitral_regurg, concept_tbl, concept_relationship_tbl)
+mapped_codes_afib <- map_icd_to_snomed(icd_afib, concept_tbl, concept_relationship_tbl)
+mapped_codes_ischemic_stroke <- map_icd_to_snomed(icd_ischemic_stroke, concept_tbl, concept_relationship_tbl)
+mapped_codes_PAD <- map_icd_to_snomed(icd_PAD, concept_tbl, concept_relationship_tbl)
+
+```
+
+
+```{r}
+# concept codes for EXPOSURES
+# concept codes for adverse pregnancy outcomes and their descendants 
+concept_preeclampsia <- read.csv("shared/ATLAS Concept Sets_PEC_31Jan25.csv")
+
+# concept codes for gestational diabetes - 402459 and it's descendants
+# we need to add to ICD9 codes b/c those are not mapped - added another code? 
+concept_gdm <- read.csv("shared/ATLAS Concept Sets_GDM_7May25.csv")
+
+# codes for any hypertensive disorder of pregnancy (pregnancy-induced hypertension)
+concept_hdp <- read.csv("shared/ATLAS Concept Sets_HDP.csv")
+
+# Thoughts - add more of a buffer around the dates
+# Add a buffer for postpartum preeclampsia
+```
+
+```{r}
+#concept codes for visit types
+concept_outpt <- read.csv("shared/ATLAS Concept Sets_outpatient_visit.csv")
+concept_inpt_er <- read.csv("shared/ATLAS Concept Sets_inpatient_or_ER.csv")
+
+```
+
+```{r}
+# concept codes for the OUTCOMES
+ischemicHD_codes <- read.csv("shared/ATLAS Concept Sets_ischemicHD_5Feb25.csv") #this needs improvement
+hf_codes <- read.csv("shared/ATLAS Concept Sets_HF.csv") #this is from legend study
+
+stroke_legend_codes <- read.csv("shared/ATLAS Concept Sets_stroke_30Jan25.csv")
+acuteMI_legend_codes <- read.csv("shared/ATLAS Concept Sets_acuteMI_30Jan25.csv")
+
+T1DM_legend_codes <- read.csv("shared/ATLAS Concept Sets T1DM_29Jan25.csv")
+T2DM_legend_codes <- read.csv("shared/ATLAS Concept Sets_T2DM_30Jan25.csv")
+
+
+```
+
+```{r}
+# create an inferred start and inferred end data buffer
+hipps_cleaned <- hipps_cleaned %>%
+  mutate(inferred_episode_start_buffer_6wks = as.Date(inferred_episode_start) - (6*7), 
+         inferred_episode_end_buffer_6wks = as.Date(inferred_episode_end) + (6*7),
+         inferred_episode_start_buffer_12wks = as.Date(inferred_episode_start) - (12*7), 
+         inferred_episode_end_buffer_12wks = as.Date(inferred_episode_end) + (12*7)
+         )
+
+```
+
+
+```{r}
+#search for the concept
+gdm_all <- aou_concept_set(cohort = hipps_cleaned,
+                       concepts = concept_gdm$Id,
+                       start_date = "inferred_episode_start", 
+                       end_date = "inferred_episode_end", 
+                       output = "all",
+                       concept_set_name = "gdm",
+                       domains = "condition")
+
+preeclampsia_all <- aou_concept_set(cohort = hipps_cleaned,
+                       concepts = concept_preeclampsia$Id,
+                       start_date = "inferred_episode_start", 
+                       end_date = "inferred_episode_end_buffer_6wks", 
+                       output = "all",
+                       concept_set_name = "preeclampsia",
+                       domains = "condition")
+
+hdp_all <- aou_concept_set(cohort = hipps_cleaned,
+                       concepts = concept_hdp$Id,
+                       start_date = "inferred_episode_start", 
+                       end_date = "inferred_episode_end_buffer_6wks", 
+                       output = "all",
+                       concept_set_name = "hdp",
+                       domains = "condition")
+
+```
+
+
+
+
+```{r}
+# goal will be to group by person ID and inferred episode end date = same pregnancy for the same person
+#take the earliest concept ID
+GDM_collapsed <- gdm_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    GDM_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    GDM_concept_data_latest = max(concept_date), # Take the latest concept date
+    GDM_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    GDM_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+preeclampsia_collapsed <- preeclampsia_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    preeclampsia_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    preeclampsia_concept_data_latest = max(concept_date), # Take the latest concept date
+    preeclampsia_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+   preeclampsia_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hdp_collapsed <- hdp_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hdp_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+#concerned about the earliest dates should review?
+summary(GDM_collapsed$GDM_concept_date_earliest) 
+summary(hdp_collapsed$hdp_concept_date_earliest) 
+summary(preeclampsia_collapsed$preeclampsia_concept_date_earliest) 
+
+```
+
+
+```{r}
+#create the observation period table
+observation_period_tbl_pregnancy <- aou_observation_period(cohort=hipps_cleaned)
+
+temp_data <- as.data.frame(observation_period_tbl_pregnancy)
+dim(temp_data) #17985
+
+hipps_cleaned <- temp_data %>% #save this to have
+  inner_join(hipps_cleaned, by = "person_id") 
+
+#write_rds(merged_observation_data, here::here("shared/hipps_cleaned_observation.rds"))
+```
+
+```{r}
+# visit types
+hipps_cleaned <- hipps_cleaned %>%
+  mutate(year_before_preg = inferred_episode_start %m-% years(1),
+         year_after_preg = inferred_episode_end %m+% years(1))
+
+outpatient_year_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = concept_outpt$Id,
+                            start_date = "year_before_preg",
+                            end_date = "inferred_episode_start", 
+                            output = "all",
+                            concept_set_name = "outpt_year_before",
+                            domains = "visit")
+
+outpatient_year_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = concept_outpt$Id,
+                            start_date = "inferred_episode_end",
+                            end_date = "year_after_preg", 
+                            output = "all",
+                            concept_set_name = "outpt_year_before",
+                            domains = "visit")
+
+#view(outpatient_year_before)
+table(outpatient_year_before$concept_name)
+
+outpatient_year_before_collapsed <- outpatient_year_before %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    outpatient_year_before_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    outpatient_year_before_concept_data_latest = max(concept_date), # Take the latest concept date
+    outpatient_year_before_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    outpatient_year_before_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+outpatient_year_after_collapsed <- outpatient_year_after %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    outpatient_year_after_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    outpatient_year_after_concept_data_latest = max(concept_date), # Take the latest concept date
+    outpatient_year_after_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    outpatient_year_after_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+```
+
+
+```{r}
+ischemicHD_all <- aou_concept_set(cohort = hipps_cleaned,
+                            concepts = ischemicHD_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "ischemic_hd",
+                            domains = "condition")
+
+hf_all <- aou_concept_set(cohort = hipps_cleaned,
+                            concepts = hf_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "hf",
+                            domains = "condition")
+
+stroke_legend <- aou_concept_set(cohort = hipps_cleaned,
+                            concepts = stroke_legend_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "stroke_legend",
+                            domains = "condition")
+
+acuteMI_legend <- aou_concept_set(cohort = hipps_cleaned,
+                            concepts = acuteMI_legend_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "acuteMI_legend",
+                            domains = "condition")
+
+
+length(unique(ischemicHD_all$person_id)) #26619
+length(unique(hf_all$person_id)) 
+length(unique(stroke_legend$person_id)) 
+length(unique(acuteMI_legend$person_id)) 
+
+```
+
+
+```{r}
+# goal will be to group by person ID and inferred episode end date = same pregnancy for the same person
+# take the earliest concept ID
+ischemicHD_collapsed <- ischemicHD_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    ischemicHD_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    ischemicHD_concept_data_latest = max(concept_date), # Take the latest concept date
+    ischemicHD_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+     ischemicHD_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hf_collapsed <- hf_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hf_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hf_concept_data_latest = max(concept_date), # Take the latest concept date
+    hf_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hf_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+stroke_legend_collapsed <- stroke_legend %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    stroke_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    stroke_concept_data_latest = max(concept_date), # Take the latest concept date
+    stroke_legend_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    stroke_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+acuteMI_legend_collapsed <- acuteMI_legend %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    acuteMI_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    acuteMI_concept_data_latest = max(concept_date), # Take the latest concept date
+    acuteMI_legend_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    acuteMI_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+```
+
+
+```{r}
+# EDIT
+# merge the exposures and the outcomes together
+final_long_data <- hipps_cleaned %>%
+  left_join(preeclampsia_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(hdp_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(GDM_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(ischemicHD_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(hf_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(stroke_legend_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(acuteMI_legend_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(outpatient_year_before_collapsed, by = c("person_id", "inferred_episode_end")) %>% 
+  left_join(outpatient_year_after_collapsed, by = c("person_id", "inferred_episode_end"))
+
+
+# merge in more covariates as needed
+#composite varibale of ANY CVD outcome
+final_long_data <- final_long_data %>%
+  mutate(
+    # Composite indicators
+    CVD_composite = if_else(
+      ischemicHD_indicator == 1 | hf_indicator == 1 |
+      stroke_legend_indicator == 1 | acuteMI_legend_indicator == 1, 1, 0
+    ),
+    APO_composite = if_else(
+      preeclampsia_indicator == 1 | GDM_indicator == 1 |
+      hdp_indicator == 1 | preterm_status_from_calculation == 1, 1, 0
+    ),
+    # Get the earliest date among all CVD-related concept dates
+    CVD_composite_date_earliest = pmin(
+      ischemicHD_concept_date_earliest,
+      hf_concept_date_earliest,
+      stroke_concept_date_earliest,
+      acuteMI_concept_date_earliest,
+      na.rm = TRUE
+    ),
+    # Time to CVD event (only if CVD happened)
+    time_to_CVD_event = as.numeric(as.Date(CVD_composite_date_earliest) - as.Date(inferred_episode_end)),
+    # Time to separate CVD events
+    time_to_ischemicHD_event = as.numeric(as.Date(ischemicHD_concept_date_earliest) - as.Date(inferred_episode_end)),
+    time_to_hf_event = as.numeric(as.Date(hf_concept_date_earliest) - as.Date(inferred_episode_end)),
+    time_to_stroke_event = as.numeric(as.Date(stroke_concept_date_earliest) - as.Date(inferred_episode_end)),
+    time_to_MI_event = as.numeric(as.Date(acuteMI_concept_date_earliest) - as.Date(inferred_episode_end)),
+
+    # Time to censoring (observation period end)
+    time_to_censoring = as.numeric(as.Date(observation_period_end_date) - as.Date(inferred_episode_end)),
+    # Final time-to-event or censoring
+    time_to_CVD_composite_days = if_else(
+      !is.na(time_to_CVD_event),
+      time_to_CVD_event,
+      time_to_censoring
+    ),
+    time_to_ischemicHD_concept_days = if_else(
+      !is.na(time_to_ischemicHD_event),
+      time_to_ischemicHD_event,
+      time_to_censoring
+    ),
+    time_to_hf_concept_days = if_else(
+      !is.na(time_to_hf_event),
+      time_to_hf_event,
+      time_to_censoring
+    ),
+    time_to_stroke_concept_days = if_else(
+      !is.na(time_to_stroke_event),
+      time_to_stroke_event,
+      time_to_censoring
+    ),
+    time_to_MI_concept_days = if_else(
+      !is.na(time_to_MI_event),
+      time_to_MI_event,
+      time_to_censoring
+    ),
+    time_to_CVD_composite_years = time_to_CVD_composite_days / 365.25,
+    time_to_ischemicHD_concept_years = time_to_ischemicHD_concept_days / 365.25,
+    time_to_hf_concept_years = time_to_hf_concept_days / 365.25,
+    time_to_stroke_concept_years = time_to_stroke_concept_days / 365.25,
+    time_to_MI_concept_years = time_to_MI_concept_days / 365.25,
+    # Event indicator: 1 = CVD occurred, 0 = censored
+    CVD_composite_event = if_else(!is.na(time_to_CVD_event), 1, 0)
+  )
+
+# write_rds(final_long_data, here::here("shared/final_long_data.rds"))
+final_long_data <- readRDS("shared/final_long_data.rds")
+```
+
+
+```{r}
+APO_table <- final_long_data %>%
+  tbl_summary(
+    include = c(GDM_indicator, preeclampsia_indicator, hdp_indicator, final_outcome_category),
+    label = list(
+      GDM_indicator ~ "GDM",
+      preeclampsia_indicator ~ "Preeclampsia",
+      hdp_indicator ~ "Hypertensive disorder of pregnancy",
+      final_outcome_category ~ "Final outcome category"
+    )
+  ) %>%
+  bold_labels()
+APO_table
+
+APO_table_20wks |> 
+  as_gt() |> 
+  gt::gtsave(filename = "APO_table_20wks.docx", path = "shared/") 
+
+```
+  
+  
+
+```{r}
+#need to explore what happens in subsequent pregnancies
+pregnancy_counts <- final_long_data %>%
+  group_by(person_id) %>%
+  summarise(n_pregnancies = n())
+table(pregnancy_counts$n_pregnancies)
+
+exposure_pattern <- final_long_data %>%
+  arrange(person_id, inferred_episode_end) %>%  # Ensure pregnancies are ordered
+  group_by(person_id) %>%
+  mutate(preg_number = row_number()) %>%
+  summarise(
+    pattern = paste0(hdp_indicator, collapse = " → "),
+    n_pregnancies = n()
+  )
+table(exposure_pattern$pattern)
+
+```
+
+
+```{r}
+install.packages("ggalluvial")
+library(ggalluvial)
+
+alluvial_data <- final_long_data %>%
+  arrange(person_id, inferred_episode_end) %>%
+  group_by(person_id) %>%
+  mutate(preg_number = row_number()) %>%
+  filter(n() > 1) %>%
+  mutate(hdp_status = ifelse(hdp_indicator == 1, "HDP", "No HDP"))
+
+ggplot(alluvial_data,
+       aes(x = preg_number, stratum = hdp_status, alluvium = person_id, fill = hdp_status)) +
+  geom_flow(stat = "alluvium", lode.guidance = "forward", alpha = 0.7) +
+  geom_stratum() +
+  scale_fill_brewer(type = "qual", palette = "Set2") +
+  labs(x = "Pregnancy Order", y = "Count", title = "HDP Status Transitions Across Pregnancies") +
+  theme_minimal()
+
+seq_plot_data <- final_long_data %>%
+  arrange(person_id, inferred_episode_end) %>%
+  group_by(person_id) %>%
+  mutate(preg_number = row_number()) %>%
+  mutate(hdp_status = ifelse(hdp_indicator == 1, "HDP", "No HDP"))
+
+ggplot(seq_plot_data, aes(x = preg_number, y = factor(person_id), fill = hdp_status)) +
+  geom_tile(color = "white") +
+  scale_fill_manual(values = c("gray80", "#D55E00")) +
+  labs(x = "Pregnancy Number", y = "Person", fill = "HDP Status", title = "HDP Exposure by Pregnancy") +
+  theme_minimal()
+
+```
+
+
+```{r}
+# restrict to first pregnancy episode per person as a preliminary analysis 
+first_pregnancy <- final_long_data %>%
+  group_by(person_id) %>%
+  filter(row_number() == which.min(inferred_episode_start)) %>%
+  ungroup()
+summary(first_pregnancy$time_to_CVD_composite_years, useNA = "always")
+
+```
+
+```{r}
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+#12-year censoring
+    # Composite
+    time_to_CVD_composite_days_12y = pmin(time_to_CVD_composite_days, 4383),
+    time_to_CVD_composite_years_12y = time_to_CVD_composite_days_12y / 365.25,
+    CVD_composite_event_12y = if_else(!is.na(time_to_CVD_event) & time_to_CVD_event <= 4383, 1, 0),
+
+    # Ischemic HD
+    time_to_ischemicHD_concept_days_12y = pmin(time_to_ischemicHD_concept_days, 4383),
+    time_to_ischemicHD_concept_years_12y = time_to_ischemicHD_concept_days_12y / 365.25,
+    ischemicHD_event_12y = if_else(!is.na(time_to_ischemicHD_event) & time_to_ischemicHD_event <= 4383, 1, 0),
+
+    # Heart Failure
+    time_to_hf_concept_days_12y = pmin(time_to_hf_concept_days, 4383),
+    time_to_hf_concept_years_12y = time_to_hf_concept_days_12y / 365.25,
+    hf_event_12y = if_else(!is.na(time_to_hf_event) & time_to_hf_event <= 4383, 1, 0),
+
+    # Stroke
+    time_to_stroke_concept_days_12y = pmin(time_to_stroke_concept_days, 4383),
+    time_to_stroke_concept_years_12y = time_to_stroke_concept_days_12y / 365.25,
+    stroke_event_12y = if_else(!is.na(time_to_stroke_event) & time_to_stroke_event <= 4383, 1, 0),
+
+    # MI
+    time_to_MI_concept_days_12y = pmin(time_to_MI_concept_days, 4383),
+    time_to_MI_concept_years_12y = time_to_MI_concept_days_12y / 365.25,
+    MI_event_12y = if_else(!is.na(time_to_MI_event) & time_to_MI_event <= 4383, 1, 0),
+
+#10-year censoring 
+    # Composite
+    time_to_CVD_composite_days_10y = pmin(time_to_CVD_composite_days, 3652),
+    time_to_CVD_composite_years_10y = time_to_CVD_composite_days_10y / 365.25,
+    CVD_composite_event_10y = if_else(!is.na(time_to_CVD_event) & time_to_CVD_event <= 3652, 1, 0),
+
+    # Ischemic HD
+    time_to_ischemicHD_concept_days_10y = pmin(time_to_ischemicHD_concept_days, 3652),
+    time_to_ischemicHD_concept_years_10y = time_to_ischemicHD_concept_days_10y / 365.25,
+    ischemicHD_event_10y = if_else(!is.na(time_to_ischemicHD_event) & time_to_ischemicHD_event <= 3652, 1, 0),
+
+    # Heart Failure
+    time_to_hf_concept_days_10y = pmin(time_to_hf_concept_days, 3652),
+    time_to_hf_concept_years_10y = time_to_hf_concept_days_10y / 365.25,
+    hf_event_10y = if_else(!is.na(time_to_hf_event) & time_to_hf_event <= 3652, 1, 0),
+
+    # Stroke
+    time_to_stroke_concept_days_10y = pmin(time_to_stroke_concept_days, 3652),
+    time_to_stroke_concept_years_10y = time_to_stroke_concept_days_10y / 365.25,
+    stroke_event_10y = if_else(!is.na(time_to_stroke_event) & time_to_stroke_event <= 3652, 1, 0),
+
+    # MI
+    time_to_MI_concept_days_10y = pmin(time_to_MI_concept_days, 3652),
+    time_to_MI_concept_years_10y = time_to_MI_concept_days_10y / 365.25,
+    MI_event_10y = if_else(!is.na(time_to_MI_event) & time_to_MI_event <= 3652, 1, 0)
+  )
+```
+
+
+```{r}
+demo_table_index_preg <- first_pregnancy %>%
+  tbl_summary(
+    include = c(race_eth_cat, income_cat, edu_cat, marital_status_cat,
+                took_the_survey, mom_age, final_outcome_category,
+                GDM_indicator, preeclampsia_indicator, hdp_indicator, preterm_status_from_calculation, APO_composite,
+                ischemicHD_indicator, stroke_legend_indicator, hf_indicator, acuteMI_legend_indicator, CVD_composite),
+    label = list(
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      marital_status_cat ~ "Marital Status",
+      took_the_survey ~ "Timing of survey relative to index pregnancy",
+      mom_age ~ "Maternal age",
+      final_outcome_category ~ "Outcome categroy",
+      GDM_indicator ~ "GDM",
+      preeclampsia_indicator ~ "Preeclampsia",
+      hdp_indicator ~ "Hypertensive disorder of pregnancy",
+      preterm_status_from_calculation ~ "Preterm birth (from alogrithm)",
+      APO_composite ~ "APO composite",
+      ischemicHD_indicator ~ "Ischemic heart disease", 
+      stroke_legend_indicator ~ "Stroke", 
+      hf_indicator ~ "Heart failure", 
+      acuteMI_legend_indicator ~ "MI",
+      CVD_composite ~ "CVD composite",
+      
+    )
+  ) %>%
+  bold_labels()
+demo_table_index_preg
+
+demo_table_index_preg |> 
+  as_gt() |> 
+  gt::gtsave(filename = "demo_table_index_preg.docx", path = "shared/") 
+
+# time to first CVD event
+first_pregnancy %>%
+  filter(CVD_composite == 1 & acuteMI_legend_indicator == 1) %>% 
+  summarise(
+    mean_time_to_CVD = mean(time_to_CVD_composite_years, na.rm = TRUE),
+    median_time_to_CVD = median(time_to_CVD_composite_years, na.rm = TRUE),
+    min_time_to_CVD = min(time_to_CVD_composite_years, na.rm = TRUE),
+    max_time_to_CVD = max(time_to_CVD_composite_years, na.rm = TRUE),
+    n_with_CVD = n()
+  )
+
+first_pregnancy %>%
+  filter(CVD_composite == 1 & hf_indicator == 1 & hf_concept_count > 4) %>% 
+  summarise(
+    mean_time_to_CVD = mean(time_to_CVD_composite_years, na.rm = TRUE),
+    median_time_to_CVD = median(time_to_CVD_composite_years, na.rm = TRUE),
+    min_time_to_CVD = min(time_to_CVD_composite_years, na.rm = TRUE),
+    max_time_to_CVD = max(time_to_CVD_composite_years, na.rm = TRUE),
+    n_with_CVD = n()
+  )
+
+```
+
+```{r}
+table(first_pregnancy$hf_indicator) #392 ppl 
+summary(first_pregnancy$hf_concept_count)
+hist(first_pregnancy$hf_concept_count)
+table(first_pregnancy$hf_concept_count) #93 ppl have only 1 HF concept, 56 ppl have 2 HF concepts
+
+#look at what is driving these things
+table(acuteMI_legend$concept_name)
+table(hf_all$concept_name)
+table(ischemicHD_all$concept_name)
+table(stroke_legend$concept_name)
+
+acuteMI_legend_explore <- acuteMI_legend %>%
+  filter(!is.na(concept_date)) %>%
+  select(person_id, concept_date, concept_id, concept_name, concept_domain, inferred_episode_start, inferred_episode_end, mom_age)
+
+acuteMI_legend %>%
+  filter(!is.na(concept_date)) %>%
+    count(concept_name, sort = T)
+
+#unique times per code
+acuteMI_legend %>%
+  filter(!is.na(concept_date)) %>%
+  group_by(concept_name) %>%
+  summarise(unique_persons = n_distinct(person_id)) %>%
+  arrange(desc(unique_persons))
+
+hf_all %>%
+  filter(!is.na(concept_date)) %>%
+  group_by(concept_name) %>%
+  summarise(unique_persons = n_distinct(person_id)) %>%
+  arrange(desc(unique_persons))
+
+stroke_legend %>%
+  filter(!is.na(concept_date)) %>%
+  group_by(concept_name) %>%
+  summarise(unique_persons = n_distinct(person_id)) %>%
+  arrange(desc(unique_persons))
+
+ischemicHD_all %>%
+  filter(!is.na(concept_date)) %>%
+  group_by(concept_name) %>%
+  summarise(unique_persons = n_distinct(person_id)) %>%
+  arrange(desc(unique_persons))
+
+```
+
+
+```{r}
+#comparing mapped ICD9/ICD10 codes from then Honigberg paper to what we have
+#mapped_codes_hdp <- mapped_codes_hdp %>% collect
+#pull in my mappings from Athena 
+mapped_codes_hdp <- read_csv("shared/mapped codes/mapped_descendants_hdp.csv")
+updated_hdp_codes <- read_csv("shared/mapped codes/ATLAS Concept Sets HDP_updated14may25.csv")
+mapped_htn_codes <- read_csv("shared/mapped codes/mapped_codes_htn.csv")
+mapped_hyperlipidemia_codes <- read_csv("shared/mapped codes/mapped_codes_hyperlipidemia.csv")
+mapped_ckd_codes <- read_csv("shared/mapped codes/mapped_codes_ckd.csv")
+mapped_DM_codes <- read_csv("shared/mapped codes/mapped_codes_DM.csv")
+mapped_cad_codes <- read_csv("shared/mapped codes/mapped_codes_cad.csv")
+mapped_aorticstenosis_codes <- read_csv("shared/mapped codes/mapped_codes_aorticstenosis.csv")
+mapped_mitral_regurg_codes <- read_csv("shared/mapped codes/mapped_codes_mitral_regurg.csv")
+mapped_afib_codes <- read_csv("shared/mapped codes/mapped_codes_afib.csv")
+mapped_PAD_codes <- read_csv("shared/mapped codes/mapped_codes_PAD.csv")
+
+#bind together for prevalent CVD
+ischemicHD_codes <- read.csv("shared/ATLAS Concept Sets_ischemicHD_5Feb25.csv") #this needs improvement
+hf_codes <- read.csv("shared/ATLAS Concept Sets_HF.csv") #this is from legend study
+stroke_legend_codes <- read.csv("shared/ATLAS Concept Sets_stroke_30Jan25.csv")
+acuteMI_legend_codes <- read.csv("shared/ATLAS Concept Sets_acuteMI_30Jan25.csv")
+
+prevalent_CVD_codes <- rbind(ischemicHD_codes, hf_codes) %>%
+  rbind(stroke_legend_codes, acuteMI_legend_codes)
+
+# need to add variable for 1st trimester
+first_pregnancy <- first_pregnancy %>%
+  mutate(first_trimester = inferred_episode_start + lubridate::weeks(13))
+
+hdp_icd_mapped <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_codes_hdp$descendant_concept_id,
+                            start_date = "inferred_episode_start",
+                            end_date = "inferred_episode_end_buffer_6wks", 
+                            output = "all",
+                            concept_set_name = "mapped_icd_codes_hdp",
+                            domains = "condition")
+table(hdp_icd_mapped$concept_name, hdp_icd_mapped$hdp_indicator)
+
+hdp_updated_codes <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = updated_hdp_codes$Id,
+                            start_date = "inferred_episode_start",
+                            end_date = "inferred_episode_end_buffer_6wks", 
+                            output = "all",
+                            concept_set_name = "updated_hdp_codes_after",
+                            domains = "condition")
+
+mapped_htn_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_htn_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "mapped_htn_codes_after",
+                            domains = "condition")
+
+mapped_hyperlipidemia_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_hyperlipidemia_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "mapped_hyperlipidemia_codes_after",
+                            domains = "condition")
+
+mapped_DM_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_DM_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "mapped_DM_codes_after",
+                            domains = "condition")
+
+mapped_ckd_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_ckd_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "mapped_ckd_codes_after",
+                            domains = "condition")
+
+mapped_htn_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_htn_codes$concept_id_2,
+                            start_date = "observation_period_start_date",
+                            end_date = "first_trimester", 
+                            output = "indicator",
+                            concept_set_name = "mapped_htn_codes_before",
+                            domains = "condition")
+
+mapped_hyperlipidemia_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_hyperlipidemia_codes$concept_id_2,
+                            start_date = "observation_period_start_date",
+                            end_date = "first_trimester", 
+                            output = "indicator",
+                            concept_set_name = "mapped_hyperlipidemia_before",
+                            domains = "condition")
+
+mapped_DM_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_DM_codes$concept_id_2,
+                            start_date = "observation_period_start_date",
+                            end_date = "first_trimester", 
+                            output = "indicator",
+                            concept_set_name = "mapped_DM_codes_before",
+                            domains = "condition")
+
+mapped_ckd_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_ckd_codes$concept_id_2,
+                            start_date = "observation_period_start_date",
+                            end_date = "first_trimester", 
+                            output = "indicator",
+                            concept_set_name = "mapped_ckd_codes_before",
+                            domains = "condition")
+
+mapped_cad <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_cad_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "indicator",
+                            concept_set_name = "mapped_cad_codes",
+                            domains = "condition")
+
+mapped_aorticstenosis <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_aorticstenosis_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "indicator",
+                            concept_set_name = "mapped_aorticstenosis_codes",
+                            domains = "condition")
+
+mapped_mitral <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_mitral_regurg_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "indicator",
+                            concept_set_name = "mapped_mitral_regurg_codes",
+                            domains = "condition")
+
+mapped_afib <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_afib_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "indicator",
+                            concept_set_name = "mapped_afib_codes",
+                            domains = "condition")
+
+mapped_PAD <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_PAD_codes$concept_id_2,
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date", 
+                            output = "indicator",
+                            concept_set_name = "mapped_PAD_codes",
+                            domains = "condition")
+
+prevalent_cvd <- aou_concept_set(cohort = first_pregnancy, #no one has any prevalent CVD conditions
+                            concepts = prevalent_CVD_codes$Id,
+                            start_date = "observation_period_start_date",
+                            end_date = "first_trimester", 
+                            output = "indicator",
+                            concept_set_name = "prevalent_CVD_codes",
+                            domains = "condition")
+
+hdp_icd_mapped_collapsed <- hdp_icd_mapped %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_icd_mapped_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_icd_mapped_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_icd_mapped_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hdp_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hdp_updated_collapsed <- hdp_updated_codes %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_updated_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_updated_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_updated_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hdp_updated_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+mapped_htn_after_collapsed <- mapped_htn_after %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+   mapped_htn_after_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    mapped_htn_after_date_latest = max(concept_date), # Take the latest concept date
+    mapped_htn_after_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+mapped_hyperlipidemia_after_collapsed <- mapped_hyperlipidemia_after %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    mapped_hyperlipidemia_after_date_earliest = min(concept_date), # Take the earliest concept_date
+    mapped_hyperlipidemia_after_date_latest = max(concept_date), # Take the latest concept date
+    hdp_updated_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hdp_updated_collapsed <- hdp_updated_codes %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_updated_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_updated_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_updated_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hdp_updated_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hdp_updated_collapsed <- hdp_updated_codes %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_updated_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_updated_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_updated_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hdp_updated_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hdp_updated_collapsed <- hdp_updated_codes %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_updated_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_updated_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_updated_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    hdp_updated_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+
+
+#Remove the "old" variable to merge in the new variables
+
+#merge in with main data
+#first_pregnancy <- first_pregnancy %>%
+ # left_join(hdp_icd_mapped_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+ #left_join(hdp_updated_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+ # left_join(mapped_htn_before, by = "person_id") %>%
+ # left_join(mapped_hyperlipidemia_before, by = "person_id") %>%
+ # left_join(mapped_DM_before, by = "person_id") %>%
+ # left_join(mapped_ckd_before, by = "person_id") %>%
+ # left_join(mapped_htn_after, by = "person_id") %>%
+ # left_join(mapped_hyperlipidemia_after, by = "person_id") %>%
+ # left_join(mapped_DM_after, by = "person_id") %>%
+ # left_join(mapped_ckd_after, by = "person_id") %>%
+ # left_join(prevalent_cvd, by = "person_id") %>%
+ # left_join(mapped_cad, by = "person_id") %>%
+ # left_join(mapped_aorticstenosis, by = "person_id") %>%
+ # left_join(mapped_mitral, by = "person_id") %>%
+ # left_join(mapped_afib, by = "person_id") %>%
+ # left_join(mapped_PAD, by = "person_id")
+
+#save data set to work from
+#write_rds(first_pregnancy, here::here("shared/first_pregnancy.rds"))
+first_pregnancy <- readRDS("shared/first_pregnancy.rds")
+```
+
+
+```{r}
+mapped_codes_obesity <- read_csv("shared/mapped codes/ATLAS Concept Sets obesity.csv")
+codes_placental_abruption <- read_csv("shared/mapped codes/ATLAS Concept Sets_placental_abruption.csv")
+
+# need to add some additional variables
+# BMI measurements
+prepreg_BMI <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = c(4245997),
+                            start_date = "observation_period_start_date",
+                            end_date = "inferred_episode_start", 
+                            output = "all",
+                            concept_set_name = "prepreg_BMI",
+                            domains = "measurement")
+
+postpartum_BMI <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = c(4245997), 
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date",                             
+                            output = "all",
+                            concept_set_name = "prepreg_BMI",
+                            domains = "measurement")
+
+prepreg_obesity <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_codes_obesity$Id,
+                            start_date = "observation_period_start_date",
+                            end_date = "inferred_episode_start", 
+                            output = "indicator",
+                            concept_set_name = "prepreg_obesity",
+                            domains = "condition")
+
+postpartum_obesity <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = mapped_codes_obesity$Id, 
+                            start_date = "inferred_episode_end",
+                            end_date = "observation_period_end_date",                             
+                            output = "indicator",
+                            concept_set_name = "postpartum_obesity",
+                            domains = "condition")
+
+placental_abruption <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = codes_placental_abruption$Id, 
+                            start_date = "inferred_episode_start",
+                            end_date = "inferred_episode_end",                             
+                            output = "indicator",
+                            concept_set_name = "placental_abruption",
+                            domains = "condition")
+
+first_pregnancy_hdp <- first_pregnancy %>% filter(hdp_updated_indicator == 1)
+
+postpartum_bnp <- aou_concept_set(cohort = first_pregnancy_hdp,
+                            concepts = c(3029187), 
+                            start_date = "inferred_episode_start",
+                            end_date = "observation_period_end_date",                             
+                            output = "all",
+                            concept_set_name = "bnp",
+                            domains = "measurement")
+
+
+# need the health survey measurements
+survey_data_healthutilization <- aou_survey(first_pregnancy,
+  questions = c(
+    43530439, 43530437, 43530438, 
+    43529906, 43530268, 43530594, 43529905, 43529903, 
+    43529904, 43530583, 43530585, 43530584
+  ),
+  question_output = c(
+    "respectedbyprovider", "askedforopinion", "easeofunderstanding", 
+    "delayedmedicalcare_transportation", "delayedmedicalcare_ruralarea", 
+    "delayedmedicalcare_nervous", "delayedmedicalcare_timeoffwork", "delayedmedicalcare_childcare", "delayedmedicalcare_elderlycare", "delayedmedicalcare_cantaffordcopay", "delayedmedicalcare_deductibletoohigh", "delayedmedicalcare_hadtopayoutofpocket"
+  ),
+  collect = TRUE
+) %>%
+  mutate(across(where(is.character), ~ if_else(.x %in% c("PreferNotToAnswer", "DontKnow"), "Skip", .x))) %>%
+  rowwise(person_id) %>%
+  ungroup()
+
+table(survey_data_healthutilization$delayedmedicalcare_childcare, useNA = "always")
+
+```
+
+```{r}
+# merge in healthcare utilization and BMI
+first_pregnancy <- first_pregnancy %>%
+  left_join(survey_data_healthutilization, by = c("person_id"))
+
+first_pregnancy <- first_pregnancy %>%
+    left_join(prepreg_obesity, by = c("person_id")) %>%
+    left_join(postpartum_obesity, by = c("person_id")) 
+
+first_pregnancy <- first_pregnancy %>%
+    left_join(placental_abruption, by = c("person_id"))
+
+# explore these prepreg and postpartum BMI things
+test <- prepreg_BMI %>%
+  filter(!is.na(value_as_number)) 
+
+test_postpartum <- postpartum_BMI %>%
+  filter(!is.na(value_as_number)) 
+```
+
+
+```{r}
+table(first_pregnancy$prevalent_CVD_codes)
+
+first_pregnancy <- first_pregnancy %>%
+  filter(prevalent_CVD_codes != 1)
+```
+
+
+```{r}
+# need to add in outpatient visit in year prior to index date
+# need to add some measure of height/weight to get BMI
+height_concept_id <- 3036277  # "Body height"; body height should be in cm
+weight_concept_id <- 3025315  # "Body weight"; BMI is in kg
+
+height_measurement <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = height_concept_id,
+                            concept_set_name = "height",
+                            output = "all",
+                            domains = "measurement")
+
+weight_measurement <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = weight_concept_id,
+                            concept_set_name = "weight",
+                            output = "all",
+                            domains = "measurement")
+
+height_measurement_df <- height_measurement %>% collect()
+weight_measurement_df <- weight_measurement %>% collect()
+
+height_measurement_lessthan100cm <- height_measurement_df %>%
+  filter(value_as_number < 100)
+
+height_measurement_greaterthan200cm <- height_measurement_df %>%
+  filter(value_as_number > 200)
+
+height_measurement_NA <- height_measurement_df %>%
+  filter(is.na(value_as_number) == T)
+
+summary(height_measurement_df$value_as_number)
+hist(height_measurement_df$value_as_number)
+
+summary(weight_measurement_df$value_as_number)
+hist(weight_measurement_df$value_as_number)
+
+# merge these together; want to get the closest weight to pregnancy/or within the 1st trimester
+# Define max time after pregnancy start for first trimester (13 weeks)
+max_days_after <- 13 * 7  # 91 days
+
+# Join weight data to pregnancy data
+weight_linked <- weight_measurement_df %>%
+  inner_join(first_pregnancy, by = "person_id") %>%
+  mutate(
+    days_diff = as.numeric(difftime(concept_date, inferred_episode_start, units = "days")),
+    valid_window = days_diff <= 0 | days_diff <= max_days_after  # before or within first trimester
+  ) %>%
+  filter(valid_window)  # keep only pre- or early-pregnancy weights
+
+# Pick the closest weight to pregnancy
+prepreg_or_1tri_weight <- weight_linked %>%
+  arrange(person_id, abs(days_diff)) %>%  # absolute closest to inferred_episode_start
+  group_by(person_id) %>%
+  slice(1) %>%
+  ungroup()
+
+# Merge and create flag
+first_pregnancy <- first_pregnancy %>%
+  left_join(prepreg_or_1tri_weight %>% select(person_id, concept_date, value_as_number), by = "person_id") %>%
+  rename(weight_kg_prepreg = value_as_number, weight_date_prepreg = concept_date) %>% 
+  mutate(weight_timing = case_when(
+    weight_date_prepreg <= inferred_episode_start ~ "pre-pregnancy",
+    weight_date_prepreg <= inferred_episode_start + 91 ~ "first_trimester",
+    TRUE ~ NA_character_
+  ))
+
+min_height <- 90  # cm; only doing this b/c two ppl have multiple measurements of ~91 cm; < 5%
+max_height <- 210  # cm; there were several ppl > 7 ft but that makes no sense b/c tallest women on earth is that height and she lives in Turkey; > 95%
+
+# Filter for plausible height and compute time difference
+height_linked <- height_measurement_df %>%
+  filter(value_as_number >= min_height, value_as_number <= max_height) %>%
+  inner_join(first_pregnancy, by = "person_id") %>%
+  mutate(
+    days_diff = as.numeric(difftime(concept_date, inferred_episode_start, units = "days"))
+  )
+
+# get the closest height to inferred start day
+closest_height <- height_linked %>%
+  arrange(person_id, abs(days_diff)) %>%
+  group_by(person_id) %>%
+  slice(1) %>%
+  ungroup()
+
+# merge in with dataset
+first_pregnancy <- first_pregnancy %>%
+  left_join(closest_height %>%
+              select(person_id, concept_date, value_as_number, days_diff),
+            by = "person_id") %>%
+  rename(
+    height_cm = value_as_number,
+    height_date = concept_date,
+    height_days_from_pregnancy = days_diff
+  )
+
+# calculate pre-pregnancy BMI
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+    height_m = height_cm / 100,
+    bmi_prepreg = weight_kg_prepreg / (height_m^2)
+  )
+
+table(first_pregnancy$prepreg_obesity)
+
+first_pregnancy %>%
+  filter(!is.na(prepreg_obesity), !is.na(bmi_prepreg)) %>%
+  ggplot(aes(x = factor(prepreg_obesity), y = bmi_prepreg)) +
+  geom_boxplot(fill = "#99c2ff") +
+  geom_hline(yintercept = 30, linetype = "dashed", color = "red", size = 1) +
+  labs(
+    x = "Pre-pregnancy Obesity (0 = No, 1 = Yes)",
+    y = "BMI",
+    title = "BMI Distribution by Pre-pregnancy Obesity Status"
+  ) +
+  theme_minimal()
+
+#BMI cut points, lower cut point for Asians
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+    prepreg_obesity_bmi_based = case_when(
+      is.na(bmi_prepreg) ~ NA_real_,
+      race_eth_5cat == "Asian" & bmi_prepreg >= 27.5 ~ 1,
+      race_eth_5cat != "Asian" & bmi_prepreg >= 30 ~ 1,
+      TRUE ~ 0))
+
+# write_rds(first_pregnancy, here::here("shared/first_pregnancy.rds"))
+# first_pregnancy <- readRDS("shared/first_pregnancy.rds")
+
+```
+
+```{r}
+# want to find the highest weight after the first 6 weeks PP and then calculate BMI
+weight_postpartum <- weight_measurement_df %>%
+  inner_join(first_pregnancy, by = "person_id") %>%
+  mutate(
+    days_post_pregnancy = as.numeric(difftime(concept_date, inferred_episode_start, units = "days"))
+  ) %>%
+  filter(days_post_pregnancy >= 42)  # exclude first 6 weeks
+
+max_postpartum_weight <- weight_postpartum %>%
+  group_by(person_id) %>%
+  slice_max(order_by = value_as_number, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+first_pregnancy <- first_pregnancy %>%
+  left_join(max_postpartum_weight %>%
+              select(person_id, concept_date, value_as_number, days_post_pregnancy),
+            by = "person_id") %>%
+  rename(
+    weight_kg_postpartum_max = value_as_number,
+    weight_date_postpartum_max = concept_date,
+    weight_days_postpartum_max = days_post_pregnancy
+  )
+
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+    bmi_postpartum_max = weight_kg_postpartum_max / (height_m^2)
+  )
+
+#BMI cut points, lower cut point for Asians
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+    postpartum_obesity_bmi_based = case_when(
+      is.na(bmi_postpartum_max) ~ NA_real_,
+      race_eth_5cat == "Asian" & bmi_postpartum_max >= 27.5 ~ 1,
+      race_eth_5cat != "Asian" & bmi_postpartum_max >= 30 ~ 1,
+      TRUE ~ 0))
+
+#add variables that incorporate both calculated BMI and obesity
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+    prepreg_obesity_bmi_codes = if_else(
+      prepreg_obesity == 1 | prepreg_obesity_bmi_based == 1, 1, 0),
+      postpartum_obesity_bmi_codes = case_when(
+        postpartum_obesity == 1 | postpartum_obesity_bmi_based == 1 ~ 1,
+        postpartum_obesity == 0 & (is.na(postpartum_obesity_bmi_based) | postpartum_obesity_bmi_based == 0) ~ 0,
+        TRUE ~ NA_real_))
+```
+
+
+```{r}
+# need to put an indicator for outpatient visit 1 year and 2 years prior to pregnancy 
+outpatient_codes <- read_csv("shared/ATLAS Concept Sets_outpatient_visit.csv")
+
+first_pregnancy <- first_pregnancy %>%
+  mutate(year_before_preg = inferred_episode_start %m-% years(1),
+         year_two_before_preg = inferred_episode_start %m-% years(2),
+         year_after_preg = inferred_episode_end %m+% years(1))
+
+outpatient_year_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = outpatient_codes$Id,
+                            start_date = "year_before_preg",
+                            end_date = "inferred_episode_start", 
+                            output = "indicator",
+                            concept_set_name = "outpt_year_before",
+                            domains = "visit")
+
+outpatient_two_year_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = outpatient_codes$Id,
+                            start_date = "year_two_before_preg",
+                            end_date = "inferred_episode_start", 
+                            output = "indicator",
+                            concept_set_name = "outpt_two_year_before",
+                            domains = "visit")
+
+outpatient_ever_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = outpatient_codes$Id,
+                            end_date = "inferred_episode_start", 
+                            output = "indicator",
+                            concept_set_name = "outpt_ever_before",
+                            domains = "visit")
+
+outpatient_year_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = outpatient_codes$Id,
+                            start_date = "inferred_episode_end",
+                            end_date = "year_after_preg", 
+                            output = "indicator",
+                            concept_set_name = "outpt_year_after",
+                            domains = "visit")
+
+#merge in and save the dataset
+first_pregnancy <- first_pregnancy %>%
+  left_join(outpatient_year_before, by = "person_id") %>%
+  left_join(outpatient_two_year_before, by = "person_id") %>%
+  left_join(outpatient_year_after, by = "person_id")
+
+first_pregnancy <- first_pregnancy %>%
+    left_join(outpatient_ever_before, by = "person_id")
+
+# write_rds(first_pregnancy, here::here("shared/first_pregnancy.rds"))
+# first_pregnancy <- readRDS("shared/first_pregnancy.rds")
+
+
+```
+
+
+```{r}
+# Need to get the timing of some of these conditions
+first_pregnancy <- first_pregnancy %>%
+  mutate(race_eth_5cat = case_when(
+    race_eth_cat == "White" ~ "White",
+    race_eth_cat == "Hispanic or Latino" ~ "Hispanic or Latino",
+    race_eth_cat == "Black or African-American" ~ "Black or African American",
+    race_eth_cat == "Asian" ~ "Asian",
+    race_eth_cat == "Multiple" | race_eth_cat == "Other" | race_eth_cat == "Middle Eastern or North African" | race_eth_cat == "Native Hawaiian or Other Pacific Islander" ~ "Other"),
+    incident_htn = case_when(
+      mapped_htn_codes_before == 1 ~ NA_real_,  # Prevalent HTN → NA
+      mapped_htn_codes_before == 0 & mapped_htn_codes_after == 1 ~ 1,  # New (incident) HTN
+      mapped_htn_codes_before == 0 & mapped_htn_codes_after == 0 ~ 0   # No HTN at all
+      ),
+    incident_DM = case_when(
+      mapped_DM_codes_before == 1 ~ NA_real_, 
+      mapped_DM_codes_before == 0 & mapped_DM_codes_after == 1 ~ 1,  
+      mapped_DM_codes_before == 0 & mapped_DM_codes_after == 0 ~ 0   
+      ),
+    incident_ckd = case_when(
+      mapped_ckd_codes_before == 1 ~ NA_real_, 
+      mapped_ckd_codes_before == 0 & mapped_ckd_codes_after == 1 ~ 1,  
+      mapped_ckd_codes_before == 0 & mapped_ckd_codes_after == 0 ~ 0   
+      ),
+    incident_hyperlipidemia = case_when(
+      mapped_hyperlipidemia_before == 1 ~ NA_real_, 
+      mapped_hyperlipidemia_before == 0 & mapped_hyperlipidemia_codes_after == 1 ~ 1,  
+      mapped_hyperlipidemia_before == 0 & mapped_hyperlipidemia_codes_after == 0 ~ 0   
+      ),
+    incident_obesity = case_when(
+      prepreg_obesity_bmi_codes == 1 ~ NA_real_, 
+      prepreg_obesity_bmi_codes == 0 & postpartum_obesity_bmi_codes == 1 ~ 1,  
+      prepreg_obesity_bmi_codes == 0 & postpartum_obesity_bmi_codes == 0 ~ 0   
+      )
+  )
+
+#need to reclassify those with prevalent DM as not having GDM
+first_pregnancy <- first_pregnancy %>%
+  mutate(updated_GDM = case_when(
+    mapped_DM_codes_before == 1 & GDM_indicator == 1 ~ NA_real_,
+    GDM_indicator == 1 ~ 1, 
+    GDM_indicator == 0 ~ 0
+  ))
+
+#something is wrong with the GA: WKS.DAY conversion
+first_pregnancy <- first_pregnancy %>%
+  mutate(stillbirth = if_else(outcome_category == "Stillbirth", 1, 0),
+         gestational_age_weeks_corrected = floor(gestational_age_weeks) + ((gestational_age_weeks - floor(gestational_age_weeks)) * 7)
+         )
+
+#get the multi level variable for table 1
+#there is a problem with this. need to think more about it
+first_pregnancy <- first_pregnancy %>%
+  mutate(apo_status_cat = case_when(
+    hdp_updated_indicator == 1 | preeclampsia_indicator == 1 | updated_GDM == 1 | preterm_status_from_calculation == 1 ~ "Any APO",
+    hdp_updated_indicator == 0 & preeclampsia_indicator == 0 & updated_GDM == 0 & preterm_status_from_calculation == 0 ~ "No APO")
+  )
+
+first_pregnancy <- first_pregnancy %>%
+  mutate(any_pre_preg_cmrf = if_else(
+    mapped_htn_codes_before == 1 | 
+    prepreg_obesity_bmi_codes == 1 | 
+    mapped_DM_codes_before == 1 | 
+    mapped_ckd_codes_before == 1 | 
+    mapped_hyperlipidemia_before == 1, 
+    1, 0
+  ))
+
+first_pregnancy <- first_pregnancy %>%
+  mutate(cmrf_hdp_joint = case_when(
+    any_pre_preg_cmrf == 0 & hdp_updated_indicator == 0 ~ 0, #no pre-preg risk + no hdp
+    any_pre_preg_cmrf == 0 & hdp_updated_indicator == 1 ~ 1, #no pre-preg risk + hdp
+    any_pre_preg_cmrf == 1 & hdp_updated_indicator == 0 ~ 2, #pre-preg risk + no hdp
+    any_pre_preg_cmrf == 1 & hdp_updated_indicator == 1 ~ 3 #pre-preg risk + hdp
+  ))
+
+table(first_pregnancy$hdp_updated_indicator)
+table(first_pregnancy$preeclampsia_indicator)
+table(first_pregnancy$GDM_indicator)
+table(first_pregnancy$preterm_status_from_calculation)
+
+table(first_pregnancy$race_eth_5cat)
+table(first_pregnancy$income_cat)
+table(first_pregnancy$edu_cat)
+table(first_pregnancy$mapped_ckd_codes_after)
+summary(first_pregnancy$gestational_age_weeks_corrected, useNA = "always")
+summary(first_pregnancy$gestational_age_weeks, useNA = "always")
+summary(floor(first_pregnancy$gestational_age_weeks))
+
+# write_rds(first_pregnancy, here::here("shared/first_pregnancy.rds"))
+# first_pregnancy <- readRDS("shared/first_pregnancy.rds")
+
+```
+
+
+```{r}
+baseline_characteristics_outpt <- first_pregnancy %>%
+  tbl_summary(
+    by = c(outpt_two_year_before),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, prepreg_obesity_bmi_codes, bmi_prepreg,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      bmi_prepreg ~ "Pre-preg or 1st trimester BMI",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+
+```
+
+
+
+```{r}
+# Need to add a couple of things
+# Table based the presence or absence of pre-preg CM factors
+
+baseline_characteristics_cmrf <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    by = c(any_pre_preg_cmrf),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, preeclampsia_indicator, updated_GDM, preterm_status_from_calculation, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      preeclampsia_indicator ~ "Preeclampsia",
+      updated_GDM ~ "GDM",
+      preterm_status_from_calculation ~ "Preterm birth",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+
+
+baseline_characteristics_cmrf_joint_hdp <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    by = c(cmrf_hdp_joint),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, preeclampsia_indicator, updated_GDM, preterm_status_from_calculation, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      preeclampsia_indicator ~ "Preeclampsia",
+      updated_GDM ~ "GDM",
+      preterm_status_from_calculation ~ "Preterm birth",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+
+#export these
+baseline_characteristics_cmrf_joint_hdp |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_cmrf_joint_hdp.docx", path = "shared/APO_paper") 
+
+baseline_characteristics_cmrf |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_cmrf.docx", path = "shared/APO_paper") 
+
+
+table(first_pregnancy$race_eth_5cat, useNA = "always")
+table(first_pregnancy$edu_cat, useNA = "always")
+```
+
+
+```{r}
+#table of the baseline participant characteristics
+#need to figure out how to treat
+#think I need to pivot the table to long format
+
+#table 1 - this will be the baseline and pregnancy charactierstics
+baseline_characteristics <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+baseline_characteristics
+
+baseline_characteristics_hdp <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    by = c(hdp_updated_indicator),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, preeclampsia_indicator, updated_GDM, preterm_status_from_calculation, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      preeclampsia_indicator ~ "Preeclampsia",
+      updated_GDM ~ "GDM",
+      preterm_status_from_calculation ~ "Preterm birth",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+baseline_characteristics_hdp
+
+baseline_characteristics_hdp_overall <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    by = c(hdp_updated_indicator),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, preeclampsia_indicator, updated_GDM, preterm_status_from_calculation, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      preeclampsia_indicator ~ "Preeclampsia",
+      updated_GDM ~ "GDM",
+      preterm_status_from_calculation ~ "Preterm birth",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  add_overall(last = TRUE) %>%
+  bold_labels()
+baseline_characteristics_hdp_overall
+
+baseline_characteristics_preeclampsia <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  filter(preeclampsia_indicator == 1) %>%
+  tbl_summary(
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+baseline_characteristics_preeclampsia
+
+baseline_characteristics_gdm <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  filter(updated_GDM == 1) %>%
+  tbl_summary(
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+baseline_characteristics_gdm
+
+baseline_characteristics_ptb <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  filter(preterm_status_from_calculation == 1) %>%
+  tbl_summary(
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, marital_status_cat,
+                stillbirth, gestational_age_weeks, prepreg_obesity_bmi_codes,
+                mapped_htn_codes_before, mapped_DM_codes_before, mapped_hyperlipidemia_before, mapped_ckd_codes_before),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      marital_status_cat ~ "Marital Status",
+      stillbirth ~ "Still birth",
+      gestational_age_weeks ~ "Gestational age at delivery",
+      prepreg_obesity_bmi_codes ~ "Prevalent obesity",
+      mapped_htn_codes_before ~"Prevalent hypertension",
+      mapped_DM_codes_before ~ "Prevalent diabetes",
+      mapped_hyperlipidemia_before ~ "Prevalent hyperlipidemia",
+      mapped_ckd_codes_before ~ "Prevalent chronic kidney disease"
+    )
+  ) %>%
+  bold_labels()
+baseline_characteristics_ptb
+
+#export these
+baseline_characteristics |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics.docx", path = "shared/APO_paper") 
+
+baseline_characteristics_hdp |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_hdp.docx", path = "shared/APO_paper") 
+
+baseline_characteristics_hdp_overall %>%
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_hdp_overall.docx", path = "shared/APO_paper") 
+
+baseline_characteristics_preeclampsia |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_preeclampsia.docx", path = "shared/APO_paper") 
+
+baseline_characteristics_gdm |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_gdm.docx", path = "shared/APO_paper") 
+
+baseline_characteristics_ptb |> 
+  as_gt() |> 
+  gt::gtsave(filename = "baseline_characteristics_ptb.docx", path = "shared/APO_paper") 
+
+
+```
+
+```{r}
+#table 2 - this will include the outcomes and mediators
+outcomes_table_index_preg <- first_pregnancy %>%
+  tbl_summary(
+    by = apo_status_cat,
+    include = c(incident_obesity, incident_htn, incident_DM, incident_hyperlipidemia, incident_ckd,
+      ischemicHD_indicator, stroke_legend_indicator, hf_indicator, acuteMI_legend_indicator, CVD_composite_event, time_to_CVD_composite_years),
+    label = list(
+      incident_obesity ~ "Incident obesity",
+      incident_htn ~"Incident hypertension",
+      incident_DM ~ "Incident diabetes",
+      incident_hyperlipidemia ~ "Incident hyperlipidemia",
+      incident_ckd ~ "Incident chronic kidney disease",
+      ischemicHD_indicator ~ "Ischemic heart disease", 
+      stroke_legend_indicator ~ "Stroke", 
+      hf_indicator ~ "Heart failure", 
+      acuteMI_legend_indicator ~ "MI",
+      CVD_composite = "CVD composition",
+      time_to_CVD_composite_years ~ "Follow-up time, years"
+    )
+  ) %>%
+  bold_labels()
+outcomes_table_index_preg
+
+outcomes_table <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    include = c(incident_obesity, incident_htn, incident_DM, incident_hyperlipidemia, incident_ckd,
+      ischemicHD_event_12y, stroke_event_12y, hf_event_12y, MI_event_12y, CVD_composite_event_12y, time_to_CVD_composite_years_12y),
+    label = list(
+      incident_obesity ~ "Incident obesity",
+      incident_htn ~"Incident hypertension",
+      incident_DM ~ "Incident diabetes",
+      incident_hyperlipidemia ~ "Incident hyperlipidemia",
+      incident_ckd ~ "Incident chronic kidney disease",
+      ischemicHD_event_12y ~ "Ischemic heart disease", 
+      stroke_event_12y ~ "Stroke", 
+      hf_event_12y ~ "Heart failure", 
+      MI_event_12y ~ "MI",
+      CVD_composite_event_12y = "CVD composite",
+      time_to_CVD_composite_years_12y ~ "Follow-up time, years"
+    )
+  ) %>%
+  bold_labels()
+outcomes_table
+
+outcomes_table_by_apo <- first_pregnancy %>%
+  tbl_summary(
+    by = CVD_composite_event,
+    include = c(hdp_updated_indicator, preeclampsia_indicator, updated_GDM, preterm_status_from_calculation, placental_abruption),
+    label = list(
+      hdp_updated_indicator ~ "HDP", 
+      preeclampsia_indicator ~ "Preeclampsia", 
+      updated_GDM ~ "GDM", 
+      preterm_status_from_calculation ~ "PTB", 
+      placental_abruption ~ "Placental abruption"
+    )
+  ) %>%
+  bold_labels()
+outcomes_table_by_apo
+
+outcomes_table_by_hdp <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  tbl_summary(
+    by = hdp_updated_indicator,
+    include = c(ischemicHD_event_12y, stroke_event_12y, hf_event_12y, MI_event_12y, CVD_composite_event_12y),
+    label = list(
+      ischemicHD_event_12y ~ "Ischemic heart disease", 
+      stroke_event_12y ~ "Stroke", 
+      hf_event_12y ~ "Heart failure", 
+      MI_event_12y ~ "MI",
+      CVD_composite_event_12y = "CVD composite"
+      )
+  ) %>%
+  bold_labels()
+outcomes_table_by_hdp
+
+outcomes_table_index_preg |> 
+  as_gt() |> 
+  gt::gtsave(filename = "outcomes_table_index_preg.docx", path = "shared/APO_paper") 
+
+outcomes_table_by_apo |> 
+  as_gt() |> 
+  gt::gtsave(filename = "outcomes_table_by_apo.docx", path = "shared/APO_paper") 
+
+outcomes_table |> 
+  as_gt() |> 
+  gt::gtsave(filename = "outcomes_table_truncated_12yrs.docx", path = "shared/APO_paper") 
+
+outcomes_table_by_hdp |> 
+  as_gt() |> 
+  gt::gtsave(filename = "outcomes_table_truncated_by_hdp.docx", path = "shared/APO_paper") 
+
+```
+
+```{r}
+# updated table with the mediators for those with no pre-existing conditions
+# also by HDP status
+
+outcomes_table <- first_pregnancy %>%
+  filter(!is.na(race_eth_5cat)) %>%
+  filter(any_pre_preg_cmrf == 0) %>%
+  tbl_summary(
+    by = hdp_updated_indicator,
+    include = c(incident_obesity, incident_htn, incident_DM, incident_hyperlipidemia, incident_ckd,
+      ischemicHD_indicator, stroke_legend_indicator, hf_indicator, acuteMI_legend_indicator, CVD_composite_event, time_to_CVD_composite_years),
+    label = list(
+      incident_obesity ~ "Incident obesity",
+      incident_htn ~"Incident hypertension",
+      incident_DM ~ "Incident diabetes",
+      incident_hyperlipidemia ~ "Incident hyperlipidemia",
+      incident_ckd ~ "Incident chronic kidney disease",
+      ischemicHD_indicator ~ "Ischemic heart disease", 
+      stroke_legend_indicator ~ "Stroke", 
+      hf_indicator ~ "Heart failure", 
+      acuteMI_legend_indicator ~ "MI",
+      CVD_composite = "CVD composition",
+      time_to_CVD_composite_years ~ "Follow-up time, years"
+    )
+  ) %>%
+  bold_labels()
+outcomes_table
+
+outcomes_table |> 
+  as_gt() |> 
+  gt::gtsave(filename = "outcomes_table_no_prepreg_cmrf.docx", path = "shared/APO_paper") 
+
+
+```
+
+
+```{r}
+install.packages("survival")
+install.packages("survminer")
+library(survival)
+library(survminer)
+```
+
+
+```{r}
+# Use the object censored at 12 years
+# Complete case analysis
+first_pregnancy <- first_pregnancy %>%
+    filter(!is.na(race_eth_5cat) & !is.na(edu_cat))
+
+surv_obj <- Surv(time = first_pregnancy$time_to_CVD_composite_years_12y, event = first_pregnancy$CVD_composite_event_12y) #for composite CVD event
+fit_hdp <- survfit(surv_obj ~ hdp_updated_indicator, data = first_pregnancy)
+fit_preeclampsia <- survfit(surv_obj ~ preeclampsia_indicator, data = first_pregnancy)
+fit_gdm <- survfit(surv_obj ~ updated_GDM, data = first_pregnancy)
+fit_preterm <- survfit(surv_obj ~ preterm_status_from_calculation, data = first_pregnancy)
+fit_anyAPO <- survfit(surv_obj ~ APO_composite, data = first_pregnancy)
+
+#look at the joint associations
+fit_cmrf_joint_hdp <- survfit(surv_obj ~ cmrf_hdp_joint, data = first_pregnancy)
+
+# NEED TO BE UPDATED WITH 12 year censoring 
+#need to create survey objects for each outcome
+#heart failure
+surv_obj_hf <- Surv(time = first_pregnancy$time_to_hf_concept_years_12y, event = first_pregnancy$hf_event_12y)
+fit_hdp_hf <- survfit(surv_obj_hf ~ hdp_updated_indicator, data = first_pregnancy)
+fit_preeclampsia_hf <- survfit(surv_obj_hf ~ preeclampsia_indicator, data = first_pregnancy)
+fit_gdm_hf <- survfit(surv_obj_hf ~ updated_GDM, data = first_pregnancy)
+fit_preterm_hf <- survfit(surv_obj_hf ~ preterm_status_from_calculation, data = first_pregnancy)
+
+#MI
+surv_obj_mi <- Surv(time = first_pregnancy$time_to_MI_concept_years_12y, event = first_pregnancy$MI_event_12y)
+fit_hdp_mi <- survfit(surv_obj_mi ~ hdp_updated_indicator, data = first_pregnancy)
+fit_preeclampsia_mi <- survfit(surv_obj_mi ~ preeclampsia_indicator, data = first_pregnancy)
+
+#ischemic HD
+surv_obj_ischemicHD <- Surv(time = first_pregnancy$time_to_ischemicHD_concept_years_12y, event = first_pregnancy$ischemicHD_event_12y)
+fit_hdp_ischemicHD <- survfit(surv_obj_ischemicHD ~ hdp_updated_indicator, data = first_pregnancy)
+fit_preeclampsia_ischemicHD <- survfit(surv_obj_ischemicHD ~ preeclampsia_indicator, data = first_pregnancy)
+
+#stroke
+surv_obj_stroke <- Surv(time = first_pregnancy$time_to_stroke_concept_years_12y, event = first_pregnancy$stroke_event_12y)
+fit_hdp_stroke <- survfit(surv_obj_stroke ~ hdp_updated_indicator, data = first_pregnancy)
+fit_preeclampsia_stroke <- survfit(surv_obj_stroke ~ preeclampsia_indicator, data = first_pregnancy)
+
+```
+
+
+```{r}
+cum_incidence_hdp <- ggsurvplot(
+  fit_hdp,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No HDP", "HDP"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of CVD",
+  palette = c("#1f77b4", "#d62728")
+)
+
+cum_incidence_hdp_hf <- ggsurvplot(
+  fit_hdp_hf,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No HDP", "HDP"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of heart failure",
+  palette = c("#1f77b4", "#d62728")
+)
+
+cum_incidence_hdp_stroke <- ggsurvplot(
+  fit_hdp_stroke,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No HDP", "HDP"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of stroke",
+  palette = c("#1f77b4", "#d62728")
+)
+
+cum_incidence_hdp_ischemicHD <- ggsurvplot(
+  fit_hdp_ischemicHD,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No HDP", "HDP"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of ischemic heart disease",
+  palette = c("#1f77b4", "#d62728")
+)
+
+cum_incidence_hdp_MI <- ggsurvplot(
+  fit_hdp_mi,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No HDP", "HDP"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of myocardial infarction",
+  palette = c("#1f77b4", "#d62728")
+)
+
+cum_incidence_cmrf_hdp_joint <- ggsurvplot(
+  fit_cmrf_joint_hdp,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No CM + No HDP", "No CM + HDP", "CM + No HDP", "CM + HDP"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of CVD",
+  palette = c("#999999", "#0072B2", "#E69F00", "#D55E00")
+)
+
+cum_incidence_preeclampsia <- ggsurvplot(
+  fit_preeclampsia,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No Preeclampsia", "Preclampsia"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of CVD",
+  palette = c("#0072B2", "#D55E00")
+)
+
+cum_incidence_gdm <- ggsurvplot(
+  fit_gdm,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No GDM", "GDM"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of CVD",
+  palette = c("#0072B2", "#D55E00")
+)
+
+cum_incidence_preterm <- ggsurvplot(
+  fit_preterm,
+  data = first_pregnancy,
+  fun = "event",  # this flips it to 1 - survival
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = F,
+  censor = FALSE,
+  legend.title = " ",
+  legend.labs = c("No PTB", "PTB"),
+  xlab = "Time since pregnancy (years)",
+  ylab = "Cumulative incidence of CVD",
+  palette = c("#0072B2", "#D55E00")
+)
+
+#save
+ggsave(filename = here::here("shared/Survival/cum_incidence_hdp_full.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_hdp$plot,
+    cum_incidence_hdp$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_cmrf_hdp_joint.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_cmrf_hdp_joint$plot,
+    cum_incidence_cmrf_hdp_joint$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_hdp_hf.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_hdp_hf$plot,
+    cum_incidence_hdp_hf$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_hdp_stroke.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_hdp_stroke$plot,
+    cum_incidence_hdp_stroke$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_hdp_ischemicHD.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_hdp_ischemicHD$plot,
+    cum_incidence_hdp_ischemicHD$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_hdp_MI.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_hdp_MI$plot,
+    cum_incidence_hdp_MI$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_preeclampsia_full.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_preeclampsia$plot,
+    cum_incidence_preeclampsia$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_gdm_full.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_gdm$plot,
+    cum_incidence_gdm$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+ggsave(filename = here::here("shared/Survival/cum_incidence_preterm_full.png"),
+  plot = gridExtra::grid.arrange(
+    cum_incidence_preterm$plot,
+    cum_incidence_preterm$table,
+    heights = c(2, 1)
+  ),
+  width = 8,
+  height = 7,
+  dpi = 300
+)
+
+```
+
+
+```{r}
+#NEED TO BE UPDATED TO 12 YEARS
+#get incidence per 1000 women years by exposure
+# Calculate incidence rate per 1000 person-years
+incidence_summary <- first_pregnancy %>%
+  group_by(hdp_indicator) %>%
+  summarise(
+    events = sum(CVD_composite_event == 1, na.rm = TRUE),
+    person_years = sum(time_to_CVD_composite_years, na.rm = TRUE),
+    incidence_per_1000_py = (events / person_years) * 1000
+  ) %>%
+  ungroup()
+
+# View the summary
+print(incidence_summary)
+
+ggplot(incidence_summary, aes(x = hdp_indicator, y = incidence_per_1000_py, fill = hdp_indicator)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = round(incidence_per_1000_py, 2)), vjust = -0.5) +
+  labs(
+    title = "CVD Incidence per 1,000 Person-Years",
+    x = "HDP Status",
+    y = "Incidence per 1,000 Person-Years"
+  ) +
+  theme_minimal(base_size = 14) +
+  #scale_fill_brewer(palette = "Set2") +
+  theme(legend.position = "none")
+
+# Named list: outcome variable -> time-to-event variable
+outcomes <- list(
+  "CVD_composite_event_12y" = "time_to_CVD_composite_years_12y",
+  "stroke_event_12y" = "time_to_stroke_concept_years_12y",
+  "MI_event_12y" = "time_to_MI_concept_years_12y",
+  "hf_event_12y" = "time_to_hf_concept_years_12y",
+  "ischemicHD_event_12y" = "time_to_ischemicHD_concept_years_12y"
+)
+
+# Loop through outcomes
+incidence_results_overall <- map_dfr(names(outcomes), function(outcome_var) {
+  time_var <- outcomes[[outcome_var]]
+  
+  first_pregnancy %>%
+    group_by(hdp_updated_indicator) %>%
+    summarise(
+      outcome = outcome_var,
+      events = sum(.data[[outcome_var]] == 1, na.rm = TRUE),
+      person_years = sum(.data[[time_var]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    rowwise() %>%
+    mutate(
+      poisson_result = list(poisson.test(events, T = person_years, conf.level = 0.95)),
+      ir = (events / person_years) * 1000,
+      ir_lower = (poisson_result$conf.int[1]) * 1000,
+      ir_upper = (poisson_result$conf.int[2]) * 1000
+    ) %>%
+    ungroup() 
+})
+
+incidence_results_with_cmrf <- map_dfr(names(outcomes), function(outcome_var) {
+  time_var <- outcomes[[outcome_var]]
+  
+  first_pregnancy %>%
+    filter(any_pre_preg_cmrf == 1) %>%
+    group_by(hdp_updated_indicator) %>%
+    summarise(
+      outcome = outcome_var,
+      events = sum(.data[[outcome_var]] == 1, na.rm = TRUE),
+      person_years = sum(.data[[time_var]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    rowwise() %>%
+    mutate(
+      poisson_result = list(poisson.test(events, T = person_years, conf.level = 0.95)),
+      ir = (events / person_years) * 1000,
+      ir_lower = (poisson_result$conf.int[1]) * 1000,
+      ir_upper = (poisson_result$conf.int[2]) * 1000
+    ) %>%
+    ungroup() 
+})
+
+incidence_results_no_cmrf <- map_dfr(names(outcomes), function(outcome_var) {
+  time_var <- outcomes[[outcome_var]]
+  
+  first_pregnancy %>%
+    filter(any_pre_preg_cmrf == 0) %>%
+    group_by(hdp_updated_indicator) %>%
+    summarise(
+      outcome = outcome_var,
+      events = sum(.data[[outcome_var]] == 1, na.rm = TRUE),
+      person_years = sum(.data[[time_var]], na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    rowwise() %>%
+    mutate(
+      poisson_result = list(poisson.test(events, T = person_years, conf.level = 0.95)),
+      ir = (events / person_years) * 1000,
+      ir_lower = (poisson_result$conf.int[1]) * 1000,
+      ir_upper = (poisson_result$conf.int[2]) * 1000
+    ) %>%
+    ungroup() 
+})
+
+# round for cleaner display
+incidence_results_overall <- incidence_results_overall %>%
+  mutate(across(c(ir, ir_lower, ir_upper), ~ round(.x, 2))) %>%
+  mutate(
+    incidence_with_ci = paste0(ir, " (", ir_lower, ",", ir_upper, ")")
+  )
+
+incidence_results_with_cmrf <- incidence_results_with_cmrf %>%
+  mutate(across(c(ir, ir_lower, ir_upper), ~ round(.x, 2))) %>%
+  mutate(
+    incidence_with_ci = paste0(ir, " (", ir_lower, ",", ir_upper, ")")
+  )
+
+incidence_results_no_cmrf <- incidence_results_no_cmrf %>%
+  mutate(across(c(ir, ir_lower, ir_upper), ~ round(.x, 2))) %>%
+  mutate(
+    incidence_with_ci = paste0(ir, " (", ir_lower, ",", ir_upper, ")")
+  )
+
+print(incidence_results_overall)
+
+write_csv(incidence_results_overall, "shared/Survival/incidence_results_overall.csv")
+write_csv(incidence_results_with_cmrf, "shared/Survival/incidence_results_with_cmrf.csv")
+write_csv(incidence_results_no_cmrf, "shared/Survival/incidence_results_no_cmrf.csv")
+
+
+```
+
+```{r}
+plot_incidence_by_group <- function(data, outcome_var, time_var, group_var, 
+                                    group_labels = c("Unexposed", "Exposed"),
+                                    title = NULL) {
+  outcome_sym <- rlang::sym(outcome_var)
+  time_sym <- rlang::sym(time_var)
+  group_sym <- rlang::sym(group_var)
+
+  # Summarize incidence
+  incidence_summary <- data %>%
+    group_by(!!group_sym) %>%
+    summarize(
+      n = n(),
+      events = sum(!!outcome_sym, na.rm = TRUE),
+      total_time_years = sum(!!time_sym, na.rm = TRUE),
+      incidence_per_1000_py = (events / total_time_years) * 1000,
+      .groups = "drop"
+    ) %>%
+    mutate(
+      group_label = factor(
+        as.character(!!group_sym),
+        levels = c("0", "1"),
+        labels = group_labels
+      )
+    )
+
+  # Blue tones
+  blue_palette <- c("#9ecae1", "#3182bd")
+
+  # Plot
+  ggplot(incidence_summary, aes(x = group_label, y = incidence_per_1000_py, fill = group_label)) +
+    geom_col(width = 0.6) +
+    geom_text(aes(label = round(incidence_per_1000_py, 2)), vjust = -0.5, size = 5) +
+    labs(
+      title = title %||% paste("Incidence of", outcome_var, "per 1000 Person-Years"),
+      x = NULL,
+      y = "Incidence per 1000 PY"
+    ) +
+    theme_minimal(base_size = 14) +
+    scale_fill_brewer(palette = "Set2") +
+    theme(legend.position = "none") +
+    ylim(0, 10)  # Increase Y-axis range
+}
+```
+
+```{r}
+#loop through
+library(here)
+
+# Define your outcomes and time variables
+outcomes <- list(
+  ischemicHD_indicator = "time_to_ischemicHD_concept_years",
+  stroke_legend_indicator = "time_to_stroke_concept_years",
+  hf_indicator = "time_to_hf_concept_years",
+  acuteMI_legend_indicator = "time_to_MI_concept_years"
+)
+
+# Define your exposures and their labels
+exposures <- list(
+  hdp_indicator = c("No HDP", "HDP"),
+  preeclampsia_indicator = c("No Preeclampsia", "Preeclampsia"),
+  GDM_indicator = c("No GDM", "GDM"),
+  preterm_status_from_calculation = c("Term", "Preterm")
+)
+
+# Loop through outcomes and exposures
+for (outcome_var in names(outcomes)) {
+  time_var <- outcomes[[outcome_var]]
+  
+  for (group_var in names(exposures)) {
+    group_labels <- exposures[[group_var]]
+    
+    title <- paste(
+      gsub("_", " ", tools::toTitleCase(outcome_var)),
+      "by",
+      gsub("_", " ", tools::toTitleCase(group_var))
+    )
+    
+    plot <- plot_incidence_by_group(
+      data = first_pregnancy,
+      outcome_var = outcome_var,
+      time_var = time_var,
+      group_var = group_var,
+      group_labels = group_labels,
+      title = title
+    )
+    
+    # Save the plot
+    filename <- paste0(outcome_var, "_by_", group_var, ".png")
+    ggsave(
+      filename = here::here("shared/Survival", filename),
+      plot = plot,
+      dpi = 300,
+      width = 8,
+      height = 6
+    )
+  }
+}
+
+```
+
+```{r}
+png("test_plot.png")
+hist(first_pregnancy$year_start)
+dev.off()
+
+```
+
+
+```{r}
+#cox model
+model1_hdp <- coxph(surv_obj ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat, data = first_pregnancy)
+summary(model1_hdp)
+
+ph_test <- cox.zph(model1_hdp)
+ph_test
+
+#violation for ischemic heart disease
+model1_hdp <- coxph(surv_obj_ischemicHD ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat, data = first_pregnancy)
+summary(model1_hdp)
+
+ph_test <- cox.zph(model1_hdp)
+ph_test
+
+model1_hdp <- coxph(surv_obj_hf ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat, data = first_pregnancy)
+summary(model1_hdp)
+
+ph_test <- cox.zph(model1_hdp)
+ph_test
+
+model1_hdp <- coxph(surv_obj_stroke ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat, data = first_pregnancy)
+summary(model1_hdp)
+
+ph_test <- cox.zph(model1_hdp)
+ph_test
+
+#MI likely violates
+model1_hdp <- coxph(surv_obj_mi ~ hdp_updated_indicator + mom_age, data = first_pregnancy)
+summary(model1_hdp)
+
+ph_test <- cox.zph(model1_hdp)
+ph_test
+plot(ph_test)
+
+#p-value 0.076468
+model1_hdp_interaction <- coxph(surv_obj ~ hdp_updated_indicator*any_pre_preg_cmrf + mom_age + race_eth_5cat + edu_cat, data = first_pregnancy)
+summary(model1_hdp_interaction)
+
+model1_preeclampsia <- coxph(surv_obj ~ preeclampsia_indicator, data = first_pregnancy)
+summary(model1_preeclampsia)
+
+model1_preterm <- coxph(surv_obj ~ preterm_status_from_calculation, data = first_pregnancy)
+summary(model1_preterm)
+
+model1_gdm <- coxph(surv_obj ~ GDM_indicator, data = first_pregnancy)
+summary(model1_gdm)
+
+
+model2_hdp <- coxph(surv_obj ~ hdp_updated_indicator + mom_age_cat + race_eth_5cat + edu_cat + income_cat, data = first_pregnancy)
+summary(model2_hdp)
+
+
+```
+
+```{r}
+# Create follow-up interval indicators
+first_pregnancy$early <- ifelse(first_pregnancy$time_to_ischemicHD_concept_years_12y <= 4, 1, 0)
+first_pregnancy$mid   <- ifelse(first_pregnancy$time_to_ischemicHD_concept_years_12y > 4 & first_pregnancy$time_to_ischemicHD_concept_years_12y <= 8, 1, 0)
+first_pregnancy$late  <- ifelse(first_pregnancy$time_to_ischemicHD_concept_years_12y > 8, 1, 0)
+
+# Create interaction terms for HDP in each interval
+first_pregnancy$hdp_early <- first_pregnancy$hdp_updated_indicator * first_pregnancy$early
+first_pregnancy$hdp_mid   <- first_pregnancy$hdp_updated_indicator * first_pregnancy$mid
+first_pregnancy$hdp_late  <- first_pregnancy$hdp_updated_indicator * first_pregnancy$late
+
+# Fit piecewise Cox
+model_ihd_pw <- coxph(
+  surv_obj_ischemicHD ~ hdp_early + hdp_mid + hdp_late + mom_age + race_eth_5cat + edu_cat,
+  data = first_pregnancy
+)
+
+summary(model_ihd_pw)
+
+ph_test <- cox.zph(model_ihd_pw)
+ph_test
+
+# Shift zero times slightly if any
+first_pregnancy$time_to_ischemicHD_concept_years_12y <- ifelse(first_pregnancy$time_to_ischemicHD_concept_years_12y == 0, 0.001, first_pregnancy$time_to_ischemicHD_concept_years_12y)
+
+first_pregnancy$time_to_MI_concept_years_12y <- ifelse(first_pregnancy$time_to_MI_concept_years_12y == 0, 0.001, first_pregnancy$time_to_MI_concept_years_12y)
+
+
+# Create survival object: the time-varying coefficient is not significant 
+surv_obj_ihd <- Surv(time = first_pregnancy$time_to_ischemicHD_concept_years_12y, event = first_pregnancy$ischemicHD_event_12y)
+
+model_ihd_tv <- coxph(
+  surv_obj_ihd ~  hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + tt(hdp_updated_indicator),
+  data = first_pregnancy,
+  tt = function(x, t, ...) x * log(t)
+)
+summary(model_ihd_tv)
+
+# Create survival object for MI: the time-varying coefficient is not significant 
+surv_obj_mi <- Surv(time = first_pregnancy$time_to_MI_concept_years_12y, event = first_pregnancy$MI_event_12y)
+
+model_mi_tv <- coxph(
+  surv_obj_mi ~  hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + tt(hdp_updated_indicator),
+  data = first_pregnancy,
+  tt = function(x, t, ...) x * log(t)
+)
+
+summary(model_mi_tv)
+
+```
+
+
+```{r}
+library(survival)
+library(broom)       
+library(dplyr)
+library(purrr)
+library(tibble)
+library(readr)
+
+# Define your exposures and covariates
+exposures <- c("hdp_updated_indicator", "preeclampsia_indicator")
+
+adjustment_vars <- c("mom_age", "race_eth_5cat", "edu_cat")
+
+# Function to fit unadjusted and adjusted models
+fit_models <- function(exposure, data, outcome) {
+  formula_unadj <- as.formula(paste0(outcome, " ~ ", exposure))
+  formula_adj <- as.formula(paste0(outcome, " ~ ", exposure, " + ", paste(adjustment_vars, collapse = " + ")))
+
+  model_unadj <- coxph(formula_unadj, data = data)
+  model_adj <- coxph(formula_adj, data = data)
+
+  # Extract tidy summaries with broom::tidy
+  tidy_unadj <- tidy(model_unadj, exponentiate = TRUE, conf.int = TRUE) %>% mutate(model = "Unadjusted", exposure = exposure, outcome = outcome)
+  tidy_adj <- tidy(model_adj, exponentiate = TRUE, conf.int = TRUE) %>% mutate(model = "Sociodemographic adjusted", exposure = exposure, outcome = outcome)
+
+  bind_rows(tidy_unadj, tidy_adj)
+}
+
+# Apply across exposures
+all_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj"))
+hf_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_hf"))
+MI_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_mi"))
+ischemicHD_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_ischemicHD"))
+stroke_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_stroke"))
+
+cox_results <- bind_rows(all_results, hf_results, MI_results, ischemicHD_results, stroke_results)
+
+main_effects <- cox_results %>%
+  filter(term %in% exposures) %>%
+  mutate(
+    HR_CI = paste0(
+      round(estimate, 2), " (",
+      round(conf.low, 2), ", ",
+      round(conf.high, 2), ")"
+    )
+  )
+
+# save to csv
+write_csv(main_effects, "shared/Survival/cox_model_results.csv")
+
+```
+
+```{r}
+# sensitivity analysis: additionally adjusting for GDM and PTB
+exposures <- c("hdp_updated_indicator")
+
+adjustment_vars <- c("mom_age", "race_eth_5cat", "edu_cat", "GDM_indicator", "preterm_status_from_calculation")
+
+# Function to fit unadjusted and adjusted models
+fit_models <- function(exposure, data, outcome) {
+  formula_unadj <- as.formula(paste0(outcome, " ~ ", exposure))
+  formula_adj <- as.formula(paste0(outcome, " ~ ", exposure, " + ", paste(adjustment_vars, collapse = " + ")))
+
+  model_unadj <- coxph(formula_unadj, data = data)
+  model_adj <- coxph(formula_adj, data = data)
+
+  # Extract tidy summaries with broom::tidy
+  tidy_unadj <- tidy(model_unadj, exponentiate = TRUE, conf.int = TRUE) %>% mutate(model = "Unadjusted", exposure = exposure, outcome = outcome)
+  tidy_adj <- tidy(model_adj, exponentiate = TRUE, conf.int = TRUE) %>% mutate(model = "Sociodemographic + OB adjusted", exposure = exposure, outcome = outcome)
+
+  bind_rows(tidy_unadj, tidy_adj)
+}
+
+# Apply across exposures
+all_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj"))
+hf_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_hf"))
+MI_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_mi"))
+ischemicHD_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_ischemicHD"))
+stroke_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy, outcome = "surv_obj_stroke"))
+
+cox_results <- bind_rows(all_results, hf_results, MI_results, ischemicHD_results, stroke_results)
+
+main_effects <- cox_results %>%
+  filter(term %in% exposures) %>%
+  mutate(
+    HR_CI = paste0(
+      round(estimate, 2), " (",
+      round(conf.low, 2), ", ",
+      round(conf.high, 2), ")"
+    )
+  )
+
+# save to csv
+write_csv(main_effects, "shared/Survival/cox_model_results_OB_adjusted.csv")
+
+
+
+```
+
+```{r}
+# sensitivity analysis: split into event before vs. after enrollment
+first_pregnancy <- first_pregnancy %>%
+  mutate(
+    event_before_enrollment = if_else(CVD_composite_date_earliest < min_svy_date, 1, 0),
+    censored_before_enrollment = if_else(is.na(CVD_composite_date_earliest) & observation_period_end_date <= min_svy_date, 1, 0),
+    censored_after_enrollment  = if_else(is.na(CVD_composite_date_earliest) & observation_period_end_date > min_svy_date, 0, 0)  # optional
+  )
+
+# Include everyone at risk in the period
+pre_enrollment_data <- first_pregnancy %>%
+  filter(event_before_enrollment == 1 | censored_before_enrollment == 1)
+
+post_enrollment_data <- first_pregnancy %>%
+  filter(event_before_enrollment == 0 & censored_before_enrollment == 0)
+
+#think about how to code this...
+```
+
+```{r}
+# actively engaged in care subset: outpatient visit in the year before and the year after
+first_pregnancy_engaged <- first_pregnancy %>%
+  filter(outpt_year_before == 1 & outpt_year_after == 1)
+
+#re-initilze survival models
+surv_obj_engaged <- Surv(time = first_pregnancy_engaged$time_to_CVD_composite_years_12y, event = first_pregnancy_engaged$CVD_composite_event_12y) #for composite CVD event
+surv_obj_hf_engaged <- Surv(time = first_pregnancy_engaged$time_to_hf_concept_years_12y, event = first_pregnancy_engaged$hf_event_12y)
+surv_obj_mi_engaged <- Surv(time = first_pregnancy_engaged$time_to_MI_concept_years_12y, event = first_pregnancy_engaged$MI_event_12y)
+surv_obj_ischemicHD_engaged <- Surv(time = first_pregnancy_engaged$time_to_ischemicHD_concept_years_12y, event = first_pregnancy_engaged$ischemicHD_event_12y)
+surv_obj_stroke_engaged <- Surv(time = first_pregnancy_engaged$time_to_stroke_concept_years_12y, event = first_pregnancy_engaged$stroke_event_12y)
+
+# Define your exposures and covariates
+exposures <- c("hdp_updated_indicator")
+
+adjustment_vars <- c("mom_age", "race_eth_5cat", "edu_cat")
+
+# Function to fit unadjusted and adjusted models
+fit_models <- function(exposure, data, outcome) {
+  formula_unadj <- as.formula(paste0(outcome, " ~ ", exposure))
+  formula_adj <- as.formula(paste0(outcome, " ~ ", exposure, " + ", paste(adjustment_vars, collapse = " + ")))
+
+  model_unadj <- coxph(formula_unadj, data = data)
+  model_adj <- coxph(formula_adj, data = data)
+
+  # Extract tidy summaries with broom::tidy
+  tidy_unadj <- tidy(model_unadj, exponentiate = TRUE, conf.int = TRUE) %>% mutate(model = "Unadjusted", exposure = exposure, outcome = outcome)
+  tidy_adj <- tidy(model_adj, exponentiate = TRUE, conf.int = TRUE) %>% mutate(model = "Sociodemographic adjusted", exposure = exposure, outcome = outcome)
+
+  bind_rows(tidy_unadj, tidy_adj)
+}
+
+# Apply across exposures
+all_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy_engaged, outcome = "surv_obj_engaged"))
+hf_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy_engaged, outcome = "surv_obj_hf_engaged"))
+MI_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy_engaged, outcome = "surv_obj_mi_engaged"))
+ischemicHD_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy_engaged, outcome = "surv_obj_ischemicHD_engaged"))
+stroke_results <- map_dfr(exposures, ~fit_models(.x, data = first_pregnancy_engaged, outcome = "surv_obj_stroke_engaged"))
+
+cox_results <- bind_rows(all_results, hf_results, MI_results, ischemicHD_results, stroke_results)
+
+main_effects <- cox_results %>%
+  filter(term %in% exposures) %>%
+  mutate(
+    HR_CI = paste0(
+      round(estimate, 2), " (",
+      round(conf.low, 2), ", ",
+      round(conf.high, 2), ")"
+    )
+  )
+
+# save to csv
+write_csv(main_effects, "shared/Survival/cox_model_results_engaged_in_care.csv")
+
+
+```
+
+
+```{r}
+#stratified by pre-preg cardiometabolic risk factors
+no_pre_preg_cmrf <- first_pregnancy %>% filter(any_pre_preg_cmrf == 0)
+with_pre_preg_cmrf <- first_pregnancy %>% filter(any_pre_preg_cmrf == 1)
+
+#no pre-preg cardiometabolic risk factors/with pre-preg cardiometabolic risk factors
+surv_obj_no_pre_preg_cmrf <- Surv(time = no_pre_preg_cmrf$time_to_CVD_composite_years_12y, event = no_pre_preg_cmrf$CVD_composite_event_12y) 
+fit_hdp_no_pre_preg_cmrf <- survfit(surv_obj_no_pre_preg_cmrf ~ hdp_updated_indicator, data = no_pre_preg_cmrf)
+fit_preeclampsia_no_pre_preg_cmrf <- survfit(surv_obj_no_pre_preg_cmrf ~ preeclampsia_indicator, data = no_pre_preg_cmrf)
+
+#heart failure
+surv_obj_hf_no_pre_preg_cmrf <- Surv(time = no_pre_preg_cmrf$time_to_hf_concept_years_12y, event = no_pre_preg_cmrf$hf_event_12y)
+fit_hdp_hf_no_pre_preg_cmrf <- survfit(surv_obj_hf_no_pre_preg_cmrf ~ hdp_updated_indicator, data = no_pre_preg_cmrf)
+fit_preeclampsia_hf_no_pre_preg_cmrf <- survfit(surv_obj_hf_no_pre_preg_cmrf ~ preeclampsia_indicator, data = no_pre_preg_cmrf)
+
+#MI
+surv_obj_mi_no_pre_preg_cmrf <- Surv(time = no_pre_preg_cmrf$time_to_MI_concept_years_12y, event = no_pre_preg_cmrf$MI_event_12y)
+fit_hdp_mi_no_pre_preg_cmrf <- survfit(surv_obj_mi_no_pre_preg_cmrf ~ hdp_updated_indicator, data = no_pre_preg_cmrf)
+fit_preeclampsia_mi_no_pre_preg_cmrf <- survfit(surv_obj_mi_no_pre_preg_cmrf ~ preeclampsia_indicator, data = no_pre_preg_cmrf)
+
+#ischemic HD
+surv_obj_ischemicHD_no_pre_preg_cmrf <- Surv(time = no_pre_preg_cmrf$time_to_ischemicHD_concept_years_12y, event = no_pre_preg_cmrf$ischemicHD_event_12y)
+fit_hdp_ischemicHD_no_pre_preg_cmrf <- survfit(surv_obj_ischemicHD_no_pre_preg_cmrf ~ hdp_updated_indicator, data = no_pre_preg_cmrf)
+fit_preeclampsia_ischemicHD_no_pre_preg_cmrf <- survfit(surv_obj_ischemicHD_no_pre_preg_cmrf ~ preeclampsia_indicator, data = no_pre_preg_cmrf)
+
+#stroke
+surv_obj_stroke_no_pre_preg_cmrf <- Surv(time = no_pre_preg_cmrf$time_to_stroke_concept_years_12y, event = no_pre_preg_cmrf$stroke_event_12y)
+fit_hdp_stroke_no_pre_preg_cmrf <- survfit(surv_obj_stroke_no_pre_preg_cmrf ~ hdp_updated_indicator, data = no_pre_preg_cmrf)
+fit_preeclampsia_stroke_no_pre_preg_cmrf <- survfit(surv_obj_stroke_no_pre_preg_cmrf ~ preeclampsia_indicator, data = no_pre_preg_cmrf)
+
+# Apply across exposures
+all_results_no_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = no_pre_preg_cmrf, outcome = "surv_obj_no_pre_preg_cmrf"))
+hf_results_no_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = no_pre_preg_cmrf, outcome = "surv_obj_hf_no_pre_preg_cmrf"))
+MI_results_no_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = no_pre_preg_cmrf, outcome = "surv_obj_mi_no_pre_preg_cmrf"))
+ischemicHD_results_no_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = no_pre_preg_cmrf, outcome = "surv_obj_ischemicHD_no_pre_preg_cmrf"))
+stroke_results_no_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = no_pre_preg_cmrf, outcome = "surv_obj_stroke_no_pre_preg_cmrf"))
+
+#with pre-pre risk factors
+surv_obj_with_pre_preg_cmrf <- Surv(time = with_pre_preg_cmrf$time_to_CVD_composite_years_12y, event = with_pre_preg_cmrf$CVD_composite_event_12y) 
+fit_hdp_with_pre_preg_cmrf <- survfit(surv_obj_with_pre_preg_cmrf ~ hdp_updated_indicator, data = with_pre_preg_cmrf)
+fit_preeclampsia_with_pre_preg_cmrf <- survfit(surv_obj_with_pre_preg_cmrf ~ preeclampsia_indicator, data = with_pre_preg_cmrf)
+
+#heart failure
+surv_obj_hf_with_pre_preg_cmrf <- Surv(time = with_pre_preg_cmrf$time_to_hf_concept_years_12y, event = with_pre_preg_cmrf$hf_event_12y)
+fit_hdp_hf_with_pre_preg_cmrf <- survfit(surv_obj_hf_with_pre_preg_cmrf ~ hdp_updated_indicator, data = with_pre_preg_cmrf)
+fit_preeclampsia_hf_with_pre_preg_cmrf <- survfit(surv_obj_hf_with_pre_preg_cmrf ~ preeclampsia_indicator, data = with_pre_preg_cmrf)
+
+#MI
+surv_obj_mi_with_pre_preg_cmrf <- Surv(time = with_pre_preg_cmrf$time_to_MI_concept_years_12y, event = with_pre_preg_cmrf$MI_event_12y)
+fit_hdp_mi_with_pre_preg_cmrf <- survfit(surv_obj_mi_with_pre_preg_cmrf ~ hdp_updated_indicator, data = with_pre_preg_cmrf)
+fit_preeclampsia_mi_with_pre_preg_cmrf <- survfit(surv_obj_mi_with_pre_preg_cmrf ~ preeclampsia_indicator, data = with_pre_preg_cmrf)
+
+#ischemic HD
+surv_obj_ischemicHD_with_pre_preg_cmrf <- Surv(time = with_pre_preg_cmrf$time_to_ischemicHD_concept_years_12y, event = with_pre_preg_cmrf$ischemicHD_event_12y)
+fit_hdp_ischemicHD_with_pre_preg_cmrf <- survfit(surv_obj_ischemicHD_with_pre_preg_cmrf ~ hdp_updated_indicator, data = with_pre_preg_cmrf)
+fit_preeclampsia_ischemicHD_with_pre_preg_cmrf <- survfit(surv_obj_ischemicHD_with_pre_preg_cmrf ~ preeclampsia_indicator, data = with_pre_preg_cmrf)
+
+#stroke
+surv_obj_stroke_with_pre_preg_cmrf <- Surv(time = with_pre_preg_cmrf$time_to_stroke_concept_years_12y, event = with_pre_preg_cmrf$stroke_event_12y)
+fit_hdp_stroke_with_pre_preg_cmrf <- survfit(surv_obj_stroke_with_pre_preg_cmrf ~ hdp_updated_indicator, data = with_pre_preg_cmrf)
+fit_preeclampsia_stroke_with_pre_preg_cmrf <- survfit(surv_obj_stroke_with_pre_preg_cmrf ~ preeclampsia_indicator, data = with_pre_preg_cmrf)
+
+# Apply across exposures
+all_results_with_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = with_pre_preg_cmrf, outcome = "surv_obj_with_pre_preg_cmrf"))
+hf_results_with_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = with_pre_preg_cmrf, outcome = "surv_obj_hf_with_pre_preg_cmrf"))
+MI_results_with_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = with_pre_preg_cmrf, outcome = "surv_obj_mi_with_pre_preg_cmrf"))
+ischemicHD_results_with_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = with_pre_preg_cmrf, outcome = "surv_obj_ischemicHD_with_pre_preg_cmrf"))
+stroke_results_with_pre_preg_cmrf <- map_dfr(exposures, ~fit_models(.x, data = with_pre_preg_cmrf, outcome = "surv_obj_stroke_with_pre_preg_cmrf"))
+
+#export the results
+cox_results_no_pre_pref_cmrf <- bind_rows(all_results_no_pre_preg_cmrf, hf_results_no_pre_preg_cmrf, MI_results_no_pre_preg_cmrf, ischemicHD_results_no_pre_preg_cmrf, stroke_results_no_pre_preg_cmrf)
+
+main_effects_no_pre_pref_cmrf <- cox_results_no_pre_pref_cmrf %>%
+  filter(term %in% exposures) %>%
+  mutate(
+    HR_CI = paste0(
+      round(estimate, 2), " (",
+      round(conf.low, 2), ", ",
+      round(conf.high, 2), ")"
+    )
+  )
+
+# save to csv
+write_csv(main_effects_no_pre_pref_cmrf, "shared/Survival/cox_model_results_no_pre_pref_cmrf.csv")
+
+#with pre-preg risk factors
+cox_results_with_pre_pref_cmrf <- bind_rows(all_results_with_pre_preg_cmrf, hf_results_with_pre_preg_cmrf, MI_results_with_pre_preg_cmrf, ischemicHD_results_with_pre_preg_cmrf, stroke_results_with_pre_preg_cmrf)
+
+main_effects_with_pre_pref_cmrf <- cox_results_with_pre_pref_cmrf %>%
+  filter(term %in% exposures) %>%
+  mutate(
+    HR_CI = paste0(
+      round(estimate, 2), " (",
+      round(conf.low, 2), ", ",
+      round(conf.high, 2), ")"
+    )
+  )
+
+# save to csv
+write_csv(main_effects_with_pre_pref_cmrf, "shared/Survival/cox_model_results_with_pre_pref_cmrf.csv")
+
+```
+
+
+```{r}
+# attempt basic mediation analysis 
+install.packages("mediation")
+library(mediation)
+
+#estimates how exposure effects the mediator
+med_model_htn <- glm(incident_htn ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + incident_DM + incident_obesity + incident_hyperlipidemia + incident_ckd, 
+                 data = first_pregnancy, family = binomial)
+
+med_model_DM <- glm(incident_DM ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + incident_htn + incident_obesity + incident_hyperlipidemia + incident_ckd, 
+                 data = first_pregnancy, family = binomial)
+
+med_model_obesity <- glm(incident_obesity ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + incident_htn + incident_DM + incident_hyperlipidemia + incident_ckd, 
+                 data = first_pregnancy, family = binomial)
+
+med_model_hyperlipidemia <- glm(incident_hyperlipidemia ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + incident_htn + incident_DM + incident_obesity + incident_ckd, 
+                 data = first_pregnancy, family = binomial)
+
+med_model_ckd <- glm(incident_ckd ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat + incident_htn + incident_DM + incident_obesity + incident_hyperlipidemia, 
+                 data = first_pregnancy, family = binomial)
+
+#estimates how exposure and mediator effect the outcome
+out_model_CVD_composite <- glm(CVD_composite ~ hdp_updated_indicator + incident_htn + mom_age + race_eth_5cat + edu_cat + incident_DM + incident_obesity + incident_hyperlipidemia + incident_ckd,
+                 data = first_pregnancy, family = binomial)
+
+out_model_hf <- glm(hf_indicator ~ hdp_updated_indicator + incident_htn + mom_age + race_eth_5cat + edu_cat + incident_DM + incident_obesity + incident_hyperlipidemia + incident_ckd,
+                 data = first_pregnancy, family = binomial)
+
+out_model_ischedmiaHD <- glm(ischemicHD_indicator ~ hdp_updated_indicator + incident_htn + mom_age + race_eth_5cat + edu_cat + incident_DM + incident_obesity + incident_hyperlipidemia + incident_ckd,
+                 data = first_pregnancy, family = binomial)
+
+out_model_MI <- glm(acuteMI_legend_indicator ~ hdp_updated_indicator + incident_htn + mom_age + race_eth_5cat + edu_cat + incident_DM + incident_obesity + incident_hyperlipidemia + incident_ckd,
+                 data = first_pregnancy, family = binomial)
+
+out_model_stroke <- glm(stroke_legend_indicator ~ hdp_updated_indicator + incident_htn + mom_age + race_eth_5cat + edu_cat + incident_DM + incident_obesity + incident_hyperlipidemia + incident_ckd,
+                 data = first_pregnancy, family = binomial)
+
+
+mediation_result_test <- mediate(
+  model.m = med_model_htn,
+  model.y = out_model_CVD_composite,
+  treat = "hdp_updated_indicator",
+  mediator = "incident_htn",
+  boot = TRUE,
+  sims = 100
+)
+
+test <- summary(mediation_result_test)
+
+
+# List of mediator models
+mediator_models <- list(
+  incident_htn = med_model_htn,
+  incident_DM = med_model_DM,
+  incident_obesity = med_model_obesity,
+  incident_hyperlipidemia = med_model_hyperlipidemia,
+  incident_ckd = med_model_ckd
+)
+
+# List of outcome models
+outcome_models <- list(
+  CVD_composite = out_model_CVD_composite,
+  heart_failure = out_model_hf,
+  ischemic_HD = out_model_ischedmiaHD,
+  MI = out_model_MI,
+  stroke = out_model_stroke
+)
+
+# Loop over all combinations of mediators and outcomes
+mediation_results <- list()
+
+for (med_name in names(mediator_models)) {
+  for (out_name in names(outcome_models)) {
+    
+    cat("Running mediation for", med_name, "->", out_name, "\n")
+    
+    result <- tryCatch({
+      mediation_obj <- mediate(
+        model.m = mediator_models[[med_name]],
+        model.y = outcome_models[[out_name]],
+        treat = "hdp_updated_indicator",
+        mediator = med_name,
+        boot = TRUE,
+        sims = 100
+      )
+      
+      # Extract and format results
+      summary_obj <- summary(mediation_obj)
+      
+      tibble(
+        mediator = med_name,
+        outcome = out_name,
+        prop_med = round(summary_obj$n.avg, 4),
+        prop_med_ci = paste0("(", round(summary_obj$n.avg.ci[1], 4), ", ", round(summary_obj$n.avg.ci[2], 4), ")"),
+        p_value = summary_obj$n.avg.p
+      )
+      
+    }, error = function(e) {
+      warning(paste("Failed for", med_name, "->", out_name, ":", e$message))
+      return(NULL)
+    })
+    
+    if (!is.null(result)) {
+      mediation_results[[paste(med_name, out_name, sep = "_")]] <- result
+    }
+  }
+}
+
+# Combine into a single data frame
+mediation_summary <- bind_rows(mediation_results)
+
+# View
+print(mediation_summary)
+
+# export
+write.csv(mediation_summary, "shared/Survival/mediation_summary.csv", row.names = FALSE)
+
+```
+
+```{r}
+# Think need to have more simple mediation models
+# -----------------------------
+# 1. Mediator: incident_htn
+# Outcome: CVD_composite_event_12y
+# -----------------------------
+med_model_htn <- glm(incident_htn ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat, 
+                     data = first_pregnancy, family = binomial)
+
+out_model_CVD <- glm(CVD_composite_event_12y ~ hdp_updated_indicator + incident_htn + mom_age + race_eth_5cat + edu_cat,
+                     data = first_pregnancy, family = binomial)
+
+med_result_htn_CVD <- mediate(model.m = med_model_htn,
+                              model.y = out_model_CVD,
+                              treat = "hdp_updated_indicator",
+                              mediator = "incident_htn",
+                              boot = TRUE,
+                              sims = 100)
+
+summary(med_result_htn_CVD)
+
+# -----------------------------
+# 2. Mediator: incident_DM
+# Outcome: CVD_composite_event_12y
+# -----------------------------
+med_model_DM <- glm(incident_DM ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat,
+                    data = first_pregnancy, family = binomial)
+
+out_model_CVD_DM <- glm(CVD_composite_event_12y ~ hdp_updated_indicator + incident_DM + mom_age + race_eth_5cat + edu_cat,
+                        data = first_pregnancy, family = binomial)
+
+med_result_DM_CVD <- mediate(model.m = med_model_DM,
+                             model.y = out_model_CVD_DM,
+                             treat = "hdp_updated_indicator",
+                             mediator = "incident_DM",
+                             boot = TRUE,
+                             sims = 100)
+
+summary(med_result_DM_CVD)
+
+# -----------------------------
+# 3. Mediator: incident_obesity
+# Outcome: CVD_composite_event_12y
+# -----------------------------
+med_model_obesity <- glm(incident_obesity ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat,
+                         data = first_pregnancy, family = binomial)
+
+out_model_CVD_obesity <- glm(CVD_composite_event_12y ~ hdp_updated_indicator + incident_obesity + mom_age + race_eth_5cat + edu_cat,
+                             data = first_pregnancy, family = binomial)
+
+med_result_obesity_CVD <- mediate(model.m = med_model_obesity,
+                                  model.y = out_model_CVD_obesity,
+                                  treat = "hdp_updated_indicator",
+                                  mediator = "incident_obesity",
+                                  boot = TRUE,
+                                  sims = 100)
+
+summary(med_result_obesity_CVD)
+
+# -----------------------------
+# 4. Mediator: incident_hyperlipidemia
+# Outcome: CVD_composite_event_12y
+# -----------------------------
+med_model_hyperlipidemia <- glm(incident_hyperlipidemia ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat,
+                                data = first_pregnancy, family = binomial)
+
+out_model_CVD_hyper <- glm(CVD_composite_event_12y ~ hdp_updated_indicator + incident_hyperlipidemia + mom_age + race_eth_5cat + edu_cat,
+                           data = first_pregnancy, family = binomial)
+
+med_result_hyper_CVD <- mediate(model.m = med_model_hyperlipidemia,
+                                model.y = out_model_CVD_hyper,
+                                treat = "hdp_updated_indicator",
+                                mediator = "incident_hyperlipidemia",
+                                boot = TRUE,
+                                sims = 100)
+
+summary(med_result_hyper_CVD)
+
+# -----------------------------
+# 5. Mediator: incident_ckd
+# Outcome: CVD_composite_event_12y
+# -----------------------------
+med_model_ckd <- glm(incident_ckd ~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat,
+                     data = first_pregnancy, family = binomial)
+
+out_model_CVD_ckd <- glm(CVD_composite_event_12y ~ hdp_updated_indicator + incident_ckd + mom_age + race_eth_5cat + edu_cat,
+                         data = first_pregnancy, family = binomial)
+
+med_result_ckd_CVD <- mediate(model.m = med_model_ckd,
+                              model.y = out_model_CVD_ckd,
+                              treat = "hdp_updated_indicator",
+                              mediator = "incident_ckd",
+                              boot = TRUE,
+                              sims = 100)
+
+summary(med_result_ckd_CVD)
+
+# Create a list of results
+med_results_list <- list(
+  incident_htn = med_result_htn_CVD,
+  incident_DM = med_result_DM_CVD,
+  incident_obesity = med_result_obesity_CVD,
+  incident_hyperlipidemia = med_result_hyper_CVD,
+  incident_ckd = med_result_ckd_CVD
+)
+
+# Summarize all results into a single table
+mediation_summary <- map_dfr(names(med_results_list), function(med) {
+  sum_res <- summary(med_results_list[[med]])
+  
+  tibble(
+    mediator = med,
+    acme = round(sum_res$d0, 4),
+    acme_ci = paste0("(", round(sum_res$d0.ci[1], 4), ", ", round(sum_res$d0.ci[2], 4), ")"),
+    acme_p = sum_res$d0.p,
+    ade = round(sum_res$z0, 4),
+    ade_ci = paste0("(", round(sum_res$z0.ci[1], 4), ", ", round(sum_res$z0.ci[2], 4), ")"),
+    ade_p = sum_res$z0.p,
+    total_effect = round(sum_res$tau.coef, 4),
+    total_effect_ci = paste0("(", round(sum_res$tau.ci[1], 4), ", ", round(sum_res$tau.ci[2], 4), ")"),
+    prop_med = round(sum_res$n.avg, 4),
+    prop_med_ci = paste0("(", round(sum_res$n.avg.ci[1], 4), ", ", round(sum_res$n.avg.ci[2], 4), ")"),
+    prop_med_p = sum_res$n.avg.p
+  )
+})
+
+# View the combined table
+print(mediation_summary)
+
+# Export to CSV
+write.csv(mediation_summary, "shared/Survival/mediation_summary_CVD_updated.csv", row.names = FALSE)
+
+
+```
+
+
+```{r}
+# Run some basic diagnostics b/c mediation models are not behaving that well
+# ---- 1. Check event counts for mediators and outcomes ----
+mediators <- c("incident_htn", "incident_DM", "incident_obesity",
+               "incident_hyperlipidemia", "incident_ckd")
+
+outcomes <- c("CVD_composite", "hf_event_12y", "ischemicHD_event_12y",
+              "MI_event_12y", "stroke_event_12y")
+
+# Cross-tabulate exposure vs each mediator/outcome
+for (var in c(mediators, outcomes)) {
+  cat("\n=== ", var, " ===\n")
+  print(table(first_pregnancy[[var]], first_pregnancy$hdp_updated_indicator))
+}
+
+# ---- 2. Quick EPV calculation (events per variable) ----
+# Define number of predictors in your full models
+n_pred_mediator <- 4   # exposure + age + race_eth + edu (basic confounders)
+n_pred_outcome  <- 5   # exposure + mediator + age + race_eth + edu
+
+# Count events for each mediator
+mediator_event_counts <- sapply(mediators, function(m) sum(first_pregnancy[[m]] == 1, na.rm = TRUE))
+outcome_event_counts  <- sapply(outcomes,  function(o) sum(first_pregnancy[[o]] == 1, na.rm = TRUE))
+
+cat("\nMediator event counts and EPV:\n")
+print(mediator_event_counts / n_pred_mediator)
+
+cat("\nOutcome event counts and EPV:\n")
+print(outcome_event_counts / n_pred_outcome)
+
+# ---- 3. Fit bare-bones models to check for separation ----
+diagnostics <- list()
+
+for (m in mediators) {
+  form <- as.formula(paste(m, "~ hdp_updated_indicator + mom_age + race_eth_5cat + edu_cat"))
+  fit <- glm(form, data = first_pregnancy, family = binomial)
+  diagnostics[[m]] <- tidy(fit)
+}
+
+for (m in names(diagnostics)) {
+  cat("\n=== Mediator model:", m, "===\n")
+  print(diagnostics[[m]])
+}
+
+
+
+```
+
+
+```{r}
+healthcare_utilization_table <- first_pregnancy %>%
+  filter(hdp_updated_indicator == 1) %>%
+  tbl_summary(
+    by = c(incident_htn),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, 
+                insurance_insuracneaccepted_cat, insurance_healthcarecoverage_cat, healthadvice_placeforhealthadvice_cat, healthadvice_whatkindofplace_cat, 
+                respectedbyprovider, askedforopinion, easeofunderstanding, 
+    delayedmedicalcare_transportation, delayedmedicalcare_ruralarea, 
+    delayedmedicalcare_nervous, delayedmedicalcare_timeoffwork, delayedmedicalcare_childcare, delayedmedicalcare_elderlycare, delayedmedicalcare_cantaffordcopay, delayedmedicalcare_deductibletoohigh, delayedmedicalcare_hadtopayoutofpocket),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      insurance_insuracneaccepted_cat ~ "Insurance accepted", 
+      insurance_healthcarecoverage_cat ~ "Insurance coverage", 
+      healthadvice_placeforhealthadvice_cat ~ "Place for health advice", 
+      healthadvice_whatkindofplace_cat ~ "Kind of place for health advice", 
+      respectedbyprovider ~ "Respected by provider", 
+      askedforopinion ~ "Asked for opinion", 
+      easeofunderstanding ~ "Ease of understanding", 
+    delayedmedicalcare_transportation ~ "Deplayed Medical Care Due to Transportation", 
+    delayedmedicalcare_ruralarea ~ "Rural area", 
+    delayedmedicalcare_nervous ~ "Nervous", 
+    delayedmedicalcare_timeoffwork ~"Time off work", 
+    delayedmedicalcare_childcare ~ "Child care", 
+    delayedmedicalcare_elderlycare ~ "Elder care", 
+    delayedmedicalcare_cantaffordcopay ~ "Can't afford copay", 
+    delayedmedicalcare_deductibletoohigh ~ "Deductible too high", 
+    delayedmedicalcare_hadtopayoutofpocket ~ "Had to pay out of pocket"
+    )
+  ) %>%
+  bold_labels()
+healthcare_utilization_table
+
+healthcare_utilization_table |> 
+  as_gt() |> 
+  gt::gtsave(filename = "healthcare_utilization_table.docx", path = "shared/APO_paper") 
+
+```
+
+```{r}
+healthcare_utilization_table_CVD <- first_pregnancy %>%
+  filter(hdp_updated_indicator == 1) %>%
+  tbl_summary(
+    by = c(CVD_composite_event_12y),
+    include = c(mom_age, race_eth_5cat, income_cat, edu_cat, 
+                insurance_insuracneaccepted_cat, insurance_healthcarecoverage_cat, healthadvice_placeforhealthadvice_cat, healthadvice_whatkindofplace_cat, 
+                respectedbyprovider, askedforopinion, easeofunderstanding, 
+    delayedmedicalcare_transportation, delayedmedicalcare_ruralarea, 
+    delayedmedicalcare_nervous, delayedmedicalcare_timeoffwork, delayedmedicalcare_childcare, delayedmedicalcare_elderlycare, delayedmedicalcare_cantaffordcopay, delayedmedicalcare_deductibletoohigh, delayedmedicalcare_hadtopayoutofpocket),
+    label = list(
+      mom_age ~ "Maternal age",
+      race_eth_5cat ~ "Race and ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Highest level of education",
+      insurance_insuracneaccepted_cat ~ "Insurance accepted", 
+      insurance_healthcarecoverage_cat ~ "Insurance coverage", 
+      healthadvice_placeforhealthadvice_cat ~ "Place for health advice", 
+      healthadvice_whatkindofplace_cat ~ "Kind of place for health advice", 
+      respectedbyprovider ~ "Respected by provider", 
+      askedforopinion ~ "Asked for opinion", 
+      easeofunderstanding ~ "Ease of understanding", 
+    delayedmedicalcare_transportation ~ "Deplayed Medical Care Due to Transportation", 
+    delayedmedicalcare_ruralarea ~ "Rural area", 
+    delayedmedicalcare_nervous ~ "Nervous", 
+    delayedmedicalcare_timeoffwork ~"Time off work", 
+    delayedmedicalcare_childcare ~ "Child care", 
+    delayedmedicalcare_elderlycare ~ "Elder care", 
+    delayedmedicalcare_cantaffordcopay ~ "Can't afford copay", 
+    delayedmedicalcare_deductibletoohigh ~ "Deductible too high", 
+    delayedmedicalcare_hadtopayoutofpocket ~ "Had to pay out of pocket"
+    )
+  ) %>%
+  bold_labels()
+healthcare_utilization_table_CVD
+
+
+
+
+
+```
+
+
+
+```{r}
+#correlates of incident HTN
+first_pregnancy_hdp <- first_pregnancy %>%
+  filter(hdp_updated_indicator == 1)
+
+first_pregnancy_nohdp <- first_pregnancy %>%
+  filter(hdp_updated_indicator == 0)
+
+  
+glm(incident_htn ~ delayedmedicalcare_transportation, data = first_pregnancy, family = binomial)
+glm(incident_htn ~ delayedmedicalcare_ruralarea, data = first_pregnancy, family = binomial)
+
+
+glm(incident_htn ~ delayedmedicalcare_ruralarea, data = first_pregnancy_hdp, family = binomial)
+
+glm(incident_htn ~ delayedmedicalcare_transportation, data = first_pregnancy_nohdp, family = binomial)
+    delayedmedicalcare_transportation ~ "Deplayed Medical Care Due to Transportation", 
+    delayedmedicalcare_ruralarea ~ "Rural area", 
+    delayedmedicalcare_nervous ~ "Nervous", 
+    delayedmedicalcare_timeoffwork ~"Time off work", 
+    delayedmedicalcare_childcare ~ "Child care", 
+    delayedmedicalcare_elderlycare ~ "Elder care", 
+    delayedmedicalcare_cantaffordcopay ~ "Can't afford copay", 
+    delayedmedicalcare_deductibletoohigh ~ "Deductible too high", 
+    delayedmedicalcare_hadtopayoutofpocket ~ "Had to pay out of pocket")
+
+```
+
+
+
+```{r}
+library(broom)
+library(dplyr)
+library(purrr)
+
+first_pregnancy <- first_pregnancy %>%
+  mutate(race_eth_5cat_model = relevel(as.factor(race_eth_5cat), ref = "White"),
+         income_cat_model = relevel(as.factor(income_cat), ref = "> 100k"),
+         edu_cat_model = relevel(as.factor(edu_cat), ref = "Advanced degree"),
+         healthadvice_placeforhealthadvice_2cat = case_when(
+           healthadvice_placeforhealthadvice_cat == "MoreThanOne" | healthadvice_placeforhealthadvice_cat == "Yes" ~ "Yes",
+           healthadvice_placeforhealthadvice_cat == "No" ~ "No",
+           healthadvice_placeforhealthadvice_cat == "No answer" ~ "No answer"),
+         healthadvice_placeforhealthadvice_2cat = relevel(as.factor(healthadvice_placeforhealthadvice_2cat), ref = "Yes")
+  )
+
+#correlates of incident HTN
+first_pregnancy_hdp <- first_pregnancy %>%
+  filter(hdp_updated_indicator == 1)
+
+first_pregnancy_nohdp <- first_pregnancy %>%
+  filter(hdp_updated_indicator == 0)
+
+
+# Named vector of predictors and their labels
+exposures <- c(
+  "race_eth_5cat_model" = "Race and ethnicity",
+  "income_cat_model" = "Family income",
+  "edu_cat_model" = "Highest level of education",
+  "healthadvice_placeforhealthadvice_2cat" = "Place for health advice", 
+  "healthadvice_whatkindofplace_cat" = "Kind of place for health advice", 
+  "delayedmedicalcare_transportation" = "Delayed Medical Care Due to Transportation", 
+  "delayedmedicalcare_ruralarea" = "Rural Area", 
+  "delayedmedicalcare_nervous" = "Nervous", 
+  "delayedmedicalcare_timeoffwork" = "Time off Work", 
+  "delayedmedicalcare_childcare" = "Child Care", 
+  "delayedmedicalcare_elderlycare" = "Elder Care", 
+  "delayedmedicalcare_cantaffordcopay" = "Can't Afford Copay", 
+  "delayedmedicalcare_deductibletoohigh" = "Deductible Too High", 
+  "delayedmedicalcare_hadtopayoutofpocket" = "Had to Pay Out of Pocket"
+)
+
+# Function to run logistic regression and return ALL rows from tidy output
+run_logistic_model_all_terms <- function(var_name, label) {
+  formula <- as.formula(paste("incident_htn ~", var_name))
+  model <- glm(formula, data = first_pregnancy, family = binomial)
+  
+  tidy(model, exponentiate = TRUE, conf.int = TRUE) %>%
+    mutate(
+      variable = var_name,
+      label = label,
+      OR_CI = paste0(round(estimate, 2), " (", round(conf.low, 2), ",", round(conf.high, 2), ")")
+    )
+}
+
+# Run models for all exposures
+all_results <- map2_dfr(names(exposures), exposures, run_logistic_model_all_terms)
+
+#hdp
+run_logistic_model_all_terms_hdp <- function(var_name, label) {
+  formula <- as.formula(paste("incident_htn ~", var_name))
+  model <- glm(formula, data = first_pregnancy_hdp, family = binomial)
+  
+  tidy(model, exponentiate = TRUE, conf.int = TRUE) %>%
+    mutate(
+      variable = var_name,
+      label = label,
+      OR_CI = paste0(round(estimate, 2), " (", round(conf.low, 2), ",", round(conf.high, 2), ")")
+    )
+}
+
+# Run models for all exposures
+all_results_hdp <- map2_dfr(names(exposures), exposures, run_logistic_model_all_terms_hdp)
+
+#no hdp
+run_logistic_model_all_terms_nohdp <- function(var_name, label) {
+  formula <- as.formula(paste("incident_htn ~", var_name))
+  model <- glm(formula, data = first_pregnancy_nohdp, family = binomial)
+  
+  tidy(model, exponentiate = TRUE, conf.int = TRUE) %>%
+    mutate(
+      variable = var_name,
+      label = label,
+      OR_CI = paste0(round(estimate, 2), " (", round(conf.low, 2), ",", round(conf.high, 2), ")")
+    )
+}
+
+# Run models for all exposures
+all_results_nohdp <- map2_dfr(names(exposures), exposures, run_logistic_model_all_terms_nohdp)
+
+
+view(all_results)
+
+# export
+write.csv(all_results, "shared/Correlates/results_overall.csv", row.names = FALSE)
+write.csv(all_results_hdp, "shared/Correlates/results_overall_hdp.csv", row.names = FALSE)
+write.csv(all_results_nohdp, "shared/Correlates/results_overall_nohdp.csv", row.names = FALSE)
+
+
+```
+
+```{r}
+#look at some predictors from the pregnancy 
+prediction_hdp <- coxph(surv_obj ~ mom_age + hdp_updated_indicator + stillbirth + gestational_age_weeks + prepreg_obesity_bmi_codes + GDM_indicator + mapped_htn_codes_before + mapped_DM_codes_before + mapped_hyperlipidemia_before + mapped_ckd_codes_before, data = first_pregnancy)
+
+summary(prediction_hdp)
+
+
+
+```
+
+
+
+```{r}
+# experiment with examining an engaged subset
+# visit types
+first_pregnancy <- first_pregnancy %>%
+  mutate(year_before_preg = inferred_episode_start %m-% years(1),
+         year_after_preg = inferred_episode_end %m+% years(1))
+
+outpatient_year_before <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = concept_outpt$Id,
+                            start_date = "year_before_preg",
+                            end_date = "inferred_episode_start", 
+                            output = "all",
+                            concept_set_name = "outpt_year_before",
+                            domains = "visit")
+
+outpatient_year_after <- aou_concept_set(cohort = first_pregnancy,
+                            concepts = concept_outpt$Id,
+                            start_date = "inferred_episode_end",
+                            end_date = "year_after_preg", 
+                            output = "all",
+                            concept_set_name = "outpt_year_before",
+                            domains = "visit")
+
+view(outpatient_year_before)
+table(outpatient_year_before$concept_name)
+
+outpatient_year_before_collapsed <- outpatient_year_before %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    outpatient_year_before_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    outpatient_year_before_concept_data_latest = max(concept_date), # Take the latest concept date
+    outpatient_year_before_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    outpatient_year_before_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+outpatient_year_after_collapsed <- outpatient_year_after %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    outpatient_year_after_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    outpatient_year_after_concept_data_latest = max(concept_date), # Take the latest concept date
+    outpatient_year_after_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    outpatient_year_after_concept_count = ifelse(
+      sum(!is.na(concept_date)) == 0, NA,
+      sum(!is.na(concept_date))
+    ),
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+#will need to re-run on the bigger data set
+test <- first_pregnancy %>%
+  left_join(outpatient_year_before_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(outpatient_year_after_collapsed, by = c("person_id", "inferred_episode_end")) 
+
+table(test$outpatient_year_before_indicator, test$outpatient_year_after_indicator)
+summary(test$outpatient_year_before_concept_count)
+summary(test$outpatient_year_after_concept_count)
+
+table(test$hdp_indicator, test$CVD_composite)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#prevalence among live births only
+
+final_data_20wks_LB <- final_data_20wks %>%
+  filter(final_outcome_category == "LB")
+
+APO_table_20wks_LB <- final_data_20wks_LB %>%
+  tbl_summary(
+    include = c(GDM_indicator, preeclampsia_indicator, hdp_indicator, hdp_indicator_6wk, hdp_indicator_12wk,
+                GDM_concept_date_earliest, GDM_concept_data_latest, preeclampsia_concept_date_earliest, preeclampsia_concept_data_latest, hdp_concept_date_earliest, hdp_concept_data_latest),
+    label = list(
+      GDM_indicator ~ "GDM",
+      preeclampsia_indicator ~ "Preeclampsia",
+      hdp_indicator ~ "Hypertensive disorder of pregnancy",
+      hdp_indicator_6wk ~ "Hypertensive disorder of pregnancy with 6 wk buffer",
+      hdp_indicator_12wk ~ "Hypertensive disorder of pregnancy with 12 wk buffer",
+      GDM_concept_date_earliest ~ "Earlist date GDM concept found",
+      GDM_concept_data_latest ~ "Latest date GDM concept found",
+      preeclampsia_concept_date_earliest ~ "Earlist date preeclampsia concept found",
+      preeclampsia_concept_data_latest ~ "Latest date preeclampsia concept found",
+      hdp_concept_date_earliest ~ "Earlist date HDP concept found",
+      hdp_concept_data_latest ~ "Latest date HDP concept found"
+    )
+  ) %>%
+  bold_labels()
+
+APO_table_20wks_LB
+
+APO_table_20wks |> 
+  as_gt() |> 
+  gt::gtsave(filename = "APO_table_20wks_LB.docx", path = "shared/") 
+
+```
+
+
+```{r}
+demo_table_20wks <- final_data_20wks %>%
+  distinct(person_id, gender_cat, orientation_cat, race_eth_cat, income_cat, edu_cat, marital_status_cat, state_cat) %>%
+  tbl_summary(
+    include = c(gender_cat, orientation_cat, race_eth_cat, income_cat, edu_cat, marital_status_cat, state_cat),
+    label = list(
+      gender_cat ~ "Gender identity",
+      orientation_cat ~ "Sexual orientation",
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      marital_status_cat ~ "Marital Status",
+      state_cat ~ "State of residence"
+    )
+  ) %>%
+  bold_labels()
+demo_table_20wks
+
+demo_table_20wks |> 
+  as_gt() |> 
+  gt::gtsave(filename = "demo_table_20wks_LB.docx", path = "shared/") 
+
+```
+
+```{r}
+hist(hipps_cleaned$gestational_age_days_calculated)
+summary(hipps_cleaned$gestational_age_days_calculated)
+length(hipps_cleaned$person_id) #59051
+length(unique(hipps_cleaned$person_id)) #31524
+
+hipps_cleaned <- hipps_cleaned %>%
+  mutate(GAlessthan20_indicator = case_when(gestational_age_days_calculated < 20*7 ~ "GA less than 20 wks",
+                                            gestational_age_days_calculated >= 20*7 ~ "GA greater than 20 wks"))
+
+# 14 GAs are negative; why? - most of these are SAs or ectopics and the precision category is non-specific
+data_GA_negative <- hipps_cleaned %>%
+  filter(gestational_age_days_calculated < 0)
+
+# hipps_cleaned <- readRDS("shared/hipps_cleaned_observation_20wks.rds")
+
+# characteristics of what we filtered out
+# 14,341 observations
+data_GA_lessthan20 <- hipps_cleaned %>%
+  filter(gestational_age_days_calculated < 7*20)
+
+GAlessthan20_table <- hipps_cleaned %>%
+  tbl_summary(
+    include = c(gender_cat, race_eth_cat, income_cat, edu_cat, precision_category, final_outcome_category, inferred_episode_start, inferred_episode_end),
+    by = GAlessthan20_indicator,
+    label = list(
+      gender_cat ~ "Gender identity",
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      precision_category ~ "Level of precision of dates", 
+      final_outcome_category ~ "Probable outcome", 
+      inferred_episode_start ~ "Episode start", 
+      inferred_episode_end ~ "Episode end"
+    )
+  ) %>%
+  bold_labels()
+GAlessthan20_table
+
+GAlessthan20_table |> 
+  as_gt() |> 
+  gt::gtsave(filename = "GAlessthan20_table.docx", path = "shared/") 
+```
+
+
+```{r}
+table(final_data_20wks$ischemicHD_indicator)
+table(final_data_20wks$stroke_legend_indicator)
+table(final_data_20wks$hf_indicator)
+
+length(unique(ischemicHD_collapsed$person_id[ischemicHD_collapsed$ischemicHD_indicator == 1])) #1288
+length(unique(stroke_legend_collapsed$person_id[stroke_legend_collapsed$stroke_legend_indicator == 1])) #546
+length(unique(hf_collapsed$person_id[hf_collapsed$hf_indicator == 1])) #938
+
+
+outcomes_table_20wks <- final_data_20wks %>%
+  distinct(person_id, ischemicHD_indicator, stroke_legend_indicator, hf_indicator) %>%
+  tbl_summary(
+    include = c(ischemicHD_indicator, stroke_legend_indicator, hf_indicator),
+    label = list(
+      ischemicHD_indicator ~ "Ischemic heart disease",
+      stroke_legend_indicator ~ "Stroke",
+      hf_indicator ~ "Heart failure"
+    )
+  ) %>%
+  bold_labels()
+
+outcomes_table_20wks
+
+outcomes_table_20wks |> 
+  as_gt() |> 
+  gt::gtsave(filename = "outcomes_table_20wks.docx", path = "shared/") 
+
+final_data_20wks <- final_data_20wks %>%
+  mutate(postpreg_fu_days = as.Date(observation_period_end_date) - as.Date(inferred_episode_end))
+
+postpreg_fu_numeric <- as.numeric(final_data_20wks$postpreg_fu, units = "days")
+
+summary_stats_fu <- list(
+  min = min(postpreg_fu_numeric, na.rm = T),
+  max = max(postpreg_fu_numeric, na.rm = T),
+  median = median(postpreg_fu_numeric, na.rm = T)
+)
+
+summary_stats_fu
+
+```
+```{r}
+counts <- as.data.frame(table(final_data_20wks$person_id))
+table(counts$Freq)
+
+final_data_20wks$pregnancy_count <- ave(final_data_20wks$person_id, final_data_20wks$person_id, FUN = length)
+table(final_data_20wks$pregnancy_count)
+
+```
+  
+  
+```{r}
+HDP_by_outcome <- final_data_20wks %>%
+  tbl_summary(
+    include = c(gender_cat, orientation_cat, race_eth_cat, income_cat, edu_cat, marital_status_cat, ischemicHD_indicator, stroke_legend_indicator, hf_indicator),
+    by = hdp_indicator_6wk,
+    label = list(
+      gender_cat ~ "Gender identity",
+      orientation_cat ~ "Sexual orientation",
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      marital_status_cat ~ "Marital Status",
+      ischemicHD_indicator ~ "Ischemic heart disease",
+      stroke_legend_indicator ~ "Stroke",
+      hf_indicator ~ "Heart failure"
+    )
+  ) %>%
+  bold_labels()
+
+HDP_by_outcome
+
+HDP_by_outcome |> 
+  as_gt() |> 
+  gt::gtsave(filename = "HDP_by_outcome.docx", path = "shared/") 
+
+
+
+```
+  
+```{r}
+GDM_by_outcome <- final_data_20wks %>%
+  tbl_summary(
+    include = c(gender_cat, orientation_cat, race_eth_cat, income_cat, edu_cat, marital_status_cat, ischemicHD_indicator, stroke_legend_indicator, hf_indicator),
+    by = GDM_indicator,
+    label = list(
+      gender_cat ~ "Gender identity",
+      orientation_cat ~ "Sexual orientation",
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      marital_status_cat ~ "Marital Status",
+      ischemicHD_indicator ~ "Ischemic heart disease",
+      stroke_legend_indicator ~ "Stroke",
+      hf_indicator ~ "Heart failure"
+    )
+  ) %>%
+  bold_labels()
+
+GDM_by_outcome
+
+GDM_by_outcome |> 
+  as_gt() |> 
+  gt::gtsave(filename = "GDM_by_outcome.docx", path = "shared/") 
+
+```
+
+
+  
+```{r}
+length(final_data_20wks$person_id) #28000
+
+table(final_data_livebirths$GDM_indicator, final_data_livebirths$CHD_indicator)
+table(final_data_livebirths$hdp_indicator, final_data_livebirths$CHD_indicator)
+table(final_data_livebirths$preeclampsia_indicator, final_data_livebirths$CHD_indicator)
+
+final_data_livebirths <- final_data_livebirths %>%
+  mutate(postpreg_fu_days = as.Date(observation_period_end_date) - as.Date(inferred_episode_end))
+
+postpreg_fu_numeric <- as.numeric(final_data_livebirths$postpreg_fu, units = "days")
+
+summary_stats_fu <- list(
+  min = min(postpreg_fu_numeric, na.rm = T),
+  max = max(postpreg_fu_numeric, na.rm = T),
+  median = median(postpreg_fu_numeric, na.rm = T)
+)
+
+summary_stats_fu
+#median is about 4.83 years of follow up
+
+```
+
+```{r}
+health_table <- final_data_20wks %>%
+  tbl_summary(
+    include = c(GDM_indicator, preeclampsia_indicator, hdp_indicator, CHD_indicator, hf_indicator, stroke_indicator, stroke_legend_indicator, acuteMI_legend_indicator),
+    label = list(
+      GDM_indicator ~ "GDM",
+      preeclampsia_indicator ~ "Preeclampsia",
+      hdp_indicator ~ "HDP", 
+      CHD_indicator ~ "CHD", 
+      hf_indicator ~ "Heart failure", 
+      stroke_indicator ~ "Stroke",
+      stroke_
+    )
+  ) %>%
+  bold_labels()
+health_table
+
+
+```
+
+```{r}
+# START OF WHEN I JUST LOOKED AT LIVEBIRTHS
+hipps_cleaned_livebirths <- hipps_cleaned %>%
+  filter(final_outcome_category == "LB")
+```
+
+```{r}
+gdm_all <- aou_concept_set(cohort = hipps_cleaned_livebirths,
+                       concepts = concept_gdm,
+                       start_date = "inferred_episode_start", 
+                       end_date = "inferred_episode_end", 
+                       output = "all",
+                       concept_set_name = "gdm",
+                       domains = "condition")
+
+preeclampsia_all <- aou_concept_set(cohort = hipps_cleaned_livebirths,
+                       concepts = concept_preeclampsia,
+                       start_date = "inferred_episode_start", 
+                       end_date = "inferred_episode_end", 
+                       output = "all",
+                       concept_set_name = "preeclampsia",
+                       domains = "condition")
+
+hdp_all <- aou_concept_set(cohort = hipps_cleaned_livebirths,
+                       concepts = concept_hdp,
+                       start_date = "inferred_episode_start", 
+                       end_date = "inferred_episode_end", 
+                       output = "all",
+                       concept_set_name = "hdp",
+                       domains = "condition")
+
+length(unique(gdm_all$person_id)) #17390 - this is the number of unique person IDs
+length(unique(preeclampsia_all$person_id)) #17390 - this is the number of unique person IDs
+length(unique(hdp_all$person_id)) #17390 - this is the number of unique person IDs
+```
+
+```{r}
+# goal will be to group by person ID and inferred episode end date = same pregnancy for the same person
+#take the earliest concept ID
+GDM_collapsed <- gdm_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    GDM_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    GDM_concept_data_latest = max(concept_date), # Take the latest concept date
+    GDM_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+preeclampsia_collapsed <- preeclampsia_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    preeclampsia_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    preeclampsia_concept_data_latest = max(concept_date), # Take the latest concept date
+    preeclampsia_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hdp_collapsed <- hdp_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hdp_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hdp_concept_data_latest = max(concept_date), # Take the latest concept date
+    hdp_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+#concerned about the earliest dates should review?
+```
+
+
+```{r}
+# what makes the data different that is included in when we pull all vs. the indicator?
+CHD_codes <- read.csv("shared/ATLAS Concept_CHD.csv")
+hf_codes <- read.csv("shared/ATLAS Concept Sets_HF.csv")
+stroke_codes <- read.csv("shared/ATLAS Concept Sets_stroke.csv")
+
+```
+
+```{r}
+observation_period_tbl_pregnancy <- aou_observation_period(cohort=hipps_cleaned_livebirths)
+
+temp_data <- as.data.frame(observation_period_tbl_pregnancy)
+dim(temp_data) #17390
+
+merged_observation_data <- temp_data %>% #save this to have
+  inner_join(hipps_cleaned_livebirths, by = "person_id") 
+
+#write_rds(hipps_cleaned, here::here("shared/hipps_cleaned_observation.rds"))
+```
+
+```{r}
+#merged_observation_data$start_date_fu <- merged_observation_data$inferred_episode_end #pregnancy end
+#merged_observation_data$end_date_fu <- merged_observation_data$observation_period_end_date #end of observation in medical record
+
+CHD_indicator <- aou_concept_set(cohort = merged_observation_data,
+                            concepts = CHD_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "indicator",
+                            concept_set_name = "chd",
+                            domains = "condition")
+table(CHD_indicator$chd) #439 - missing some ppl that must have no EHR data in this period?
+
+CHD_all <- aou_concept_set(cohort = merged_observation_data,
+                            concepts = CHD_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "chd",
+                            domains = "condition")
+
+hf_all <- aou_concept_set(cohort = merged_observation_data,
+                            concepts = hf_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "hf",
+                            domains = "condition")
+
+stroke_all <- aou_concept_set(cohort = merged_observation_data,
+                            concepts = stroke_codes$Id,
+                            start_date = "inferred_episode_end", #pregnancy end date
+                            end_date = "observation_period_end_date", 
+                            output = "all",
+                            concept_set_name = "stroke",
+                            domains = "condition")
+
+length(unique(CHD_all$person_id)) #17390
+length(unique(hf_all$person_id)) #17390
+length(unique(stroke_all$person_id)) #17390
+```
+
+
+```{r}
+# goal will be to group by person ID and inferred episode end date = same pregnancy for the same person
+#take the earliest concept ID
+CHD_collapsed <- CHD_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    CHD_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    CHD_concept_data_latest = max(concept_date), # Take the latest concept date
+    CHD_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+hf_collapsed <- hf_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    hf_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    hf_concept_data_latest = max(concept_date), # Take the latest concept date
+    hf_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    .groups = "drop" # Ungroup after summarizing
+  )
+
+stroke_collapsed <- stroke_all %>%
+  group_by(person_id, inferred_episode_end) %>%
+  summarize(
+    stroke_concept_date_earliest = min(concept_date), # Take the earliest concept_date
+    stroke_concept_data_latest = max(concept_date), # Take the latest concept date
+    stroke_indicator = ifelse(any(!is.na(concept_date)), 1, 0),  # Indicator: 1 if concept_date exists, 0 if all are missing
+    .groups = "drop" # Ungroup after summarizing
+  )
+```
+
+```{r}
+# merge the exposures and the outcomes together
+final_data_livebirths <- merged_observation_data %>%
+  left_join(preeclampsia_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(hdp_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(GDM_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(CHD_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(hf_collapsed, by = c("person_id", "inferred_episode_end")) %>%
+  left_join(stroke_collapsed, by = c("person_id", "inferred_episode_end")) 
+  
+length(final_data_livebirths$person_id) #28000
+
+table(final_data_livebirths$GDM_indicator, final_data_livebirths$CHD_indicator)
+table(final_data_livebirths$hdp_indicator, final_data_livebirths$CHD_indicator)
+table(final_data_livebirths$preeclampsia_indicator, final_data_livebirths$CHD_indicator)
+
+final_data_livebirths <- final_data_livebirths %>%
+  mutate(postpreg_fu_days = as.Date(observation_period_end_date) - as.Date(inferred_episode_end))
+
+postpreg_fu_numeric <- as.numeric(final_data_livebirths$postpreg_fu, units = "days")
+
+summary_stats_fu <- list(
+  min = min(postpreg_fu_numeric, na.rm = T),
+  max = max(postpreg_fu_numeric, na.rm = T),
+  median = median(postpreg_fu_numeric, na.rm = T)
+)
+
+summary_stats_fu
+#median is about 4.83 years of follow up
+```
+
+
+```{r}
+# make tables
+demo_table <- final_data_livebirths %>%
+  distinct(person_id, gender_cat, orientation_cat, race_eth_cat, income_cat, edu_cat, marital_status_cat, state_cat) %>%
+  tbl_summary(
+    include = c(gender_cat, orientation_cat, race_eth_cat, income_cat, edu_cat, state_cat),
+    label = list(
+      gender_cat ~ "Gender identity",
+      orientation_cat ~ "Sexual orientation",
+      race_eth_cat ~ "Race/ethnicity",
+      income_cat ~ "Family income",
+      edu_cat ~ "Education",
+      state_cat ~ "State of residence"
+    )
+  ) %>%
+  bold_labels()
+demo_table
+```
+
+```{r}
+# this may contain multiple observations per person
+health_table <- final_data_livebirths %>%
+  tbl_summary(
+    include = c(GDM_indicator, preeclampsia_indicator, hdp_indicator, CHD_indicator, hf_indicator, stroke_indicator),
+    label = list(
+      GDM_indicator ~ "GDM",
+      preeclampsia_indicator ~ "Preeclampsia",
+      hdp_indicator ~ "HDP", 
+      CHD_indicator ~ "CHD", 
+      hf_indicator ~ "Heart failure", 
+      stroke_indicator ~ "Stroke"
+    )
+  ) %>%
+  bold_labels()
+health_table
+
+```
+
+```{r}
+# look by per pregnancy 
+person_id_counts <- final_data_livebirths %>%
+  group_by(person_id) %>%
+  summarize(count = n())
+
+table(person_id_counts$count)
+```
+
+```{r}
+# this filtered condition occurrence rows that are in live births
+# we could use spb as a proxy of health care contact after discharge
+# need to ultimately include the descendants 
+spb_measurement <- aou_concept_set(cohort = merged_observation_data,
+                            concepts = 4152194,
+                            start_date = "inferred_episode_start", 
+                            end_date = "inferred_episode_end", 
+                            output = "all",
+                            concept_set_name = "spb",
+                            domains = "measurement")
+
+View(head(spb_measurement, 500))
+hist(spb_measurement$value_as_number)
+summary(spb_measurement$concept_date)
+
+hipps_persons_livebirths <- tbl(con, "condition_occurrence") %>%
+  filter(person_id %in% !!unique(final_data_livebirths$person_id)) 
+
+```
+
+```{r}
+#we need to figure out if we need the codes for 1 hour, 2 hour, 3 hour b/c arent' getting many measurements from this
+ogtt <- aou_concept_set(cohort = final_data_livebirths,
+                            concepts = 4012477,44790867, 44783612,
+                            start_date = "inferred_episode_start", 
+                            end_date = "inferred_episode_end", 
+                            output = "all",
+                            concept_set_name = "ogtt",
+                            domains = "measurement")
+
+# person id 1782953 had a ogtt of 200
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+length(data$person_id) #59051
+length(unique(data$person_id)) #31524
+table(data$final_outcome_category)
+round(prop.table(table(data$HIP_outcome_category))*100,2)
+hist(data$gestational_age_days_calculated)
+summary(data$gestational_age_days_calculated)
+
+outcome_percentages_rounded <- round(prop.table(table(data$final_outcome_category))*100,2)
+outcome_table_tibble <- tibble(
+  Category = names(outcome_percentages_rounded),
+  Count = as.vector(table(data$final_outcome_category)),
+  Percentage = outcome_percentages_rounded
+)
+outcome_table_tibble
+
+hist(data$gestational_age_days_calculated)
+abline(v = 270, col = "red", lwd = 2, lty = 2)
+abline(v = 84, col = "blue", lwd = 2, lty = 2)
+
+```
+
+
+```{r}
+#restruct the GA and the start date timing
+data_GA20_validstart <- data %>%
+  filter(gestational_age_days_calculated >= 7*20 & as.Date(inferred_episode_start) > as.Date("2003-01-01"))
+table(data_GA20_validstart$final_outcome_category)
+summary(data_GA20_validstart$inferred_episode_start)
+```
+
+
+```{r}
+# confused by what is "preg" - think these are just where there is a gestational age timing code
+data_preg <- data %>%
+  filter(final_outcome_category == "PREG")
+view(data_preg)
+
+# get an idea of how many people would have a live birth
+data_lb <- data %>%
+  filter(final_outcome_category == "LB") #28,000
+length(unique(data_lb$person_id)) #17390
+
+summary(data_lb$inferred_episode_end)
+
+```
+
+
+```{r}
+# create a table based on what the outcomes were
+# using this bc need to determine if should restrict the outcomes
+table1_overall <- tableby(final_outcome_category ~ inferred_episode_start + inferred_episode_end + gestational_age_days_calculated + precision_days + precision_category + factor(outcome_concordance_score), data = data)
+summary(table1_overall)
+
+```
+
+```{r}
+aou_tables() %>%
+  print(n = 68)
+```
+
+```{r}
+# follow recommendations by Louisa Smith to clean the data and merge with demographic characteristics?
+# code from her paper to bring in indicators for the EHR data etc
+hipps_persons <- tbl(con, "cb_search_person") %>%
+  filter(person_id %in% !!unique(data$person_id)) %>% 
+  filter(sex_at_birth != "Male") %>%
+  inner_join(distinct(tbl(con, "ds_survey"), person_id), by = "person_id") %>%
+  select(person_id, dob, state_of_residence, starts_with("has"))
+
+
+
+```
+
+
+
+
+```{r}
+# connect to the All of Us database
+con <- aou_connect()
+
+# concept codes for preeclampsia 439393 and it's descendants
+concept_preeclampsia <- c(439393)
+concept_preeclampsia_descendants <- c(439393, 314090, 35622939, 4283352, 433536)
+
+# concept codes for gestational diabetes - 402459 and it's descendants
+concept_gdm <- c(4024659)
+concept_gdm_descendants <- c(4024659, 4326434, 4263902, 37018765, 45757124, 45757789, 43020791)
+
+#codes for any hypertensive disorder of pregnancy (pregnancy-induced hypertension)
+concept_hdp_descendants <- c(4291933, 4080325, 1340440, 4316372, 4034095, 314090, 4034094, 4146627, 37169699, 35622939, 45757788, 439393, 4283352, 141084, 4062550, 44784483, 4167493, 433536, 4057976, 441922, 4062906)
+
+data$start_date <- data$inferred_episode_start
+data$end_date <- data$inferred_episode_end #long-term may want to add buffer for preeclamspia for PP PEC
+
+data_GA20_validstart$start_date <- data_GA20_validstart$inferred_episode_start
+data_GA20_validstart$end_date <- data_GA20_validstart$inferred_episode_end #long-term may want to add buffer for preeclamspia for PP PEC
+
+
+#buffer the start and end date?
+#data <- data %>%
+  #mutate(
+   # start_date_buffer2 = start_date - years(10),
+  #  end_date_buffer2 = end_date + years(10)
+ # )
+
+#need it to be a character
+#data$start_date <- as.character(data$start_date)
+#data$end_date <- as.character(data$end_date)
+
+#issue is that it is took big?
+tmp_data_tbl <- aou_create_temp_table(data %>% select(person_id, start_date, end_date))
+data_tmp <- data %>% select(person_id, start_date, end_date)
+
+# search for both GDM and GDM + it's descendants in the dataset - this works but why doesn't it work on all 59,051 anymore?
+gdm_only <- aou_concept_set(cohort = data,
+                       concepts = concept_gdm,
+                       start_date = "start_date", 
+                       end_date = "end_date", 
+                       output = "indicator",
+                       concept_set_name = "gdm",
+                       domains = "condition")
+
+gdm_descendants <- aou_concept_set(cohort = data_GA20_validstart,
+                       concepts = concept_gdm_descendants,
+                       start_date = "start_date", 
+                       end_date = "end_date", 
+                       output = "indicator",
+                       concept_set_name = "gdm_descendants",
+                       domains = "condition") 
+
+
+# check prevalence
+#table(gdm_only$gdm, useNA = "always")
+table(gdm_descendants$gdm_descendants, useNA = "always")
+
+preeclampsia_only <- aou_concept_set(
+                            cohort = data,
+                            concepts = concept_preeclampsia,
+                            start_date = "start_date", 
+                            end_date = "end_date", 
+                            output = "indicator",
+                            concept_set_name = "preeclampsia",
+                            domains = "condition")
+
+preeclampsia_descendants <- aou_concept_set(
+                            cohort = data_GA20_validstart,
+                            concepts = concept_preeclampsia_descendants,
+                            start_date = "start_date", 
+                            end_date = "end_date", 
+                            output = "indicator",
+                            concept_set_name = "preeclampsia_descendants",
+                            domains = "condition")
+
+
+table(preeclampsia_only$preeclampsia, useNA = "always")
+table(preeclampsia_descendants$preeclampsia_descendants, useNA = "always")
+
+#this is for HDP
+hdp_descendants <- aou_concept_set(
+                            cohort = data_GA20_validstart,
+                            concepts = concept_hdp_descendants,
+                            start_date = "start_date", 
+                            end_date = "end_date", 
+                            output = "indicator",
+                            concept_set_name = "hdp_descendants",
+                            domains = "condition")
+
+
+table(hdp_descendants$hdp_descendants, useNA = "always")
+
+
+```
+
+```{r}
+#get observation tables for heart failure, CHD, and stroke events
+#the concept ID is in the ID column
+hf_codes <- read.csv("shared/ATLAS Concept Sets_HF.csv")
+CHD_codes <- read.csv("shared/ATLAS Concept_CHD.csv")
+stroke_codes <- read.csv("shared/ATLAS Concept Sets_stroke.csv")
+
+```
+
+```{r}
+#need to get the observation period table
+observation_period_tbl_pregnancy <- aou_observation_period(cohort=data_GA20_validstart)
+temp_data <- as.data.frame(observation_period_tbl_pregnancy)
+dim(temp_data) #31524
+dim(data) #59051
+
+merged_observation_data <- temp_data %>%
+  inner_join(data_GA20_validstart, by = "person_id") 
+
+```
+
+```{r}
+merged_observation_data$start_date <- merged_observation_data$inferred_episode_end #pregnancy end
+merged_observation_data$end_date <- merged_observation_data$observation_period_end_date #end of observation in medical record
+
+#get all the information for the outcomes
+hf_outcome <- aou_concept_set(
+                            cohort = merged_observation_data,
+                            concepts = hf_codes$Id,
+                            start_date = "start_date", #pregnancy end date
+                            end_date = "end_date", 
+                            output = "indicator",
+                            concept_set_name = "hf",
+                            domains = "condition")
+
+# check prevalence
+table(hf_outcome$hf, useNA = "always")
+
+CHD_outcome <- aou_concept_set(
+                            cohort = merged_observation_data,
+                            concepts = CHD_codes$Id,
+                            start_date = "start_date", #pregnancy end date
+                            end_date = "end_date", 
+                            output = "indicator",
+                            concept_set_name = "chd",
+                            domains = "condition")
+
+table(CHD_outcome$chd, useNA = "always")
+
+stroke_outcome <- aou_concept_set(
+                            cohort = merged_observation_data,
+                            concepts = stroke_codes$Id,
+                            start_date = "start_date", #pregnancy end date
+                            end_date = "end_date", 
+                            output = "indicator",
+                            concept_set_name = "stroke",
+                            domains = "condition")
+
+table(stroke_outcome$stroke, useNA = "always")
+
+
+```
+
+
+```{r}
+#this is example because I am struggling
+con <- aou_connect()
+df <- data.frame(
+  concept_id = c(
+    439331, 4290245, 42535816, 46269813,
+    2784565, 45765502, 434112, 4128031, 435640, 45876808
+  ),
+  category = c(
+    "AB", "DELIV", "DELIV", "SA", "DELIV",
+    "LB", "DELIV", "DELIV", "PREG", "SA"
+  ),
+  gest_value = c(NA, NA, NA, NA, NA, NA, NA, NA, 25, NA)
+)
+tmp_tbl <- aou_create_temp_table(df)
+## Don't show: 
+}) # examplesIf
+
+
+```
+
+```{r}
+# need to figure out this observation table thing
+# wondering if should connect this by the person id
+observation_period_tbl_pregnancy <- aou_observation_period(cohort=data)
+temp_data <- as.data.frame(observation_period_tbl_pregnancy)
+dim(temp_data) #31524
+dim(data) #59051
+
+merged_data <- temp_data %>%
+  inner_join(data, by = "person_id") 
+
+# now merge with gdm and preeclampsia
+# these are not as long as merged data so will do an inner join
+final_data <- merged_data %>%
+  left_join(preeclampsia_only, by = c("person_id", "start_date", "end_date")) %>%
+  left_join(gdm_only, by = c("person_id", "start_date", "end_date")) %>%
+  left_join(preeclampsia_descendants, by = c("person_id", "start_date", "end_date")) %>%
+  left_join(gdm_descendants, by = c("person_id", "start_date", "end_date")) 
+     
+length(final_data$person_id) #59051
+
+```
+
+```{r}
+# look at the table again
+table1_APO <- tableby(final_outcome_category ~ gestational_age_days_calculated + factor(outcome_concordance_score) + observation_period_start_date + observation_period_end_date + factor(preeclampsia_descendants) + factor(gdm_descendants), data = final_data)
+summary(table1_APO)
+
+# filter based on the outcome concordance score being 1 or 2 and GA > 20 weeks
+table1_APO_datarich <- tableby(final_outcome_category ~ gestational_age_days_calculated + factor(outcome_concordance_score) + observation_period_start_date + observation_period_end_date + factor(preeclampsia_descendants) + factor(gdm_descendants), 
+                      data = subset(final_data, outcome_concordance_score != 0 & gestational_age_days_calculated > (20 * 7)))
+summary(table1_APO_datarich)
+
+# filter based just based on GA > 20 weeks
+table1_APO_20wks <- tableby(final_outcome_category ~ gestational_age_days_calculated + factor(outcome_concordance_score) + observation_period_start_date + observation_period_end_date + factor(preeclampsia_descendants) + factor(gdm_descendants), 
+                      data = subset(final_data, gestational_age_days_calculated > (20 * 7)))
+summary(table1_APO_20wks)
+
+```
+
+```{r}
+# concept codes for heart failure - 120 with first code only
+# now there are 302 - but there are 900 plus codes :( 
+concept_hf <- c(316139, 444031, 442310, 443587, 444101, 4199500, 443580, 439846, 44782713, 319835, 4195785, 4267800, 4023479, 40481042)
+#concept_hf_test <- c(444031) 
+
+concept_hf_descendants <- c(312383,312927,314378,315295,316139,316994,317000,319835,439694,439696,439698,439846,442310,443580,443587,444031,444101,608954,619797,762002,762003,764871,764872,764873,764874,764876,764877,1340281,1340289,1340348,3184320,3656094,4004279,4009047,4014159,4023479,4030258,4037495,4071869,4093993,4103448,4108244,4108245,4111554,4124705,4139864,4141124,4142561,4172864,4177493,4184497,4185565,4193236,4195785,4195892,4199500,4205558,4206009,4215446,4215802,4229440,4233224,4233424,4242669,4259490,4264636,4267800,4273632,4284562,4307356,4311437,4327205,35615055,36712927,36712928,36712929,36713488,36716182,36716748,36717359,37110330,37163065,37163068,37163069,37163071,37163128,37163130,37163135,37163261,37163264,37163266,37163268,37167218,37309625,37311948,40479192,40479576,40480602,40480603,40481042,40481043,40482857,40486933,43020421,43020657,43021735,43021736,43021825,43021826,43021840,43021841,43021842,43022054,43022068,43530642,43530643,43530961,44782428,44782655,44782713,44782718,44782719,44782728,44782733,44784345,44784442,45766164,45766165,45766166,45766167,45766964,45773075)
+
+# for this I will just put within the entire observation period
+# long-term we will need to before define this so we know it occurs after pregnancy 
+# and we know it is incident vs. prevalent heart failure
+hf_test <- aou_concept_set(
+                            cohort = final_data,
+                            concepts = concept_hf_descendants,
+                            start_date = "observation_period_start", 
+                            end_date = "observation_period_end", 
+                            output = "indicator",
+                            concept_set_name = "hf",
+                            domains = "condition")
+
+# check prevalence
+table(hf_test$hf, useNA = "always")
+
+# merge
+final_data <- final_data %>%
+  left_join(hf_test, by = c("person_id", "start_date", "end_date"))
+
+table(final_data$preeclampsia, final_data$hf, useNA = "always")
+table(final_data$gdm, final_data$hf, useNA = "always")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# connect to the database
+con <- aou_connect()
+# create an observation period table for all participants
+observation_period_tbl <- aou_observation_period()
+# find the first survey date and the date exactly one year before
+survey_date_tbl <- tbl(con, "ds_survey") %>%
+  summarize(first_survey = as.Date(min(survey_datetime)),
+            .by = "person_id") %>%
+  mutate(year_before_survey = DATE_ADD(first_survey,
+    sql (paste("INTERVAL", -1, "year"))))
+# use join_by(person_id, within(.)) to keep only participants for whom the
+# full year before their survey falls within the start and end of their
+# observation period.
+eligible <- survey_date_tbl %>%
+  aou_join(observation_period_tbl, type = "inner",
+          by = join_by(person_id, within(year_before_survey, first_survey,
+                                         observation_period_start_date,
+                                         observation_period_end_date)))
+
+codes_condition_drug <- c(201826, 4193704, 40164929, 40164897) 
+codes_lab_test <- c(3004410, 3005673)
+codes_device <- c(2616672, 3034639)
+
+# request variable called device with 1 if any concepts, 0 otherwise
+device <- aou_concept_set(eligible, codes_device,
+                        start_date = "year_before_survey",
+                        end_date = "first_survey",
+                        output = "indicator",
+                        concept_set_name = "device",
+                        domains = "device") 
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
