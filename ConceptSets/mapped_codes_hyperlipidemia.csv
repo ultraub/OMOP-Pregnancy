@@ -1,0 +1,6 @@
+"","concept_id_1","concept_id_2","relationship_id","valid_start_date.x","valid_end_date.x","invalid_reason.x","icd_code","icd_name","concept_name","domain_id","vocabulary_id","concept_class_id","standard_concept","concept_code","valid_start_date.y","valid_end_date.y","invalid_reason.y"
+"1",35207060,437827,"Maps to",19700101,20991231,NA,"E78.0","Pure hypercholesterolemia","Pure hypercholesterolemia","Condition","SNOMED","Disorder","S","267432004",20020131,20991231,NA
+"2",35207061,440360,"Maps to",19700101,20991231,NA,"E78.1","Pure hyperglyceridemia","Pure hyperglyceridemia","Condition","SNOMED","Disorder","S","267433009",20020131,20991231,NA
+"3",35207062,438720,"Maps to",19700101,20991231,NA,"E78.2","Mixed hyperlipidemia","Mixed hyperlipidemia","Condition","SNOMED","Disorder","S","267434003",20020131,20991231,NA
+"4",35207064,432867,"Maps to",19700101,20991231,NA,"E78.4","Other hyperlipidemia","Hyperlipidemia","Condition","SNOMED","Disorder","S","55822004",20020131,20991231,NA
+"5",35207065,432867,"Maps to",19700101,20991231,NA,"E78.5","Hyperlipidemia, unspecified","Hyperlipidemia","Condition","SNOMED","Disorder","S","55822004",20020131,20991231,NA

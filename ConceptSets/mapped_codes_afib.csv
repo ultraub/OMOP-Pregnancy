@@ -1,0 +1,7 @@
+"","concept_id_1","concept_id_2","relationship_id","valid_start_date.x","valid_end_date.x","invalid_reason.x","icd_code","icd_name","concept_name","domain_id","vocabulary_id","concept_class_id","standard_concept","concept_code","valid_start_date.y","valid_end_date.y","invalid_reason.y"
+"1",1569171,4141360,"Maps to",19700101,20991231,NA,"I48.2","Chronic atrial fibrillation","Chronic atrial fibrillation","Condition","SNOMED","Disorder","S","426749004",20070731,20991231,NA
+"2",1569172,36714994,"Maps to",20171001,20991231,NA,"I48.3","Typical atrial flutter","Typical atrial flutter","Condition","SNOMED","Disorder","S","720448006",20170131,20991231,NA
+"3",1569173,36712986,"Maps to",20171001,20991231,NA,"I48.4","Atypical atrial flutter","Atypical atrial flutter","Condition","SNOMED","Disorder","S","15964901000119107",20170131,20991231,NA
+"4",35207784,4154290,"Maps to",19700101,20991231,NA,"I48.0","Paroxysmal atrial fibrillation","Paroxysmal atrial fibrillation","Condition","SNOMED","Disorder","S","282825002",20020131,20991231,NA
+"5",35207785,4232697,"Maps to",19700101,20991231,NA,"I48.1","Persistent atrial fibrillation","Persistent atrial fibrillation","Condition","SNOMED","Disorder","S","440059007",20090131,20991231,NA
+"6",1569174,4068155,"Maps to",20240809,20991231,NA,"I48.9","Unspecified atrial fibrillation and atrial flutter","Atrial arrhythmia","Condition","SNOMED","Disorder","S","17366009",20020131,20991231,NA

@@ -1,0 +1,9 @@
+Id,Code,Name,Class,Standard Concept Caption,Valid Start Date,Valid End Date,RC,DRC,PC,DPC,Domain,Vocabulary,Ancestors
+438480,39763004,"Abnormal glucose tolerance in mother complicating pregnancy, childbirth AND/OR puerperium",Disorder,Standard,1/30/02,12/30/99,"8,728,850","8,728,850","2,485,920","2,485,920",Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: ''"">0"
+3183244,5620001000004106,Gestational diabetes during pregnancy,Clinical Finding,Standard,1/27/16,12/30/99,0,0,0,0,Condition,Nebraska Lexicon,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: 'Gestational diabetes mellitus'"">1"
+4024659,11687002,Gestational diabetes mellitus,Disorder,Standard,1/30/02,12/30/99,"8,625,965","9,896,364",0,0,Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: ''"">0"
+4326434,75022004,Gestational diabetes mellitus class A1,Disorder,Standard,1/30/02,12/30/99,"8,434","8,434",0,0,Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: 'Gestational diabetes mellitus'"">1"
+4263902,46894009,Gestational diabetes mellitus class A2,Disorder,Standard,1/30/02,12/30/99,"6,175","6,175",0,0,Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: 'Gestational diabetes mellitus'"">1"
+37018765,4.0801E+13,Gestational diabetes mellitus complicating pregnancy,Disorder,Standard,1/30/16,12/30/99,"3,091","3,091",0,0,Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: 'Gestational diabetes mellitus'"">1"
+45757124,10753491000119101,Gestational diabetes mellitus in childbirth,Disorder,Standard,7/30/14,12/30/99,"1,156,579","1,156,579",0,0,Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: 'Gestational diabetes mellitus'"">1"
+45757789,4.0791E+13,Postpartum gestational diabetes mellitus,Disorder,Standard,7/30/14,12/30/99,"96,120","96,120",0,0,Condition,SNOMED,"$parents[1].showAncestorsModal(d.CONCEPT_ID), tooltip: 'Gestational diabetes mellitus'"">1"

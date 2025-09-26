@@ -1,0 +1,5 @@
+"","concept_id_1","concept_id_2","relationship_id","valid_start_date.x","valid_end_date.x","invalid_reason.x","icd_code","icd_name","concept_name","domain_id","vocabulary_id","concept_class_id","standard_concept","concept_code","valid_start_date.y","valid_end_date.y","invalid_reason.y"
+"1",35207648,313221,"Maps to",19700101,20991231,NA,"I06.0","Rheumatic aortic stenosis","Rheumatic aortic stenosis","Condition","SNOMED","Disorder","S","72011007",20020131,20991231,NA
+"2",35207650,320429,"Maps to",19700101,20991231,NA,"I06.2","Rheumatic aortic stenosis with insufficiency","Rheumatic aortic stenosis with regurgitation","Condition","SNOMED","Disorder","S","17759006",20020131,20991231,NA
+"3",35207735,4111099,"Maps to",19700101,20991231,NA,"I35.2","Nonrheumatic aortic (valve) stenosis with insufficiency","Aortic valve stenosis with insufficiency","Condition","SNOMED","Disorder","S","194987006",20020131,20991231,NA
+"4",35207733,4189343,"Maps to",20240809,20991231,NA,"I35.0","Nonrheumatic aortic (valve) stenosis","Aortic valve stenosis","Condition","SNOMED","Disorder","S","60573004",20020131,20991231,NA

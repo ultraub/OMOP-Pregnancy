@@ -1,0 +1,4 @@
+"","concept_id_1","concept_id_2","relationship_id","valid_start_date.x","valid_end_date.x","invalid_reason.x","icd_code","icd_name","concept_name","domain_id","vocabulary_id","concept_class_id","standard_concept","concept_code","valid_start_date.y","valid_end_date.y","invalid_reason.y"
+"1",35207644,318776,"Maps to",19700101,20991231,NA,"I05.1","Rheumatic mitral insufficiency","Rheumatic mitral regurgitation","Condition","SNOMED","Disorder","S","31085000",20020131,20991231,NA
+"2",35207645,4301373,"Maps to",19700101,20991231,NA,"I05.2","Rheumatic mitral stenosis with insufficiency","Rheumatic mitral stenosis with regurgitation","Condition","SNOMED","Disorder","S","787001",20020131,20991231,NA
+"3",35207728,443962,"Maps to",20240809,20991231,NA,"I34.0","Nonrheumatic mitral (valve) insufficiency","Mitral valve regurgitation","Condition","SNOMED","Disorder","S","48724000",20020131,20991231,NA

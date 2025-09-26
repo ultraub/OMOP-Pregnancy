@@ -1,0 +1,49 @@
+"","ancestor_concept_id","descendant_concept_id","min_levels_of_separation","max_levels_of_separation","concept_name","domain_id","vocabulary_id","concept_class_id","standard_concept","concept_code","valid_start_date","valid_end_date","invalid_reason"
+"1",443700,443700,0,0,"Eclampsia","Condition","SNOMED","Disorder","S","15938005",20020131,20991231,NA
+"2",137613,137613,0,0,"Eclampsia in pregnancy","Condition","SNOMED","Disorder","S","198992004",20020131,20991231,NA
+"3",4034096,4034096,0,0,"Eclampsia in labor","Condition","SNOMED","Disorder","S","237283007",20020131,20991231,NA
+"4",4116344,4116344,0,0,"Eclampsia in puerperium","Condition","SNOMED","Disorder","S","303063000",20020131,20991231,NA
+"5",439393,439393,0,0,"Pre-eclampsia","Condition","SNOMED","Disorder","S","398254007",20030731,20991231,NA
+"6",433536,433536,0,0,"Severe pre-eclampsia","Condition","SNOMED","Disorder","S","46764007",20020131,20991231,NA
+"7",4167493,4167493,0,0,"Pregnancy-induced hypertension","Condition","SNOMED","Disorder","S","48194001",20020131,20991231,NA
+"8",4283352,4283352,0,0,"Pre-eclampsia added to pre-existing hypertension","Condition","SNOMED","Disorder","S","67359005",20020131,20991231,NA
+"9",4316372,4316372,0,0,"HELLP syndrome","Condition","SNOMED","Disorder","S","95605009",20020131,20991231,NA
+"10",439393,37169699,3,3,"Postpartum hemolysis-elevated liver enzymes-low platelet count syndrome","Condition","SNOMED","Disorder","S","16740451000119109",20230731,20991231,NA
+"11",443700,4058536,1,1,"Eclampsia with postnatal complication","Condition","SNOMED","Disorder","S","198993009",20020131,20991231,NA
+"12",433536,37169699,2,2,"Postpartum hemolysis-elevated liver enzymes-low platelet count syndrome","Condition","SNOMED","Disorder","S","16740451000119109",20230731,20991231,NA
+"13",4167493,37169699,2,4,"Postpartum hemolysis-elevated liver enzymes-low platelet count syndrome","Condition","SNOMED","Disorder","S","16740451000119109",20230731,20991231,NA
+"14",4167493,44784483,1,1,"Pregnancy induced hypertension with pulmonary edema","Condition","SNOMED","Disorder","S","698638005",20140131,20991231,NA
+"15",4316372,37169699,1,1,"Postpartum hemolysis-elevated liver enzymes-low platelet count syndrome","Condition","SNOMED","Disorder","S","16740451000119109",20230731,20991231,NA
+"16",443700,4116344,1,1,"Eclampsia in puerperium","Condition","SNOMED","Disorder","S","303063000",20020131,20991231,NA
+"17",439393,4283352,1,1,"Pre-eclampsia added to pre-existing hypertension","Condition","SNOMED","Disorder","S","67359005",20020131,20991231,NA
+"18",443700,45757119,2,2,"Eclampsia with pre-existing hypertension in childbirth","Condition","SNOMED","Disorder","S","10752641000119102",20140731,20991231,NA
+"19",439393,4316372,2,2,"HELLP syndrome","Condition","SNOMED","Disorder","S","95605009",20020131,20991231,NA
+"20",443700,4034096,1,1,"Eclampsia in labor","Condition","SNOMED","Disorder","S","237283007",20020131,20991231,NA
+"21",439393,433536,1,1,"Severe pre-eclampsia","Condition","SNOMED","Disorder","S","46764007",20020131,20991231,NA
+"22",439393,35622939,1,1,"Postpartum pre-eclampsia","Condition","SNOMED","Disorder","S","765182005",20180731,20991231,NA
+"23",433536,4316372,1,1,"HELLP syndrome","Condition","SNOMED","Disorder","S","95605009",20020131,20991231,NA
+"24",443700,137613,1,1,"Eclampsia in pregnancy","Condition","SNOMED","Disorder","S","198992004",20020131,20991231,NA
+"25",443700,4289142,1,1,"Eclampsia added to pre-existing hypertension","Condition","SNOMED","Disorder","S","69909000",20020131,20991231,NA
+"26",439393,1340440,1,1,"Exacerbation of pre-eclampsia","Condition","OMOP Extension","Disorder","S","OMOP5166095",20220506,20991231,NA
+"27",439393,314090,1,1,"Mild pre-eclampsia","Condition","SNOMED","Disorder","S","41114007",20020131,20991231,NA
+"28",439393,4057976,2,2,"Severe pre-eclampsia with postnatal complication","Condition","SNOMED","Disorder","S","198986005",20020131,20991231,NA
+"29",433536,4057976,1,1,"Severe pre-eclampsia with postnatal complication","Condition","SNOMED","Disorder","S","198986005",20020131,20991231,NA
+"30",4034096,45757119,1,1,"Eclampsia with pre-existing hypertension in childbirth","Condition","SNOMED","Disorder","S","10752641000119102",20140731,20991231,NA
+"31",4167493,4034095,1,1,"Impending eclampsia","Condition","SNOMED","Disorder","S","237282002",20020131,20991231,NA
+"32",4167493,4146627,1,1,"Non-proteinuric hypertension of pregnancy","Condition","SNOMED","Disorder","S","307632004",20020131,20991231,NA
+"33",4167493,141084,1,1,"Pre-eclampsia or eclampsia with pre-existing hypertension","Condition","SNOMED","Disorder","S","198997005",20020131,20991231,NA
+"34",4167493,4283352,2,2,"Pre-eclampsia added to pre-existing hypertension","Condition","SNOMED","Disorder","S","67359005",20020131,20991231,NA
+"35",4167493,1340440,2,2,"Exacerbation of pre-eclampsia","Condition","OMOP Extension","Disorder","S","OMOP5166095",20220506,20991231,NA
+"36",4167493,4062550,2,2,"Pre-eclampsia or eclampsia with pre-existing hypertension with postnatal complication","Condition","SNOMED","Disorder","S","199003007",20020131,20991231,NA
+"37",4167493,4316372,3,3,"HELLP syndrome","Condition","SNOMED","Disorder","S","95605009",20020131,20991231,NA
+"38",4167493,4291933,1,1,"Chronic hypertension complicating AND/OR reason for care during pregnancy","Condition","SNOMED","Disorder","S","37618003",20020131,20991231,NA
+"39",4167493,4034094,1,1,"Moderate proteinuric hypertension of pregnancy","Condition","SNOMED","Disorder","S","237281009",20020131,20991231,NA
+"40",4167493,439393,1,1,"Pre-eclampsia","Condition","SNOMED","Disorder","S","398254007",20030731,20991231,NA
+"41",4167493,314090,2,2,"Mild pre-eclampsia","Condition","SNOMED","Disorder","S","41114007",20020131,20991231,NA
+"42",4167493,4057976,3,3,"Severe pre-eclampsia with postnatal complication","Condition","SNOMED","Disorder","S","198986005",20020131,20991231,NA
+"43",4167493,4062906,3,3,"Transient hypertension of pregnancy with postnatal complication","Condition","SNOMED","Disorder","S","198968007",20020131,20991231,NA
+"44",4167493,4080325,1,1,"Chronic hypertension complicating AND/OR reason for care during puerperium","Condition","SNOMED","Disorder","S","24042004",20020131,20991231,NA
+"45",4167493,35622939,2,2,"Postpartum pre-eclampsia","Condition","SNOMED","Disorder","S","765182005",20180731,20991231,NA
+"46",4167493,45757788,1,1,"Postpartum pregnancy-induced hypertension","Condition","SNOMED","Disorder","S","40521000119100",20140731,20991231,NA
+"47",4167493,441922,2,2,"Transient hypertension of pregnancy","Condition","SNOMED","Disorder","S","237279007",20020131,20991231,NA
+"48",4167493,433536,2,2,"Severe pre-eclampsia","Condition","SNOMED","Disorder","S","46764007",20020131,20991231,NA
