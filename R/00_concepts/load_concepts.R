@@ -578,7 +578,7 @@ load_concept_sets <- function(
     # Default term durations
     matcho_term_durations <- data.frame(
       outcome = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
-      max_term = c(301, 301, 301, 84, 168, 139, 301)
+      max_term = c(301, 301, 301, 84, 168, 139, 301),
       min_term = c(161, 100, 140, 42, 42, 28, 30),
       term_days = c(140, 201, 161, 42, 126, 111, 271),
       retry = c(28, 28, 28, 14, 14, 14, 28),
