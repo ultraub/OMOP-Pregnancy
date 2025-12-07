@@ -9,6 +9,47 @@
 #'
 #' @return Episodes with refined start dates and precision categories
 #' @export
+
+# =============================================================================
+# ESD Timing Concept Lists (aligned with allofus-pregnancy)
+# These concept lists capture gestational timing information from various OMOP
+# domains. Concept names can be looked up in Athena: https://athena.ohdsi.org/
+# =============================================================================
+
+# Gestational Week (GW) concepts - used for GW classification in precision scoring
+ESD_GW_CONCEPTS <- c(3048230, 3002209, 3012266, 3050433)
+
+# Observation concepts that may contain gestational timing
+ESD_OBSERVATION_CONCEPTS <- c(
+  3011536, 3026070, 3024261, 4260747, 40758410,
+  3002549, 43054890, 46234792, 4266763, 40485048
+)
+
+# Measurement concepts that may contain gestational timing
+ESD_MEASUREMENT_CONCEPTS <- c(3036844, 3001105)
+
+# Estimated Date of Delivery (EDD) concepts
+ESD_DELIVERY_DATE_CONCEPTS <- c(
+  1175623, 3001105, 3011536, 3024261, 3024973, 3026070, 3036322,
+  3038318, 3038608, 4059478, 4128833, 40490322, 40760182, 40760183, 42537958
+)
+
+# Estimated Date of Conception (EDC) concepts
+ESD_CONCEPTION_DATE_CONCEPTS <- c(3002314, 3043737, 4058439, 4072438, 4089559, 44817092)
+
+# Length of Gestation at Birth (LOG) concepts
+ESD_GESTATION_LENGTH_CONCEPTS <- c(4260747, 43054890, 46234792, 4266763, 40485048)
+
+# Combined list of all ESD timing concepts for filtering
+ESD_ALL_TIMING_CONCEPTS <- unique(c(
+  ESD_GW_CONCEPTS,
+  ESD_OBSERVATION_CONCEPTS,
+  ESD_MEASUREMENT_CONCEPTS,
+  ESD_DELIVERY_DATE_CONCEPTS,
+  ESD_CONCEPTION_DATE_CONCEPTS,
+  ESD_GESTATION_LENGTH_CONCEPTS
+))
+
 calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts) {
   
   if (nrow(episodes) == 0) {
@@ -118,10 +159,13 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
 #' Get timing concepts for ESD calculation (All of Us aligned)
 #' @noRd
 get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
-  
+
   # Get timing concept IDs to filter for
   timing_concept_ids <- pps_concepts$concept_id
-  
+
+  # ESD timing concepts are defined at module level (ESD_ALL_TIMING_CONCEPTS)
+  # to allow reuse across functions in this file
+
   # OMOP OPTIMIZATION: Single-pass filtering for database performance
   # Unlike All of Us which filters each domain separately, we combine domains first
   # to reduce database round-trips while maintaining identical results
@@ -151,12 +195,17 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
     col_cache$has_category <- "category" %in% names(all_domain_data)
     col_cache$has_value_as_number <- "value_as_number" %in% names(all_domain_data)
     
-    # Filter for timing concepts - simplified logic that's mathematically equivalent to All of Us
-    # but handles missing columns gracefully through cached checks.
-    # Captures: explicit timing concept IDs, gestation text in names, GEST category, gest_value fields
+    # Filter for timing concepts - aligned with All of Us implementation
+    # Captures concepts from multiple sources:
+    #   1. PPS timing concept IDs (from pps_concepts.csv)
+    #   2. ESD timing concepts (hardcoded lists above - EDD, EDC, LOG, GW)
+    #   3. Pattern matching on "gestation" in concept name
+    #   4. GEST category from HIP concepts
+    #   5. Records with gest_value populated
     timing_from_domains <- all_domain_data %>%
       filter(
         concept_id %in% timing_concept_ids |
+        concept_id %in% ESD_ALL_TIMING_CONCEPTS |
         (col_cache$has_concept_name & !is.na(concept_name) & grepl("gestation", concept_name, ignore.case = TRUE)) |
         (col_cache$has_category & !is.na(category) & category == "GEST") |
         (col_cache$has_gest_value & !is.na(gest_value))
@@ -271,8 +320,8 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
           grepl("gestation period,", concept_name, ignore.case = TRUE) ~ "GW",
         col_cache$has_concept_name & !is.na(concept_name) & 
           grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
-        # Specific concept IDs known to be gestational week concepts
-        concept_id %in% c(3048230, 3002209, 3012266, 3050433) ~ "GW",
+        # Specific concept IDs known to be gestational week concepts (module-level constant)
+        concept_id %in% ESD_GW_CONCEPTS ~ "GW",
         # If we have a gest_value, it's a GW concept
         col_cache$has_gest_value & !is.na(gest_value) ~ "GW",
         # GR3m concepts: range-based concepts from PPS with min/max months
