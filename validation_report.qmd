@@ -1,0 +1,832 @@
+---
+title: "Pregnancy Algorithm Validation Report"
+subtitle: "Comparison of Algorithm Predictions vs PMAP OB Ground Truth"
+author: "OMOP Pregnancy Team"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    code-fold: true
+    code-summary: "Show code"
+    theme: flatly
+    self-contained: true
+execute:
+  echo: true
+  warning: false
+  message: false
+params:
+  prediction_file: "../OMOPPregnancy/OMOPPregnancyV2/output/pregnancy_episodes_20250818.csv"
+  date_window_days: 30
+  min_ga_days: 0
+  max_ga_days: 320
+---
+
+```{r setup}
+#| label: setup
+#| include: false
+
+# Load required packages
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(kableExtra)
+library(janitor)
+
+# Source the connection function from the project
+source("R/00_connection/create_connection.R")
+
+# Set ggplot theme
+theme_set(theme_minimal(base_size = 12))
+```
+
+# Executive Summary
+
+This report validates the pregnancy identification algorithm by comparing its predictions against ground truth data from the PMAP OB registry. The validation covers:
+
+- **Episode-level matching**: Matching predicted episodes to ground truth using a ±`r params$date_window_days` day window
+- **Outcome classification**: Accuracy of outcome category predictions (LB, SB, ECT, AB, SA, DELIV, PREG)
+- **Gestational age estimation**: Comparison of predicted vs ground truth gestational age
+- **Person-level aggregation**: Total pregnancy counts per person
+
+```{r load-predictions}
+#| label: load-predictions
+
+# Load algorithm predictions
+load_algorithm_predictions <- function(file_path) {
+  ext <- tools::file_ext(file_path)
+
+  predictions <- if (ext == "rds") {
+    readRDS(file_path)
+  } else {
+    read.csv(file_path, stringsAsFactors = FALSE)
+  }
+
+  # Clean column names and handle duplicates
+  predictions <- predictions %>%
+    clean_names() %>%
+    mutate(
+      # Consolidate duplicate date columns (from merging)
+      episode_start_date = coalesce(
+        as.Date(episode_start_date),
+        as.Date(episode_start_date_x),
+        as.Date(episode_start_date_y)
+      ),
+      episode_end_date = coalesce(
+        as.Date(episode_end_date),
+        as.Date(episode_end_date_x),
+        as.Date(episode_end_date_y)
+      ),
+      # Ensure proper types
+      person_id = as.integer(person_id),
+      gestational_age_days = as.integer(gestational_age_days)
+    ) %>%
+    select(
+      person_id,
+      episode_number,
+      episode_start_date,
+      episode_end_date,
+      outcome_category,
+      gestational_age_days,
+      algorithm_used,
+      precision_category,
+      confidence_score
+    ) %>%
+    distinct()
+
+  return(predictions)
+}
+
+# Load predictions
+algo_predictions <- load_algorithm_predictions(params$prediction_file)
+
+cat("Loaded", nrow(algo_predictions), "algorithm predictions for",
+    n_distinct(algo_predictions$person_id), "unique persons\n")
+```
+
+```{r db-connect}
+#| label: db-connect
+
+# Connect to database using project connection function
+con <- create_omop_connection(use_env = TRUE)
+cat("Database connection established\n")
+```
+
+```{r query-ground-truth}
+#| label: query-ground-truth
+
+# Query ground truth tables
+
+# 1. Pregnancy episodes
+pregnancies_sql <- "
+SELECT
+  EMRN,
+  PregnancyEstimatedStartDate,
+  PregnancyEstimatedEndDate,
+  PregnancyGravidaCount,
+  PregnancyParaCount,
+  PregnancyAbortionCount,
+  PregnancyTherapeuticAbortionCount,
+  PregnancySpontaneousAbortionCount,
+  PregnancyEctopicCount
+FROM Obstetrics_Minhas_IRB00501137_Scratch.phi.PMAP_OB_PREGNANCIES
+"
+
+gt_pregnancies <- DatabaseConnector::querySql(con, pregnancies_sql) %>%
+  clean_names() %>%
+  mutate(
+    pregnancy_estimated_start_date = as.Date(pregnancy_estimated_start_date),
+    pregnancy_estimated_end_date = as.Date(pregnancy_estimated_end_date)
+  )
+
+cat("Loaded", nrow(gt_pregnancies), "ground truth pregnancy episodes\n")
+
+# 2. Delivery outcomes
+deliveries_sql <- "
+SELECT
+  EMRN,
+  GestationalAgeDays,
+  LivingStatus,
+  BornAlive,
+  NeonatalDemise
+FROM Obstetrics_Minhas_IRB00501137_Scratch.phi.PMAP_OB_DEL
+"
+
+gt_deliveries <- DatabaseConnector::querySql(con, deliveries_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(gt_deliveries), "ground truth delivery records\n")
+
+# 3. EMRN to cohort_id linkage
+emrn_cohort_sql <- "
+SELECT emrn, cohort_id
+FROM Obstetrics_Minhas_IRB00501137_Projection.phi.derived_epic_patient
+"
+
+emrn_to_cohort <- DatabaseConnector::querySql(con, emrn_cohort_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(emrn_to_cohort), "EMRN to cohort_id mappings\n")
+
+# 4. cohort_id (pmap_id) to person_id linkage
+cohort_person_sql <- "
+SELECT pmap_id AS cohort_id, person_id
+FROM Obstetrics_Minhas_IRB00501137_OMOP.dbo.registry_idmap
+"
+
+cohort_to_person <- DatabaseConnector::querySql(con, cohort_person_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(cohort_to_person), "cohort_id to person_id mappings\n")
+```
+
+```{r id-linkage}
+#| label: id-linkage
+
+# Build complete ID linkage: EMRN -> cohort_id -> person_id
+build_id_linkage <- function(emrn_cohort, cohort_person) {
+  linkage <- emrn_cohort %>%
+    inner_join(cohort_person, by = "cohort_id") %>%
+    select(emrn, person_id) %>%
+    distinct()
+
+  return(linkage)
+}
+
+id_linkage <- build_id_linkage(emrn_to_cohort, cohort_to_person)
+
+cat("Created ID linkage table with", nrow(id_linkage), "unique EMRN-person_id pairs\n")
+
+# Check linkage coverage
+algo_persons <- n_distinct(algo_predictions$person_id)
+linked_persons <- sum(algo_predictions$person_id %in% id_linkage$person_id)
+cat("Algorithm persons with ID linkage:", linked_persons, "/", algo_persons,
+    "(", round(100 * linked_persons / algo_persons, 1), "%)\n")
+```
+
+```{r derive-outcomes}
+#| label: derive-outcomes
+
+# Derive outcome category from ground truth cumulative counts
+derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkage) {
+
+  # Join pregnancies with ID linkage to get person_id
+  pregnancies_linked <- pregnancies_df %>%
+    inner_join(id_linkage, by = "emrn")
+
+  # Join with deliveries (if available) for BornAlive info
+  # Deliveries may have multiple records per EMRN, take the one closest to pregnancy end
+  deliveries_by_emrn <- deliveries_df %>%
+    group_by(emrn) %>%
+    summarise(
+      gestational_age_days = first(na.omit(gestational_age_days)),
+      born_alive = first(na.omit(born_alive)),
+      living_status = first(na.omit(living_status)),
+      .groups = "drop"
+    )
+
+  # Combine and derive outcomes
+  derived <- pregnancies_linked %>%
+    left_join(deliveries_by_emrn, by = "emrn") %>%
+    group_by(person_id) %>%
+    arrange(pregnancy_gravida_count) %>%
+    mutate(
+      # Calculate deltas from previous episode
+      prev_para = lag(pregnancy_para_count, default = 0),
+      prev_ab = lag(pregnancy_abortion_count, default = 0),
+      prev_therapeutic = lag(pregnancy_therapeutic_abortion_count, default = 0),
+      prev_spontaneous = lag(pregnancy_spontaneous_abortion_count, default = 0),
+      prev_ectopic = lag(pregnancy_ectopic_count, default = 0),
+
+      delta_para = pregnancy_para_count - prev_para,
+      delta_ab = pregnancy_abortion_count - prev_ab,
+      delta_therapeutic = pregnancy_therapeutic_abortion_count - prev_therapeutic,
+      delta_spontaneous = pregnancy_spontaneous_abortion_count - prev_spontaneous,
+      delta_ectopic = pregnancy_ectopic_count - prev_ectopic,
+
+      # Derive outcome category following Matcho hierarchy
+      gt_outcome_category = case_when(
+        # Live birth: para increased and born alive
+        delta_para > 0 & !is.na(born_alive) & born_alive == 1 ~ "LB",
+        # Stillbirth: para increased and not born alive (or living_status indicates)
+        delta_para > 0 & (!is.na(born_alive) & born_alive == 0) ~ "SB",
+        delta_para > 0 & (!is.na(living_status) & tolower(living_status) %in% c("stillborn", "fetal demise")) ~ "SB",
+        # Ectopic pregnancy
+        delta_ectopic > 0 ~ "ECT",
+        # Therapeutic/Induced abortion
+        delta_therapeutic > 0 ~ "AB",
+        # Spontaneous abortion
+        delta_spontaneous > 0 ~ "SA",
+        # Generic abortion (when not specified as therapeutic or spontaneous)
+        delta_ab > 0 & delta_therapeutic == 0 & delta_spontaneous == 0 ~ "AB",
+        # Delivery without specific birth info
+        delta_para > 0 ~ "DELIV",
+        # Pregnancy without recorded outcome
+        TRUE ~ "PREG"
+      )
+    ) %>%
+    ungroup() %>%
+    select(
+      person_id,
+      emrn,
+      gt_episode_num = pregnancy_gravida_count,
+      gt_start = pregnancy_estimated_start_date,
+      gt_end = pregnancy_estimated_end_date,
+      gt_outcome_category,
+      gt_ga_days = gestational_age_days,
+      born_alive,
+      living_status
+    )
+
+  return(derived)
+}
+
+gt_episodes <- derive_ground_truth_outcome(gt_pregnancies, gt_deliveries, id_linkage)
+
+cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
+cat("\nGround truth outcome distribution:\n")
+gt_episodes %>%
+  count(gt_outcome_category) %>%
+  arrange(desc(n)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+# Episode-Level Matching
+
+We match algorithm episodes to ground truth episodes based on:
+1. Same person_id
+2. Episode end dates within ±`r params$date_window_days` days
+
+```{r match-episodes}
+#| label: match-episodes
+
+# Match algorithm episodes to ground truth episodes
+match_episodes <- function(algo_episodes, gt_episodes, date_window_days = 30) {
+
+  # Prepare algorithm data
+  algo <- algo_episodes %>%
+    select(
+      person_id,
+      algo_episode_num = episode_number,
+      algo_start = episode_start_date,
+      algo_end = episode_end_date,
+      algo_outcome = outcome_category,
+      algo_ga_days = gestational_age_days,
+      algo_method = algorithm_used
+    )
+
+  # Prepare ground truth data
+  gt <- gt_episodes %>%
+    select(
+      person_id,
+      gt_episode_num,
+      gt_start,
+      gt_end,
+      gt_outcome = gt_outcome_category,
+      gt_ga_days
+    )
+
+  # Match by person and date proximity
+  # Use many-to-many join then filter for matches
+  matched <- algo %>%
+    inner_join(gt, by = "person_id", relationship = "many-to-many") %>%
+    mutate(
+      end_date_diff = as.numeric(difftime(algo_end, gt_end, units = "days")),
+      end_date_diff_abs = abs(end_date_diff),
+      is_matched = !is.na(gt_end) & !is.na(algo_end) & end_date_diff_abs <= date_window_days
+    )
+
+  # For matched episodes, take the closest match per algorithm episode
+  best_matches <- matched %>%
+    filter(is_matched) %>%
+    group_by(person_id, algo_episode_num) %>%
+    slice_min(end_date_diff_abs, n = 1, with_ties = FALSE) %>%
+    ungroup()
+
+  # Identify unmatched algorithm episodes (potential false positives)
+  unmatched_algo <- algo %>%
+    anti_join(best_matches, by = c("person_id", "algo_episode_num"))
+
+  # Identify unmatched ground truth episodes (potential false negatives)
+  unmatched_gt <- gt %>%
+    anti_join(best_matches, by = c("person_id", "gt_episode_num"))
+
+  # Calculate match statistics
+  match_stats <- list(
+    total_algo = nrow(algo),
+    total_gt = nrow(gt),
+    matched = nrow(best_matches),
+    unmatched_algo = nrow(unmatched_algo),
+    unmatched_gt = nrow(unmatched_gt),
+    match_rate_algo = nrow(best_matches) / nrow(algo),
+    match_rate_gt = nrow(best_matches) / nrow(gt)
+  )
+
+  return(list(
+    matched = best_matches,
+    unmatched_algo = unmatched_algo,
+    unmatched_gt = unmatched_gt,
+    stats = match_stats
+  ))
+}
+
+# Perform matching
+match_result <- match_episodes(algo_predictions, gt_episodes, params$date_window_days)
+
+cat("Episode Matching Results:\n")
+cat("- Algorithm episodes:", match_result$stats$total_algo, "\n")
+cat("- Ground truth episodes:", match_result$stats$total_gt, "\n")
+cat("- Matched episodes:", match_result$stats$matched, "\n")
+cat("- Algorithm match rate:", round(100 * match_result$stats$match_rate_algo, 1), "%\n")
+cat("- Ground truth match rate:", round(100 * match_result$stats$match_rate_gt, 1), "%\n")
+```
+
+# Outcome Classification Analysis
+
+## Confusion Matrix
+
+```{r confusion-matrix}
+#| label: confusion-matrix
+#| fig-width: 8
+#| fig-height: 6
+
+# Create confusion matrix
+create_confusion_matrix <- function(matched_episodes) {
+  # Define outcome order
+  outcome_order <- c("LB", "SB", "ECT", "AB", "SA", "DELIV", "PREG")
+
+  conf_matrix <- matched_episodes %>%
+    mutate(
+      algo_outcome = factor(algo_outcome, levels = outcome_order),
+      gt_outcome = factor(gt_outcome, levels = outcome_order)
+    ) %>%
+    count(algo_outcome, gt_outcome, .drop = FALSE) %>%
+    complete(algo_outcome, gt_outcome, fill = list(n = 0))
+
+  return(conf_matrix)
+}
+
+conf_matrix <- create_confusion_matrix(match_result$matched)
+
+# Plot confusion matrix heatmap
+ggplot(conf_matrix, aes(x = gt_outcome, y = algo_outcome, fill = n)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = n), color = "white", size = 4) +
+  scale_fill_gradient(low = "lightblue", high = "darkblue", name = "Count") +
+  labs(
+    title = "Outcome Classification Confusion Matrix",
+    subtitle = paste("Matched episodes within ±", params$date_window_days, "days"),
+    x = "Ground Truth Outcome",
+    y = "Algorithm Outcome"
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  coord_fixed()
+```
+
+## Classification Metrics by Category
+
+```{r classification-metrics}
+#| label: classification-metrics
+
+# Calculate classification metrics per category
+calculate_classification_metrics <- function(matched_episodes) {
+
+  categories <- c("LB", "SB", "ECT", "AB", "SA", "DELIV", "PREG")
+
+  metrics <- map_df(categories, function(cat) {
+    tp <- sum(matched_episodes$algo_outcome == cat &
+              matched_episodes$gt_outcome == cat, na.rm = TRUE)
+    fp <- sum(matched_episodes$algo_outcome == cat &
+              matched_episodes$gt_outcome != cat, na.rm = TRUE)
+    fn <- sum(matched_episodes$algo_outcome != cat &
+              matched_episodes$gt_outcome == cat, na.rm = TRUE)
+    tn <- sum(matched_episodes$algo_outcome != cat &
+              matched_episodes$gt_outcome != cat, na.rm = TRUE)
+
+    precision <- if (tp + fp > 0) tp / (tp + fp) else NA_real_
+    recall <- if (tp + fn > 0) tp / (tp + fn) else NA_real_
+    f1 <- if (!is.na(precision) & !is.na(recall) & (precision + recall) > 0) {
+      2 * precision * recall / (precision + recall)
+    } else NA_real_
+
+    tibble(
+      category = cat,
+      true_positive = tp,
+      false_positive = fp,
+      false_negative = fn,
+      true_negative = tn,
+      precision = precision,
+      recall = recall,
+      f1_score = f1,
+      support = tp + fn
+    )
+  })
+
+  # Overall accuracy
+  overall_correct <- sum(matched_episodes$algo_outcome == matched_episodes$gt_outcome,
+                         na.rm = TRUE)
+  overall_accuracy <- overall_correct / nrow(matched_episodes)
+
+  return(list(
+    by_category = metrics,
+    overall_accuracy = overall_accuracy,
+    total_matched = nrow(matched_episodes),
+    total_correct = overall_correct
+  ))
+}
+
+class_metrics <- calculate_classification_metrics(match_result$matched)
+
+cat("Overall Accuracy:", round(100 * class_metrics$overall_accuracy, 1), "%\n")
+cat("(", class_metrics$total_correct, "/", class_metrics$total_matched, "matched episodes)\n\n")
+
+# Display metrics table
+class_metrics$by_category %>%
+  mutate(
+    precision = round(precision, 3),
+    recall = round(recall, 3),
+    f1_score = round(f1_score, 3)
+  ) %>%
+  kable(
+    caption = "Classification Metrics by Outcome Category",
+    col.names = c("Category", "TP", "FP", "FN", "TN", "Precision", "Recall", "F1", "Support")
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r metrics-plot}
+#| label: metrics-plot
+#| fig-width: 10
+#| fig-height: 5
+
+# Plot metrics by category
+metrics_long <- class_metrics$by_category %>%
+  filter(support > 0) %>%
+  select(category, precision, recall, f1_score) %>%
+  pivot_longer(cols = c(precision, recall, f1_score),
+               names_to = "metric", values_to = "value") %>%
+  mutate(metric = factor(metric,
+                         levels = c("precision", "recall", "f1_score"),
+                         labels = c("Precision", "Recall", "F1 Score")))
+
+ggplot(metrics_long, aes(x = category, y = value, fill = metric)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), width = 0.7) +
+  scale_y_continuous(limits = c(0, 1), labels = percent_format()) +
+  scale_fill_brewer(palette = "Set2", name = "Metric") +
+  labs(
+    title = "Classification Performance by Outcome Category",
+    x = "Outcome Category",
+    y = "Score"
+  ) +
+  theme(legend.position = "top")
+```
+
+# Gestational Age Comparison
+
+```{r ga-comparison}
+#| label: ga-comparison
+
+# Calculate gestational age comparison metrics
+calculate_ga_metrics <- function(matched_episodes, min_ga = 0, max_ga = 320) {
+
+  with_ga <- matched_episodes %>%
+    filter(
+      !is.na(algo_ga_days) & !is.na(gt_ga_days),
+      algo_ga_days >= min_ga & algo_ga_days <= max_ga,
+      gt_ga_days >= min_ga & gt_ga_days <= max_ga
+    ) %>%
+    mutate(
+      ga_diff = algo_ga_days - gt_ga_days,
+      ga_diff_abs = abs(ga_diff),
+      ga_within_7d = ga_diff_abs <= 7,
+      ga_within_14d = ga_diff_abs <= 14,
+      ga_within_21d = ga_diff_abs <= 21
+    )
+
+  if (nrow(with_ga) == 0) {
+    return(list(
+      summary = tibble(n = 0),
+      by_outcome = tibble(),
+      data = with_ga
+    ))
+  }
+
+  summary_stats <- with_ga %>%
+    summarise(
+      n = n(),
+      mean_diff = mean(ga_diff),
+      median_diff = median(ga_diff),
+      sd_diff = sd(ga_diff),
+      mae = mean(ga_diff_abs),
+      rmse = sqrt(mean(ga_diff^2)),
+      pct_within_7d = mean(ga_within_7d) * 100,
+      pct_within_14d = mean(ga_within_14d) * 100,
+      pct_within_21d = mean(ga_within_21d) * 100,
+      correlation = cor(algo_ga_days, gt_ga_days)
+    )
+
+  by_outcome <- with_ga %>%
+    group_by(gt_outcome) %>%
+    summarise(
+      n = n(),
+      mean_diff = mean(ga_diff),
+      median_diff = median(ga_diff),
+      mae = mean(ga_diff_abs),
+      pct_within_7d = mean(ga_within_7d) * 100,
+      pct_within_14d = mean(ga_within_14d) * 100,
+      .groups = "drop"
+    )
+
+  return(list(
+    summary = summary_stats,
+    by_outcome = by_outcome,
+    data = with_ga
+  ))
+}
+
+ga_metrics <- calculate_ga_metrics(match_result$matched, params$min_ga_days, params$max_ga_days)
+
+cat("Gestational Age Comparison (n =", ga_metrics$summary$n, "episodes with valid GA):\n\n")
+
+if (ga_metrics$summary$n > 0) {
+  ga_metrics$summary %>%
+    mutate(across(where(is.numeric), ~round(., 2))) %>%
+    pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+    kable(caption = "Overall Gestational Age Metrics") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+## GA by Outcome Category
+
+```{r ga-by-outcome}
+#| label: ga-by-outcome
+
+if (nrow(ga_metrics$by_outcome) > 0) {
+  ga_metrics$by_outcome %>%
+    mutate(across(where(is.numeric) & !matches("^n$"), ~round(., 2))) %>%
+    kable(
+      caption = "Gestational Age Metrics by Outcome Category",
+      col.names = c("Outcome", "N", "Mean Diff", "Median Diff", "MAE", "% within 7d", "% within 14d")
+    ) %>%
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+```
+
+## GA Agreement Plots
+
+```{r ga-scatter}
+#| label: ga-scatter
+#| fig-width: 8
+#| fig-height: 6
+
+if (nrow(ga_metrics$data) > 0) {
+  ggplot(ga_metrics$data, aes(x = gt_ga_days, y = algo_ga_days)) +
+    geom_point(alpha = 0.3, size = 1.5) +
+    geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed", linewidth = 1) +
+    geom_smooth(method = "lm", color = "blue", se = TRUE) +
+    labs(
+      title = "Gestational Age Agreement",
+      subtitle = paste("Correlation:", round(ga_metrics$summary$correlation, 3)),
+      x = "Ground Truth GA (days)",
+      y = "Algorithm GA (days)"
+    ) +
+    coord_fixed() +
+    theme(aspect.ratio = 1)
+}
+```
+
+```{r bland-altman}
+#| label: bland-altman
+#| fig-width: 10
+#| fig-height: 6
+
+if (nrow(ga_metrics$data) > 0) {
+  ba_data <- ga_metrics$data %>%
+    mutate(
+      mean_ga = (algo_ga_days + gt_ga_days) / 2,
+      diff_ga = algo_ga_days - gt_ga_days
+    )
+
+  mean_diff <- mean(ba_data$diff_ga)
+  sd_diff <- sd(ba_data$diff_ga)
+
+  ggplot(ba_data, aes(x = mean_ga, y = diff_ga)) +
+    geom_point(alpha = 0.3, size = 1.5) +
+    geom_hline(yintercept = mean_diff, color = "blue", linewidth = 1) +
+    geom_hline(yintercept = mean_diff + 1.96 * sd_diff,
+               color = "red", linetype = "dashed", linewidth = 0.8) +
+    geom_hline(yintercept = mean_diff - 1.96 * sd_diff,
+               color = "red", linetype = "dashed", linewidth = 0.8) +
+    annotate("text", x = max(ba_data$mean_ga) * 0.95, y = mean_diff + 5,
+             label = paste("Mean:", round(mean_diff, 1)), color = "blue", hjust = 1) +
+    annotate("text", x = max(ba_data$mean_ga) * 0.95, y = mean_diff + 1.96 * sd_diff + 5,
+             label = paste("+1.96 SD:", round(mean_diff + 1.96 * sd_diff, 1)),
+             color = "red", hjust = 1) +
+    annotate("text", x = max(ba_data$mean_ga) * 0.95, y = mean_diff - 1.96 * sd_diff - 5,
+             label = paste("-1.96 SD:", round(mean_diff - 1.96 * sd_diff, 1)),
+             color = "red", hjust = 1) +
+    labs(
+      title = "Bland-Altman Plot: Gestational Age Agreement",
+      subtitle = "Limits of Agreement (95% CI)",
+      x = "Mean GA (Algorithm + Ground Truth) / 2 (days)",
+      y = "Difference (Algorithm - Ground Truth) (days)"
+    )
+}
+```
+
+# Person-Level Aggregation
+
+```{r person-metrics}
+#| label: person-metrics
+
+# Calculate person-level metrics
+calculate_person_metrics <- function(algo_episodes, gt_episodes) {
+
+  algo_counts <- algo_episodes %>%
+    group_by(person_id) %>%
+    summarise(
+      algo_total = n(),
+      algo_lb = sum(outcome_category == "LB", na.rm = TRUE),
+      algo_sb = sum(outcome_category == "SB", na.rm = TRUE),
+      algo_ab = sum(outcome_category %in% c("AB", "SA"), na.rm = TRUE),
+      algo_ect = sum(outcome_category == "ECT", na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  gt_counts <- gt_episodes %>%
+    group_by(person_id) %>%
+    summarise(
+      gt_total = n(),
+      gt_lb = sum(gt_outcome_category == "LB", na.rm = TRUE),
+      gt_sb = sum(gt_outcome_category == "SB", na.rm = TRUE),
+      gt_ab = sum(gt_outcome_category %in% c("AB", "SA"), na.rm = TRUE),
+      gt_ect = sum(gt_outcome_category == "ECT", na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  comparison <- algo_counts %>%
+    full_join(gt_counts, by = "person_id") %>%
+    mutate(across(everything(), ~replace_na(., 0))) %>%
+    mutate(
+      total_diff = algo_total - gt_total,
+      counts_match = total_diff == 0,
+      lb_match = algo_lb == gt_lb,
+      ab_match = algo_ab == gt_ab
+    )
+
+  summary_stats <- comparison %>%
+    summarise(
+      n_persons = n(),
+      n_algo_only = sum(gt_total == 0 & algo_total > 0),
+      n_gt_only = sum(algo_total == 0 & gt_total > 0),
+      n_both = sum(gt_total > 0 & algo_total > 0),
+      pct_exact_total_match = mean(counts_match) * 100,
+      pct_lb_match = mean(lb_match) * 100,
+      pct_ab_match = mean(ab_match) * 100,
+      mean_total_diff = mean(total_diff),
+      median_total_diff = median(total_diff),
+      n_over_count = sum(total_diff > 0),
+      n_under_count = sum(total_diff < 0),
+      n_exact = sum(total_diff == 0)
+    )
+
+  return(list(
+    person_data = comparison,
+    summary = summary_stats
+  ))
+}
+
+person_metrics <- calculate_person_metrics(algo_predictions, gt_episodes)
+
+cat("Person-Level Analysis:\n\n")
+person_metrics$summary %>%
+  pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+  mutate(Value = round(Value, 2)) %>%
+  kable(caption = "Person-Level Aggregation Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+```{r person-diff-plot}
+#| label: person-diff-plot
+#| fig-width: 8
+#| fig-height: 5
+
+# Distribution of count differences
+if (nrow(person_metrics$person_data) > 0) {
+  ggplot(person_metrics$person_data, aes(x = total_diff)) +
+    geom_histogram(binwidth = 1, fill = "steelblue", color = "white") +
+    geom_vline(xintercept = 0, color = "red", linetype = "dashed", linewidth = 1) +
+    labs(
+      title = "Distribution of Episode Count Difference per Person",
+      subtitle = "Algorithm count - Ground Truth count",
+      x = "Count Difference",
+      y = "Number of Persons"
+    ) +
+    scale_x_continuous(breaks = seq(-10, 10, 1))
+}
+```
+
+# Summary and Key Findings
+
+```{r summary-tables}
+#| label: summary-tables
+
+# Create summary table
+summary_df <- tibble(
+  Metric = c(
+    "Algorithm episodes",
+    "Ground truth episodes",
+    "Matched episodes",
+    "Algorithm match rate",
+    "Ground truth match rate",
+    "Overall classification accuracy",
+    "Mean GA difference (days)",
+    "GA within ±7 days",
+    "GA within ±14 days",
+    "Person exact count match"
+  ),
+  Value = c(
+    match_result$stats$total_algo,
+    match_result$stats$total_gt,
+    match_result$stats$matched,
+    paste0(round(100 * match_result$stats$match_rate_algo, 1), "%"),
+    paste0(round(100 * match_result$stats$match_rate_gt, 1), "%"),
+    paste0(round(100 * class_metrics$overall_accuracy, 1), "%"),
+    if (ga_metrics$summary$n > 0) round(ga_metrics$summary$mean_diff, 1) else "N/A",
+    if (ga_metrics$summary$n > 0) paste0(round(ga_metrics$summary$pct_within_7d, 1), "%") else "N/A",
+    if (ga_metrics$summary$n > 0) paste0(round(ga_metrics$summary$pct_within_14d, 1), "%") else "N/A",
+    paste0(round(person_metrics$summary$pct_exact_total_match, 1), "%")
+  )
+)
+
+summary_df %>%
+  kable(caption = "Validation Summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  row_spec(c(4, 5, 6, 8, 9, 10), bold = TRUE)
+```
+
+## Key Findings
+
+Based on the validation analysis:
+- **Episode matching**: `r round(100 * match_result$stats$match_rate_algo, 1)`% of algorithm episodes matched to ground truth within ±`r params$date_window_days` days
+- **Classification accuracy**: `r round(100 * class_metrics$overall_accuracy, 1)`% overall accuracy for outcome category prediction
+- **Gestational age**: `r if(ga_metrics$summary$n > 0) paste0(round(ga_metrics$summary$pct_within_14d, 1), "% within ±14 days") else "No valid GA comparisons"`
+- **Person-level**: `r round(person_metrics$summary$pct_exact_total_match, 1)`% of persons have exact episode count match
+
+```{r cleanup}
+#| label: cleanup
+#| include: false
+
+# Disconnect from database
+if (exists("con")) {
+  DatabaseConnector::disconnect(con)
+  cat("Database connection closed\n")
+}
+```
