@@ -594,7 +594,7 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
 #' Add gestational age information following All of Us methodology
 #' 
 #' Integrates gestational age data from multiple concept types:
-#' - Explicit gestational age concepts (3002209, 3048230, 3012266, 3050433)
+#' - Explicit gestational age concepts (3002209, 3048230, 3012266)
 #' - Value_as_number fields containing gestational weeks
 #' - PREG category records with timing information
 #' 
@@ -612,19 +612,136 @@ add_gestational_age_info <- function(episodes, all_records) {
   gest_records <- all_records %>%
     filter(
       !is.na(gest_value) | 
-      category == "GEST" |
-      concept_id %in% c(3002209, 3048230, 3012266, 3050433) |  # Specific gestational age concepts
+      category == "PREG" |
+      concept_id %in% c(3002209, 3048230, 3012266) |  
       grepl("gestation", concept_name, ignore.case = TRUE)
-    )
-  
+    ) %>%
+    filter(!is.na(visit_date), ###!!! Please double check the column name
+      gest_value > 0 & gest_value <= 44
+    ) %>%
+    group_by(person_id, visit_date)%>%
+    mutate(gest_week = max(gest_value)) %>%
+    ungroup() %>%
+    # filter out rows that are not the max gest_value at visit_date
+    filter(gest_value == gest_week) %>%
+    # add column for gestation period in days
+    mutate(gest_day = gest_week * 7) %>%
+    group_by(person_id) %>%
+    dbplyr::window_order(visit_date) %>%
+    mutate(
+      # get previous gestation week
+      prev_week = lag(gest_week, 1),
+      # get previous date
+      prev_date = lag(visit_date, 1),
+      # calculate difference between gestation weeks
+      week_diff = gest_week - prev_week,
+      # calculate number of days between gestation weeks with buffer
+      day_diff = week_diff * 7 + buffer_days,
+      # get difference in days between visit date and previous date
+      date_diff = date_diff(visit_date, prev_date, sql("day")),
+      # check if any negative or zero number in week_diff column corresponds to a new pregnancy episode
+      # assume it does if the difference in actual dates is larger than the minimum
+      # change to 1 (arbitrary positive number) if not;
+      # new_diff = 1 if the next obs has lower gest week and the difference in dates
+      # is smaller than the minimum number of days between pregnancies
+      # week_diff is negative if at a lower gestational age now
+      new_diff = if_else(date_diff < min_days & week_diff <= 0, 1, week_diff),
+      # check if any positive number in week_diff column (so at a higher gestational age next time)
+      # has a date_diff >= day_diff
+      # that means that the difference in time is greater than the difference
+      # in gestational age + buffer
+      # may correspond to new pregnancy episode, if so change to -1 (negative number)
+      new_diff2 = if_else(date_diff >= day_diff & week_diff > 0, -1, new_diff),
+      # create new columns, index and episode; any zero or negative number in newdiff2 column indicates a new episode
+      index = row_number(),
+      # count as an episodes if first row or
+      # difference in gest age is negative and date_diff large enough for it to be a new pregnancy or
+      # difference in gest age is positive but that difference is larger than the difference in dates
+      episode = as.integer(cumsum(ifelse(new_diff2 <= 0 | index == 1, 1, 0))),
+      episode_chr = as.character(episode) # for grouping
+    ) %>%
+    ungroup()
+
+
+
   if (nrow(gest_records) == 0) {
     episodes$has_gestational_info <- FALSE
     episodes$gestational_weeks <- NA_real_
     return(episodes)
   }
-  
+
+  # identify first visit for each pregnancy episode
+  # and get max gestation week at first visit date
+  new_first_df <- gest_records %>%
+    group_by(person_id, episode) %>%
+    slice_min(visit_date, n = 1) %>%
+    summarise(first_gest_week = max(gest_week), .groups = "drop")
+
+  ############ Min Gestation Week ############
+
+  # identify minimum gestation week for each pregnancy episode
+  temp_min_df <- gest_records %>%
+    group_by(person_id, episode) %>%
+    slice_min(gest_week, n = 1) %>%
+    mutate(min_gest_week = gest_week) %>%
+    ungroup() %>%
+    omop_compute()
+
+  # get range of time when that gestational week was recorded
+  # get first occurrence of min gestation week
+  new_min_df <- temp_min_df %>%
+    group_by(person_id, episode, min_gest_week) %>%
+    summarize(min_gest_date = min(visit_date), .groups = "drop")
+
+  # get last occurrence of min gestation week
+  second_min_df <- temp_min_df %>%
+    group_by(person_id, episode, gest_week) %>% # = min_gest_week
+    summarize(min_gest_date_2 = max(visit_date), .groups = "drop")
+
+  ############ End Visit Date ############
+
+  # identify end visit for each pregnancy episode
+  # keep in mind this could be a month after pregnancy actually ended...
+  temp_end_df <- gest_records %>%
+    group_by(person_id, episode) %>%
+    slice_max(visit_date, n = 1) %>%
+    mutate(end_gest_date = visit_date)
+
+  # get max gestation week at end visit date
+  new_end_df <- temp_end_df %>%
+    group_by(person_id, episode, end_gest_date) %>%
+    summarize(end_gest_week = max(gest_week), .groups = "drop")
+
+  ############ Max Gestation Week ############
+
+  # identify max gestation week for each pregnancy episode
+  temp_max_df <- gest_records %>%
+    group_by(person_id, episode) %>%
+    slice_max(gest_week, n = 1) %>%
+    mutate(max_gest_week = gest_week) %>%
+    ungroup() %>%
+    omop_compute()
+
+  # get first occurrence of max gestation week
+  new_max_df <- temp_max_df %>%
+    group_by(person_id, episode, max_gest_week) %>%
+    summarize(max_gest_date = min(visit_date), .groups = "drop")
+
+  # max_gest_date can be later than min_gest_date_2 (only one GA but multiple dates)
+
+  ############ Join tables ############
+
+  # join first and end tables
+  all_df <- new_first_df %>%
+    inner_join(new_end_df, by = c("person_id", "episode")) %>%
+    inner_join(new_min_df, by = c("person_id", "episode")) %>%
+    inner_join(second_min_df, by = c("person_id", "episode")) %>%
+    inner_join(new_max_df, by = c("person_id", "episode"))
+
+
+
   # Join gestational records to episodes within reasonable window
-  episodes_with_gest <- episodes %>%
+  episodes_with_gest <- all_df %>%
     left_join(
       gest_records %>%
         select(person_id, gest_date = event_date, gest_value, value_as_number),
