@@ -74,7 +74,7 @@ create_omop_connection <- function(
   password = NULL,
   use_windows_auth = FALSE,
   connectionString = NULL,
-  pathToDriver = "jdbc_drivers",
+  pathToDriver = NULL,
   cdm_schema = NULL,
   vocabulary_schema = NULL,
   results_schema = NULL,

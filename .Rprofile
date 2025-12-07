@@ -90,6 +90,7 @@ options(
 }
 
 # Remind user about setup
+# TODO - Update this to check for .env
 if (!dir.exists("jdbc_drivers") || length(list.files("jdbc_drivers", pattern = "\\.jar$")) == 0) {
   message("⚠ Warning: JDBC drivers not found")
   message("  Run: source('inst/scripts/setup_jdbc_drivers.R')")
