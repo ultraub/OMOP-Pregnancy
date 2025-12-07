@@ -636,7 +636,7 @@ add_gestational_age_info <- function(episodes, all_records) {
       gest_date >= outcome_date - 280,
       gest_date <= outcome_date
     ) %>%
-    group_by(person_id, episode_number, outcome_date, outcome_category) %>%
+    group_by(person_id, episode_number) %>%
     summarise(
       gestational_weeks = max(coalesce(gest_value, value_as_number), na.rm = TRUE),
       n_gest_records = n(),
