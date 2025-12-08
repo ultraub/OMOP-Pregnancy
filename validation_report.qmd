@@ -74,13 +74,11 @@ load_algorithm_predictions <- function(file_path) {
       # Consolidate duplicate date columns (from merging)
       episode_start_date = coalesce(
         as.Date(episode_start_date),
-        as.Date(episode_start_date_x),
-        as.Date(episode_start_date_y)
+        as.Date(episode_start_date_x)
       ),
       episode_end_date = coalesce(
         as.Date(episode_end_date),
-        as.Date(episode_end_date_x),
-        as.Date(episode_end_date_y)
+        as.Date(episode_end_date_x)
       ),
       # Ensure proper types
       person_id = as.integer(person_id),
@@ -94,8 +92,7 @@ load_algorithm_predictions <- function(file_path) {
       outcome_category,
       gestational_age_days,
       algorithm_used,
-      precision_category,
-      confidence_score
+      precision_category
     ) %>%
     distinct()
 
@@ -149,7 +146,7 @@ cat("Loaded", nrow(gt_pregnancies), "ground truth pregnancy episodes\n")
 # 2. Delivery outcomes
 deliveries_sql <- "
 SELECT
-  EMRN,
+  mom_emrn AS emrn,
   GestationalAgeDays,
   LivingStatus,
   BornAlive,
@@ -215,9 +212,27 @@ cat("Algorithm persons with ID linkage:", linked_persons, "/", algo_persons,
 # Derive outcome category from ground truth cumulative counts
 derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkage) {
 
+  # Ensure count columns are numeric (may come as character from SQL)
+  pregnancies_df <- pregnancies_df %>%
+    mutate(
+      pregnancy_gravida_count = as.numeric(pregnancy_gravida_count),
+      pregnancy_para_count = as.numeric(pregnancy_para_count),
+      pregnancy_abortion_count = as.numeric(pregnancy_abortion_count),
+      pregnancy_therapeutic_abortion_count = as.numeric(pregnancy_therapeutic_abortion_count),
+      pregnancy_spontaneous_abortion_count = as.numeric(pregnancy_spontaneous_abortion_count),
+      pregnancy_ectopic_count = as.numeric(pregnancy_ectopic_count)
+    )
+
   # Join pregnancies with ID linkage to get person_id
   pregnancies_linked <- pregnancies_df %>%
     inner_join(id_linkage, by = "emrn")
+
+  # Ensure delivery columns are proper types
+  deliveries_df <- deliveries_df %>%
+    mutate(
+      gestational_age_days = as.numeric(gestational_age_days),
+      born_alive = as.numeric(born_alive)
+    )
 
   # Join with deliveries (if available) for BornAlive info
   # Deliveries may have multiple records per EMRN, take the one closest to pregnancy end
