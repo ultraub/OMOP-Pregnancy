@@ -142,6 +142,7 @@ gt_pregnancies <- DatabaseConnector::querySql(con, pregnancies_sql) %>%
   )
 
 cat("Loaded", nrow(gt_pregnancies), "ground truth pregnancy episodes\n")
+cat("Sample EMRNs from pregnancies:", head(gt_pregnancies$emrn, 5), "\n")
 
 # 2. Delivery outcomes
 deliveries_sql <- "
@@ -169,6 +170,13 @@ emrn_to_cohort <- DatabaseConnector::querySql(con, emrn_cohort_sql) %>%
   clean_names()
 
 cat("Loaded", nrow(emrn_to_cohort), "EMRN to cohort_id mappings\n")
+cat("Sample EMRNs from linkage:", head(emrn_to_cohort$emrn, 5), "\n")
+
+# Check EMRN overlap between pregnancies and linkage
+preg_emrns <- unique(gt_pregnancies$emrn)
+link_emrns <- unique(emrn_to_cohort$emrn)
+emrn_overlap <- length(intersect(preg_emrns, link_emrns))
+cat("EMRN overlap (pregnancies ∩ linkage):", emrn_overlap, "/", length(preg_emrns), "\n")
 
 # 4. cohort_id (pmap_id) to person_id linkage
 cohort_person_sql <- "
@@ -195,15 +203,36 @@ build_id_linkage <- function(emrn_cohort, cohort_person) {
   return(linkage)
 }
 
+# Debug: Check cohort_id overlap before building linkage
+cohort_ids_from_emrn <- unique(emrn_to_cohort$cohort_id)
+cohort_ids_from_person <- unique(cohort_to_person$cohort_id)
+cohort_overlap <- length(intersect(cohort_ids_from_emrn, cohort_ids_from_person))
+cat("Cohort_id overlap (emrn_table ∩ person_table):", cohort_overlap, "\n")
+cat("Sample cohort_ids from emrn table:", head(cohort_ids_from_emrn, 5), "\n")
+cat("Sample cohort_ids from person table:", head(cohort_ids_from_person, 5), "\n")
+
 id_linkage <- build_id_linkage(emrn_to_cohort, cohort_to_person)
 
-cat("Created ID linkage table with", nrow(id_linkage), "unique EMRN-person_id pairs\n")
+cat("\nCreated ID linkage table with", nrow(id_linkage), "unique EMRN-person_id pairs\n")
+cat("Columns in id_linkage:", names(id_linkage), "\n")
+
+# Debug: Show sample of linkage
+cat("Sample person_ids in linkage:", head(id_linkage$person_id, 10), "\n")
+cat("Sample emrns in linkage:", head(id_linkage$emrn, 5), "\n")
 
 # Check linkage coverage
 algo_persons <- n_distinct(algo_predictions$person_id)
-linked_persons <- sum(algo_predictions$person_id %in% id_linkage$person_id)
+algo_person_ids <- unique(algo_predictions$person_id)
+linked_persons <- sum(algo_person_ids %in% id_linkage$person_id)
 cat("Algorithm persons with ID linkage:", linked_persons, "/", algo_persons,
     "(", round(100 * linked_persons / algo_persons, 1), "%)\n")
+
+# Debug: Show sample algorithm person_ids
+cat("Sample algorithm person_ids:", head(algo_person_ids, 10), "\n")
+
+# Check for any overlap
+overlap_count <- length(intersect(algo_person_ids, id_linkage$person_id))
+cat("Overlapping person_ids between algorithm and linkage:", overlap_count, "\n")
 ```
 
 ```{r derive-outcomes}
@@ -304,6 +333,18 @@ derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkag
 gt_episodes <- derive_ground_truth_outcome(gt_pregnancies, gt_deliveries, id_linkage)
 
 cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
+cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
+
+# Debug: Check overlap between algorithm and ground truth persons
+algo_persons_set <- unique(algo_predictions$person_id)
+gt_persons_set <- unique(gt_episodes$person_id)
+person_overlap <- length(intersect(algo_persons_set, gt_persons_set))
+cat("Person overlap (algo ∩ GT):", person_overlap, "\n")
+
+# Debug: Sample dates
+cat("\nSample algorithm end dates:", head(algo_predictions$episode_end_date, 5), "\n")
+cat("Sample GT end dates:", head(gt_episodes$gt_end, 5), "\n")
+
 cat("\nGround truth outcome distribution:\n")
 gt_episodes %>%
   count(gt_outcome_category) %>%
@@ -324,7 +365,7 @@ We match algorithm episodes to ground truth episodes based on:
 # Match algorithm episodes to ground truth episodes
 match_episodes <- function(algo_episodes, gt_episodes, date_window_days = 30) {
 
-  # Prepare algorithm data
+  # Prepare algorithm data - assign relative order within each person
   algo <- algo_episodes %>%
     select(
       person_id,
@@ -334,9 +375,13 @@ match_episodes <- function(algo_episodes, gt_episodes, date_window_days = 30) {
       algo_outcome = outcome_category,
       algo_ga_days = gestational_age_days,
       algo_method = algorithm_used
-    )
+    ) %>%
+    group_by(person_id) %>%
+    arrange(algo_end) %>%
+    mutate(algo_order = row_number()) %>%
+    ungroup()
 
-  # Prepare ground truth data
+  # Prepare ground truth data - assign relative order within each person
   gt <- gt_episodes %>%
     select(
       person_id,
@@ -345,11 +390,44 @@ match_episodes <- function(algo_episodes, gt_episodes, date_window_days = 30) {
       gt_end,
       gt_outcome = gt_outcome_category,
       gt_ga_days
-    )
+    ) %>%
+    group_by(person_id) %>%
+    arrange(gt_end) %>%
+    mutate(gt_order = row_number()) %>%
+    ungroup()
 
-  # Match by person and date proximity
-  # Use many-to-many join then filter for matches
-  matched <- algo %>%
+  # Debug: Check person overlap before matching
+  algo_persons <- unique(algo$person_id)
+  gt_persons <- unique(gt$person_id)
+  person_overlap <- intersect(algo_persons, gt_persons)
+  cat("Persons in algorithm:", length(algo_persons), "\n")
+  cat("Persons in ground truth:", length(gt_persons), "\n")
+  cat("Person overlap for matching:", length(person_overlap), "\n")
+
+  if (length(person_overlap) == 0) {
+    warning("No person_id overlap between algorithm and ground truth!")
+    return(list(
+      matched = tibble(),
+      unmatched_algo = algo,
+      unmatched_gt = gt,
+      stats = list(total_algo = nrow(algo), total_gt = nrow(gt), matched = 0,
+                   match_rate_algo = 0, match_rate_gt = 0)
+    ))
+  }
+
+  # MATCHING STRATEGIES (in order of preference):
+  # 1. Match by relative temporal order within person (works with date shifting)
+  # 2. Match by date proximity (if dates are not shifted)
+
+  # Strategy 1: Match by relative order (1st episode to 1st, 2nd to 2nd, etc.)
+  # This works even if dates are shifted by a constant offset per person
+  matched_by_order <- algo %>%
+    inner_join(gt, by = c("person_id", "algo_order" = "gt_order"))
+
+  cat("Matched by relative temporal order:", nrow(matched_by_order), "\n")
+
+  # Strategy 2: Match by date proximity (original method)
+  matched_by_date <- algo %>%
     inner_join(gt, by = "person_id", relationship = "many-to-many") %>%
     mutate(
       end_date_diff = as.numeric(difftime(algo_end, gt_end, units = "days")),
@@ -357,12 +435,26 @@ match_episodes <- function(algo_episodes, gt_episodes, date_window_days = 30) {
       is_matched = !is.na(gt_end) & !is.na(algo_end) & end_date_diff_abs <= date_window_days
     )
 
-  # For matched episodes, take the closest match per algorithm episode
-  best_matches <- matched %>%
-    filter(is_matched) %>%
-    group_by(person_id, algo_episode_num) %>%
-    slice_min(end_date_diff_abs, n = 1, with_ties = FALSE) %>%
-    ungroup()
+  date_matches_count <- sum(matched_by_date$is_matched, na.rm = TRUE)
+  cat("Matched by date proximity (±", date_window_days, " days):", date_matches_count, "\n")
+
+  # Choose best strategy
+  if (date_matches_count > 0) {
+    # Use date matching if it works
+    cat("\nUsing date-based matching\n")
+    best_matches <- matched_by_date %>%
+      filter(is_matched) %>%
+      group_by(person_id, algo_episode_num) %>%
+      slice_min(end_date_diff_abs, n = 1, with_ties = FALSE) %>%
+      ungroup()
+  } else if (nrow(matched_by_order) > 0) {
+    # Fall back to relative order matching (handles date shifting)
+    cat("\nUsing relative order matching (dates may be shifted in OMOP)\n")
+    best_matches <- matched_by_order %>%
+      mutate(end_date_diff = NA_real_, end_date_diff_abs = NA_real_)
+  } else {
+    best_matches <- tibble()
+  }
 
   # Identify unmatched algorithm episodes (potential false positives)
   unmatched_algo <- algo %>%
