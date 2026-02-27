@@ -294,12 +294,14 @@ derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkag
       delta_ectopic = pregnancy_ectopic_count - prev_ectopic,
 
       # Derive outcome category following Matcho hierarchy
+      # NOTE: Assume delta_para > 0 is LB unless explicit SB evidence
+      # (LB is ~99% of births, so this is a reasonable default)
       gt_outcome_category = case_when(
-        # Live birth: para increased and born alive
-        delta_para > 0 & !is.na(born_alive) & born_alive == 1 ~ "LB",
-        # Stillbirth: para increased and not born alive (or living_status indicates)
-        delta_para > 0 & (!is.na(born_alive) & born_alive == 0) ~ "SB",
-        delta_para > 0 & (!is.na(living_status) & tolower(living_status) %in% c("stillborn", "fetal demise")) ~ "SB",
+        # Stillbirth: explicit evidence of fetal demise
+        delta_para > 0 & !is.na(born_alive) & born_alive == 0 ~ "SB",
+        delta_para > 0 & !is.na(living_status) & tolower(living_status) %in% c("stillborn", "fetal demise", "stillbirth") ~ "SB",
+        # Live birth: para increased (default for births)
+        delta_para > 0 ~ "LB",
         # Ectopic pregnancy
         delta_ectopic > 0 ~ "ECT",
         # Therapeutic/Induced abortion
@@ -308,8 +310,6 @@ derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkag
         delta_spontaneous > 0 ~ "SA",
         # Generic abortion (when not specified as therapeutic or spontaneous)
         delta_ab > 0 & delta_therapeutic == 0 & delta_spontaneous == 0 ~ "AB",
-        # Delivery without specific birth info
-        delta_para > 0 ~ "DELIV",
         # Pregnancy without recorded outcome
         TRUE ~ "PREG"
       )
@@ -334,6 +334,26 @@ gt_episodes <- derive_ground_truth_outcome(gt_pregnancies, gt_deliveries, id_lin
 
 cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
 cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
+
+# Debug: Check how many pregnancies have para count increases vs born_alive info
+debug_outcomes <- gt_episodes %>%
+  summarise(
+    total = n(),
+    has_born_alive = sum(!is.na(born_alive)),
+    born_alive_1 = sum(born_alive == 1, na.rm = TRUE),
+    born_alive_0 = sum(born_alive == 0, na.rm = TRUE),
+    classified_lb = sum(gt_outcome_category == "LB"),
+    classified_preg = sum(gt_outcome_category == "PREG"),
+    classified_deliv = sum(gt_outcome_category == "DELIV", na.rm = TRUE)
+  )
+cat("\nOutcome derivation diagnostics:\n")
+cat("- Total episodes:", debug_outcomes$total, "\n")
+cat("- Has born_alive info:", debug_outcomes$has_born_alive, "\n")
+cat("- born_alive = 1:", debug_outcomes$born_alive_1, "\n")
+cat("- born_alive = 0:", debug_outcomes$born_alive_0, "\n")
+cat("- Classified as LB:", debug_outcomes$classified_lb, "\n")
+cat("- Classified as PREG:", debug_outcomes$classified_preg, "\n")
+cat("- Classified as DELIV:", debug_outcomes$classified_deliv, "\n")
 
 # Debug: Check overlap between algorithm and ground truth persons
 algo_persons_set <- unique(algo_predictions$person_id)
