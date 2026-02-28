@@ -784,7 +784,8 @@ remove_GW_outliers <- function(gw_concepts_list) {
     return(gw_dates)
   }
   
-  # Find upper median (matching original: sort()[ceiling(length/2)])
+  # Find median using ceiling index (matching original: sort()[ceiling(length/2)])
+  # For even-length arrays this selects the lower-middle element
   median_date <- sort(gw_dates)[ceiling(length(gw_dates) / 2)]
 
   # Calculate distances from median (matching original's abs approach)

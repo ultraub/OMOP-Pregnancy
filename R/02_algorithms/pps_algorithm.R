@@ -381,9 +381,10 @@ calculate_pps_boundaries <- function(episodes_raw) {
     ungroup() %>%
     mutate(
       months_to_add = 11L - as.integer(min_month),
-      # Add calendar months (matching original's %m+% months())
-      max_pregnancy_date = as.Date(event_date) +
-        lubridate::period(months_to_add, units = "month")
+      # Add calendar months using %m+% (handles month-end rollover correctly,
+      # e.g. Jan 31 + 1 month = Feb 28, matching original's exact behavior)
+      max_pregnancy_date = lubridate::`%m+%`(as.Date(event_date),
+                                              months(months_to_add))
     ) %>%
     select(person_id, person_episode_number, max_pregnancy_date)
 
