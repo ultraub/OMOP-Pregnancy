@@ -366,13 +366,13 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
         TRUE ~ as.Date(NA)
       ),
       
-      # Calculate range for GR3m concepts
+      # Calculate range for GR3m concepts (original uses 30.4 days/month, not 30)
       range_start = case_when(
-        GT_type == "GR3m" & !is.na(max_month) ~ as.Date(event_date) - (max_month * DAYS_PER_MONTH),
+        GT_type == "GR3m" & !is.na(max_month) ~ as.Date(event_date) - round(max_month * 30.4),
         TRUE ~ as.Date(NA)
       ),
       range_end = case_when(
-        GT_type == "GR3m" & !is.na(min_month) ~ as.Date(event_date) - (min_month * DAYS_PER_MONTH),
+        GT_type == "GR3m" & !is.na(min_month) ~ as.Date(event_date) - round(min_month * 30.4),
         TRUE ~ as.Date(NA)
       )
     ) %>%
@@ -539,16 +539,16 @@ find_timing_intersection <- function(week_concepts, range_concepts) {
         
         # If >50% overlap, use overlapping GW concepts
         if (length(overlapping_gw) / length(gw_dates_clean) > 0.5) {
-          result$inferred_start_date <- median(overlapping_gw, na.rm = TRUE)
+          result$inferred_start_date <- overlapping_gw[1]  # First date (matches original filtDates[[1]])
           result$precision_days <- as.numeric(max(overlapping_gw) - min(overlapping_gw))
         } else {
           # Use all GW concepts
-          result$inferred_start_date <- median(gw_dates_clean, na.rm = TRUE)
+          result$inferred_start_date <- gw_dates_clean[1]  # First date (matches original filtDates[[1]])
           result$precision_days <- as.numeric(max(gw_dates_clean) - min(gw_dates_clean))
         }
       } else {
         # No GR3m intersection, use GW concepts alone
-        result$inferred_start_date <- median(gw_dates_clean, na.rm = TRUE)
+        result$inferred_start_date <- gw_dates_clean[1]  # First date (matches original filtDates[[1]])
         if (length(gw_dates_clean) > 1) {
           result$precision_days <- as.numeric(max(gw_dates_clean) - min(gw_dates_clean))
         } else {
@@ -699,23 +699,34 @@ findIntersection <- function(intervals) {
   for (i in 1:n) {
     for (j in 1:n) {
       if (i != j) {
-        # Check for overlap
-        if (intervals_df$V1[j] <= intervals_df$V2[i] && 
-            intervals_df$V2[j] >= intervals_df$V1[i]) {
+        last_i <- intervals_df$V2[i]
+        first_i <- intervals_df$V1[i]
+        # 4 specific overlap conditions (matching original exactly)
+        if ((intervals_df$V1[j] == last_i) || (intervals_df$V1[j] == first_i)) {
+          overlapCount[i] <- overlapCount[i] + 1
+        } else if ((intervals_df$V2[j] == last_i) || (intervals_df$V2[j] == first_i)) {
+          overlapCount[i] <- overlapCount[i] + 1
+        } else if ((intervals_df$V2[j] < last_i) && (intervals_df$V2[j] > first_i)) {
+          overlapCount[i] <- overlapCount[i] + 1
+        } else if ((intervals_df$V1[j] < last_i) && (intervals_df$V1[j] > first_i)) {
           overlapCount[i] <- overlapCount[i] + 1
         }
       }
     }
   }
-  
-  # Remove outliers using IQR
+
+  # Remove outliers using IQR (matching original's abs() threshold)
   if (length(overlapCount) > 1) {
     q1 <- quantile(overlapCount, 0.25)
     q3 <- quantile(overlapCount, 0.75)
-    iqr <- q3 - q1
-    outlierThreshold <- max(0, q1 - 1.5 * iqr)
-    
-    filtered <- intervals_df[overlapCount >= outlierThreshold, ]
+    outlierMetric <- (q3 - q1) * 1.5
+    outlierThreshold <- abs(q1 - outlierMetric)
+
+    if (outlierThreshold == 0) {
+      filtered <- intervals_df[overlapCount > outlierThreshold, ]
+    } else {
+      filtered <- intervals_df[overlapCount >= outlierThreshold, ]
+    }
   } else {
     filtered <- intervals_df
   }
@@ -773,20 +784,22 @@ remove_GW_outliers <- function(gw_concepts_list) {
     return(gw_dates)
   }
   
-  # Find median date
-  median_date <- median(gw_dates, na.rm = TRUE)
-  
-  # Calculate distances from median
-  distances <- as.numeric(abs(gw_dates - median_date))
-  
-  # Remove outliers using IQR
+  # Find upper median (matching original: sort()[ceiling(length/2)])
+  median_date <- sort(gw_dates)[ceiling(length(gw_dates) / 2)]
+
+  # Calculate distances from median (matching original's abs approach)
+  distances <- numeric(length(gw_dates))
+  for (j in seq_along(gw_dates)) {
+    distances[j] <- as.numeric(max(gw_dates[j], median_date) - min(gw_dates[j], median_date))
+  }
+
+  # Remove outliers using IQR (matching original exactly)
   q1 <- quantile(distances, 0.25, na.rm = TRUE)
   q3 <- quantile(distances, 0.75, na.rm = TRUE)
-  iqr <- q3 - q1
-  
-  lower_threshold <- q1 - 1.5 * iqr
-  upper_threshold <- q3 + 1.5 * iqr
-  
+  outlierMetric <- (q3 - q1) * 1.5
+  lower_threshold <- q1 - outlierMetric
+  upper_threshold <- q3 + outlierMetric
+
   # Filter dates within thresholds
   filtered_dates <- gw_dates[distances >= lower_threshold & distances <= upper_threshold]
   

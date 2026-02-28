@@ -26,17 +26,17 @@ get_matcho_tables <- function() {
       "LB", "SB", "ECT", "AB", "SA", "DELIV"
     ),
     min_days = c(
-      # From LB (Live Birth)
+      # From LB (Live Birth): LB, SB, ECT, AB, SA, DELIV
       182, 168, 70, 70, 70, 168,
-      # From SB (Still Birth)
-      182, 70, 70, 70, 70, 168,
-      # From ECT (Ectopic)
+      # From SB (Still Birth): LB, SB, ECT, AB, SA, DELIV
+      182, 168, 70, 70, 70, 168,
+      # From ECT (Ectopic): LB, SB, ECT, AB, SA, DELIV
       168, 154, 56, 56, 56, 154,
-      # From AB (Abortion)
+      # From AB (Abortion): LB, SB, ECT, AB, SA, DELIV
       168, 154, 56, 56, 56, 154,
-      # From SA (Spontaneous Abortion)
+      # From SA (Spontaneous Abortion): LB, SB, ECT, AB, SA, DELIV
       168, 154, 56, 56, 56, 154,
-      # From DELIV (Delivery)
+      # From DELIV (Delivery): LB, SB, ECT, AB, SA, DELIV
       182, 168, 70, 70, 70, 168
     ),
     stringsAsFactors = FALSE

@@ -363,40 +363,64 @@ records_comparison <- function(personlist, i) {
 }
 
 #' Calculate episode boundaries V2
+#'
+#' Matches original outcomes_per_episode() lookahead logic:
+#' For each episode, find the latest concept (by date, then max_month, then min_month),
+#' use its min_month to calculate: months_to_add = 11 - min_month, then
+#' max_pregnancy_date = concept_date + months_to_add (calendar months).
 #' @noRd
 calculate_pps_boundaries <- function(episodes_raw) {
-  
+
+  # Step 1: Find the latest concept per episode for lookahead calculation
+
+  # Original logic: sort by desc(date), desc(max_month), desc(min_month), take first
+  latest_concept_per_episode <- episodes_raw %>%
+    group_by(person_id, person_episode_number) %>%
+    arrange(desc(event_date), desc(max_month), desc(min_month)) %>%
+    slice(1) %>%
+    ungroup() %>%
+    mutate(
+      months_to_add = 11L - as.integer(min_month),
+      # Add calendar months (matching original's %m+% months())
+      max_pregnancy_date = as.Date(event_date) +
+        lubridate::period(months_to_add, units = "month")
+    ) %>%
+    select(person_id, person_episode_number, max_pregnancy_date)
+
+  # Step 2: Compute episode-level summaries
   boundaries <- episodes_raw %>%
     group_by(person_id, person_episode_number) %>%
     summarise(
       # Episode boundaries
       episode_min_date = as.Date(min(event_date)),
       episode_max_date = as.Date(max(event_date)),
-      
+
       # Gestational timing info
       earliest_ga_min = min(min_month, na.rm = TRUE),
       latest_ga_max = max(max_month, na.rm = TRUE),
-      
+
       # Concept counts
       n_GT_concepts = n_distinct(concept_id),
       n_records = n(),
-      
+
       .groups = "drop"
     ) %>%
     mutate(
-      # Clean up infinite values
       earliest_ga_min = ifelse(is.infinite(earliest_ga_min), NA_real_, earliest_ga_min),
-      latest_ga_max = ifelse(is.infinite(latest_ga_max), NA_real_, latest_ga_max),
-      
-      # Calculate expected pregnancy end date based on gestational timing
-      # Uses the last recorded concept's max month to estimate remaining pregnancy duration.
-      # For a concept at month X, remaining time is (10 - X) months to expected delivery
-      expected_end_date = case_when(
-        !is.na(latest_ga_max) ~ episode_max_date + (10 - latest_ga_max) * DAYS_PER_MONTH,
-        TRUE ~ episode_max_date + 60  # Default 2 months
-      )
+      latest_ga_max = ifelse(is.infinite(latest_ga_max), NA_real_, latest_ga_max)
     )
-  
+
+  # Step 3: Join lookahead date
+  boundaries <- boundaries %>%
+    left_join(latest_concept_per_episode, by = c("person_id", "person_episode_number")) %>%
+    mutate(
+      expected_end_date = case_when(
+        !is.na(max_pregnancy_date) ~ max_pregnancy_date,
+        TRUE ~ episode_max_date + 60  # Default 2 months fallback
+      )
+    ) %>%
+    select(-max_pregnancy_date)
+
   return(boundaries)
 }
 
@@ -456,9 +480,9 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
       outcome_date <= lookahead_date
     ) %>%
     group_by(person_id, person_episode_number) %>%
-    # Use Matcho hierarchy to select outcome
+    # Use Matcho hierarchy to select outcome (matches original: LB > SB > ECT > SA > AB > DELIV)
     arrange(
-      factor(outcome_category, levels = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")),
+      factor(outcome_category, levels = c("LB", "SB", "ECT", "SA", "AB", "DELIV", "PREG")),
       outcome_date
     ) %>%
     slice(1) %>%  # Take highest priority outcome

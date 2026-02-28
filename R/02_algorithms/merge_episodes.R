@@ -270,7 +270,13 @@ create_merged_episode_set <- function(hip_episodes, pps_episodes, overlaps) {
       algo1_id = paste(person_id, episode_number, "1", sep = "_"),
       pregnancy_start = episode_start_date,
       pregnancy_end = episode_end_date,
-      first_gest_date = episode_start_date,  # Use start as first gest date
+      # Original uses actual first gestational observation date; approximate
+      # with start date only when GA info exists, NA otherwise
+      first_gest_date = if("has_gestational_info" %in% names(.)) {
+        as.Date(ifelse(has_gestational_info, episode_start_date, NA))
+      } else {
+        as.Date(NA)
+      },
       category = outcome_category,
       hip_gest_days = if("gestational_age_days" %in% names(.)) gestational_age_days else NA_real_
 
@@ -470,8 +476,13 @@ format_resolved_episodes <- function(resolved, hip_episodes, pps_episodes) {
       HIP_end_date = pregnancy_end,
       PPS_end_date = algo2_outcome_date,
 
-      # Combined outcome (prefer HIP hierarchy)
-      outcome_category = coalesce(category, algo2_category),
+      # Outcome concordance check (matches original merged_episodes_with_metadata)
+      outcome_match = case_when(
+        category == algo2_category & category != "PREG" &
+          abs(as.numeric(difftime(pregnancy_end, algo2_outcome_date, units = "days"))) <= 14 ~ 1L,
+        category == "PREG" & algo2_category == "PREG" ~ 1L,
+        TRUE ~ 0L
+      ),
 
       # Gestational age
       gestational_age_days = case_when(
@@ -495,9 +506,46 @@ format_resolved_episodes <- function(resolved, hip_episodes, pps_episodes) {
         PPS_end_date
       )
     ) %>%
-    # Renumber episodes per person
+    # Complex outcome resolution (matching original merged_episodes_with_metadata)
     arrange(person_id, episode_start_date) %>%
     group_by(person_id) %>%
+    mutate(
+      next_HIP_outcome = lead(HIP_outcome_category),
+      outcome_category = case_when(
+        outcome_match == 1L ~ HIP_outcome_category,
+        outcome_match == 0L & is.na(PPS_outcome_category) ~ HIP_outcome_category,
+        outcome_match == 0L & is.na(HIP_outcome_category) ~ PPS_outcome_category,
+        # If PPS matches next HIP outcome and dates are 14+ days apart, use HIP
+        outcome_match == 0L & HIP_outcome_category != "PREG" & PPS_outcome_category != "PREG" &
+          !is.na(next_HIP_outcome) & PPS_outcome_category == next_HIP_outcome &
+          HIP_end_date <= PPS_end_date - 14 ~ HIP_outcome_category,
+        # If HIP date is 7+ days before PPS, use PPS
+        outcome_match == 0L & HIP_outcome_category != "PREG" & PPS_outcome_category != "PREG" &
+          HIP_end_date <= PPS_end_date - 7 ~ PPS_outcome_category,
+        # Default: use HIP
+        TRUE ~ HIP_outcome_category
+      ),
+      # Matching end date resolution from original
+      episode_end_date = case_when(
+        outcome_match == 1L ~ HIP_end_date,
+        outcome_match == 0L & is.na(PPS_outcome_category) ~ HIP_end_date,
+        outcome_match == 0L & is.na(HIP_outcome_category) ~ PPS_end_date,
+        outcome_match == 0L & HIP_outcome_category != "PREG" & PPS_outcome_category != "PREG" &
+          !is.na(next_HIP_outcome) & PPS_outcome_category == next_HIP_outcome &
+          HIP_end_date <= PPS_end_date - 14 ~ HIP_end_date,
+        outcome_match == 0L & HIP_outcome_category != "PREG" & PPS_outcome_category != "PREG" &
+          HIP_end_date <= PPS_end_date - 7 ~ PPS_end_date,
+        !is.na(HIP_end_date) ~ HIP_end_date,
+        !is.na(PPS_end_date) ~ PPS_end_date,
+        TRUE ~ episode_end_date
+      ),
+      # Outcome concordance score (0/1/2)
+      outcome_concordance = case_when(
+        outcome_match == 1L ~ 2L,  # Fully concordant
+        outcome_match == 0L & !is.na(HIP_outcome_category) & !is.na(PPS_outcome_category) ~ 1L,
+        TRUE ~ 0L  # Insufficient info
+      )
+    ) %>%
     mutate(episode_number = row_number()) %>%
     ungroup() %>%
     # Select output columns
@@ -511,6 +559,7 @@ format_resolved_episodes <- function(resolved, hip_episodes, pps_episodes) {
       HIP_end_date,
       PPS_end_date,
       outcome_category,
+      outcome_concordance,
       gestational_age_days,
       algorithm_used,
       algo1_id,

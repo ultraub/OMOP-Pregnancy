@@ -271,10 +271,11 @@ load_matcho_limits <- function(file_path = NULL) {
 #' @return Data frame with default term limits
 #' @noRd
 get_default_matcho_limits <- function() {
+  # Values from Matcho et al. - must match matcho_limits.csv and original AllOfUs algorithm
   data.frame(
     category = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
-    min_term = c(154, 140, 154, 30, 30, 30, 30),      # Days
-    max_term = c(301, 301, 301, 84, 140, 140, 301),   # Days
+    min_term = c(161, 140, 140, 42, 42, 28, 30),      # Days (from Matcho et al.)
+    max_term = c(301, 301, 301, 84, 168, 139, 301),   # Days (from Matcho et al.)
     hierarchy = c(1, 2, 6, 3, 4, 5, 7),
     stringsAsFactors = FALSE
   )
@@ -575,13 +576,12 @@ load_concept_sets <- function(
   if (file.exists(term_durations_path)) {
     matcho_term_durations <- readr::read_csv(term_durations_path, col_types = readr::cols())
   } else {
-    # Default term durations
+    # Default term durations (from Matcho et al.)
     matcho_term_durations <- data.frame(
-      outcome = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
+      category = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
       max_term = c(301, 301, 301, 84, 168, 139, 301),
-      min_term = c(161, 100, 140, 42, 42, 28, 30),
-      term_days = c(140, 201, 161, 42, 126, 111, 271),
-      retry = c(28, 28, 28, 14, 14, 14, 28),
+      min_term = c(161, 140, 140, 42, 42, 28, 30),
+      retry = c(28, 28, 28, 14, 14, 14, 14),
       stringsAsFactors = FALSE
     )
   }

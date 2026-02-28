@@ -238,27 +238,49 @@ process_outcome_category <- function(initial_cohort, categories, matcho_outcome_
     min_days <- 180  # Default fallback
   }
   
-  # Group by person and identify episodes based on spacing
-  episodes <- category_records %>%
+  # Deduplicate: one record per person-date, keeping lowest concept_id (matches original)
+  category_records <- category_records %>%
+    group_by(person_id, event_date) %>%
+    slice_min(order_by = concept_id, n = 1, with_ties = FALSE) %>%
+    ungroup()
+
+  # Identify episodes using original's approach:
+  # First record for each person = always an episode start
+  # Any subsequent record with days_since_last >= min_days = new episode start
+  # The episode date is the FIRST qualifying date (not max), matching original final_visits()
+  episodes_marked <- category_records %>%
     group_by(person_id) %>%
     arrange(event_date) %>%
     mutate(
-      days_since_last = as.numeric(event_date - lag(event_date)),
-      new_episode = is.na(days_since_last) | days_since_last >= min_days,
-      episode_number = cumsum(new_episode)
+      days_since_last = as.numeric(event_date - lag(event_date))
     ) %>%
-    group_by(person_id, episode_number) %>%
-    summarise(
-      outcome_date = max(as.Date(event_date)),
-      outcome_category = first(category),
-      n_visits = n(),
-      .groups = "drop"
-    ) %>%
+    ungroup()
+
+  # First records per person
+  first_records <- episodes_marked %>%
+    group_by(person_id) %>%
+    slice_min(order_by = event_date, n = 1, with_ties = FALSE) %>%
+    ungroup()
+
+  # Records that start new episodes (sufficient spacing from previous)
+  spaced_records <- episodes_marked %>%
+    filter(!is.na(days_since_last), days_since_last >= min_days)
+
+  # Combine: each row is an episode with outcome_date = the first qualifying date
+  episodes <- bind_rows(first_records, spaced_records) %>%
+    distinct(person_id, event_date, .keep_all = TRUE) %>%
+    arrange(person_id, event_date) %>%
+    group_by(person_id) %>%
+    mutate(episode_number = row_number()) %>%
     ungroup() %>%
-    mutate(
-      outcome_date = as.Date(outcome_date)
+    transmute(
+      person_id,
+      episode_number,
+      outcome_date = as.Date(event_date),
+      outcome_category = category,
+      n_visits = 1L  # Each episode is represented by its first qualifying record
     )
-  
+
   return(episodes)
 }
 
@@ -352,27 +374,21 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
   }
   
   # Get minimum days for ECT spacing
-  ect_after_lb <- matcho_outcome_limits %>%
+  # LB and SB have the same days for ECT following them (both 70 in original)
+  before_min <- matcho_outcome_limits %>%
     filter(first_preg_category == "LB", outcome_preg_category == "ECT") %>%
     pull(min_days)
-  
-  ect_after_sb <- matcho_outcome_limits %>%
-    filter(first_preg_category == "SB", outcome_preg_category == "ECT") %>%
-    pull(min_days)
-  
-  lb_after_ect <- matcho_outcome_limits %>%
+
+  # Keep separate after_min for LB vs SB (asymmetric: ECT->LB=168, ECT->SB=154)
+  after_min_lb <- matcho_outcome_limits %>%
     filter(first_preg_category == "ECT", outcome_preg_category == "LB") %>%
     pull(min_days)
-  
-  sb_after_ect <- matcho_outcome_limits %>%
+
+  after_min_sb <- matcho_outcome_limits %>%
     filter(first_preg_category == "ECT", outcome_preg_category == "SB") %>%
     pull(min_days)
-  
-  # Use minimum of the constraints
-  before_min <- min(ect_after_lb, ect_after_sb, na.rm = TRUE)
-  after_min <- min(lb_after_ect, sb_after_ect, na.rm = TRUE)
-  
-  # Apply spacing logic similar to stillbirths
+
+  # Apply spacing logic matching original add_ectopic()
   combined <- bind_rows(lb_sb_episodes, ect_episodes) %>%
     group_by(person_id) %>%
     arrange(outcome_date) %>%
@@ -382,28 +398,25 @@ add_ectopic_episodes <- function(lb_sb_episodes, ect_episodes, matcho_outcome_li
       days_after = as.numeric(as.Date(outcome_date) - as.Date(lag(outcome_date))),
       days_before = as.numeric(as.Date(lead(outcome_date)) - as.Date(outcome_date))
     )
-  
-  # Filter ECT episodes that meet spacing requirements
-  valid_ect <- combined %>%
-    filter(
-      outcome_category == "ECT",
-      (is.na(prev_category) & is.na(next_category)) |
-      (is.na(prev_category) | days_after >= before_min) |
-      (is.na(next_category) | days_before >= after_min) |
 
-      # the previous category was ectopic and there's no next category
-      # or some configuration
+  # Filter ECT episodes using exact same 9 conditions as original add_ectopic()
+  valid_ect <- combined %>%
+    filter(outcome_category == "ECT") %>%
+    filter(
+      # 1. It's the only episode
+      (is.na(days_after) & is.na(days_before)) |
+      # 2-4. Not preceded/followed by LB or SB
       (!prev_category %in% c("LB", "SB") & is.na(next_category)) |
       (!next_category %in% c("LB", "SB") & is.na(prev_category)) |
       (!prev_category %in% c("LB", "SB") & !next_category %in% c("LB", "SB")) |
-      # the last episode was a delivery and this one happens after the minimum
-      (prev_category %in% c("LB", "SB") & days_after >= ect_after_lb & is.na(next_category)) |
-      # there was no previous category and the next live birth happens after the minimum
-      (next_category == "LB" & days_before >= lb_after_ect & is.na(prev_category)) |
-      (next_category == "SB" & days_before >= sb_after_ect & is.na(prev_category)) |
-      # surrounded by each, appropriately spaced
-      (next_category == "LB" & days_before >= lb_after_ect & prev_category %in% c("LB", "SB") & days_after >= ect_after_lb) |
-      (next_category == "SB" & days_before >= sb_after_ect & prev_category %in% c("LB", "SB") & days_after >= ect_after_lb)
+      # 5. Preceded by LB/SB, sufficiently spaced, no next
+      (prev_category %in% c("LB", "SB") & days_after >= before_min & is.na(next_category)) |
+      # 6-7. No previous, followed by LB or SB (use asymmetric spacing)
+      (next_category == "LB" & days_before >= after_min_lb & is.na(prev_category)) |
+      (next_category == "SB" & days_before >= after_min_sb & is.na(prev_category)) |
+      # 8-9. Surrounded by LB/SB on both sides (use asymmetric spacing)
+      (next_category == "LB" & days_before >= after_min_lb & prev_category %in% c("LB", "SB") & days_after >= before_min) |
+      (next_category == "SB" & days_before >= after_min_sb & prev_category %in% c("LB", "SB") & days_after >= before_min)
     ) %>%
     ungroup()
   
@@ -556,12 +569,30 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
       days_before = as.numeric(as.Date(lead(outcome_date)) - as.Date(outcome_date))
     )
   
-  # Filter DELIV episodes that meet spacing requirements
-  valid_deliv <- combined %>%
-    filter(
-      outcome_category == "DELIV",
-      (is.na(prev_category) & is.na(next_category)) |
+  # CRITICAL: Move LB/SB dates backward to DELIV date when DELIV immediately precedes
 
+  # them within the spacing window (matches original add_delivery() lines 356-364)
+  # This handles the common case where delivery procedure is coded before birth outcome
+  date_modified_records <- combined %>%
+    mutate(
+      outcome_date = as.Date(ifelse(
+        !is.na(prev_category) &
+          prev_category == "DELIV" &
+          outcome_category %in% c("LB", "SB") &
+          days_after < sb_after_deliv,
+        as.Date(lag(outcome_date)),
+        as.Date(outcome_date)
+      ))
+    ) %>%
+    filter(outcome_category != "DELIV") %>%
+    ungroup()
+
+  # Filter DELIV episodes that meet spacing requirements
+  # Note: original uses temp_category normalizing SA to AB, so checks against c("ECT", "AB")
+  valid_deliv <- combined %>%
+    filter(outcome_category == "DELIV") %>%
+    filter(
+      (is.na(days_after) & is.na(days_before)) |
         (!prev_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(next_category)) |
         (!next_category %in% c("LB", "SB", "ECT", "AB", "SA") & is.na(prev_category)) |
         (!prev_category %in% c("LB", "SB", "ECT", "AB", "SA") & !next_category %in% c("LB", "SB", "ECT", "AB", "SA")) |
@@ -579,90 +610,209 @@ add_delivery_episodes <- function(prev_episodes, deliv_episodes, matcho_outcome_
         (next_category == "SB" & prev_category %in% c("ECT", "AB", "SA") & days_before >= sb_after_deliv & days_after >= deliv_after_ect)
     ) %>%
     ungroup()
-  
-  # Combine valid DELIV with previous episodes
+
+  # Combine date-modified non-DELIV records with validated DELIV records
+  # (matches original: union_all(add_abortion_df_rev, final_temp_df))
   result <- bind_rows(
-    prev_episodes,  # Use original previous episodes
+    date_modified_records,
     valid_deliv
   ) %>%
     select(-any_of(c("prev_category", "next_category", "days_after", "days_before"))) %>%
+    distinct() %>%
     arrange(person_id, outcome_date)
-  
+
   return(result)
 }
 
 #' Add gestational age information following All of Us methodology
-#' 
-#' Integrates gestational age data from multiple concept types:
-#' - Explicit gestational age concepts (3002209, 3048230, 3012266, 3050433)
-#' - Value_as_number fields containing gestational weeks
-#' - PREG category records with timing information
-#' 
-#' Gestational records are linked to episodes within biologically plausible
-#' windows (up to 280 days before outcome). Multiple gestational records per
-#' episode are consolidated using maximum gestational age approach.
-#' 
-#' CRITICAL: Also identifies gestation-only episodes (pregnancies identified
-#' only through gestational age records without specific outcomes).
+#'
+#' Matches original add_gestation() approach: groups GA records into episodes
+#' first (using gestation_episodes() logic), then matches gestation episodes
+#' to outcome episodes using temporal overlap instead of simple lookback.
+#'
+#' Three groups result (matching original):
+#' 1. Episodes with both outcome AND gestation data (overlapping)
+#' 2. Outcome-only episodes (no matching gestation data)
+#' 3. Gestation-only episodes (PREG category, no matching outcome)
 #' @noRd
 add_gestational_age_info <- function(episodes, all_records) {
-  
+
   # Get gestational age records
-  # Including concept 3050433 - Gestational age in weeks Calculated
   gest_records <- all_records %>%
     filter(
-      !is.na(gest_value) | 
+      !is.na(gest_value) |
       category == "GEST" |
-      concept_id %in% c(3002209, 3048230, 3012266, 3050433) |  # Specific gestational age concepts
+      concept_id %in% c(3002209, 3048230, 3012266, 3050433) |
       grepl("gestation", concept_name, ignore.case = TRUE)
     )
-  
+
   if (nrow(gest_records) == 0) {
     episodes$has_gestational_info <- FALSE
     episodes$gestational_weeks <- NA_real_
     return(episodes)
   }
-  
-  # Join gestational records to episodes within reasonable window
-  episodes_with_gest <- episodes %>%
-    left_join(
-      gest_records %>%
-        select(person_id, gest_date = event_date, gest_value, value_as_number),
+
+  # --- Step 1: Build gestation episodes (matching original gestation_episodes) ---
+  gest_only <- gest_records %>%
+    filter(
+      !is.na(gest_value) | !is.na(value_as_number),
+      coalesce(gest_value, value_as_number) > 0,
+      coalesce(gest_value, value_as_number) <= 44
+    ) %>%
+    mutate(gest_weeks = coalesce(gest_value, value_as_number)) %>%
+    # Keep max gest_value if two records share same date (original logic)
+    group_by(person_id, event_date) %>%
+    mutate(gest_week = max(gest_weeks)) %>%
+    ungroup() %>%
+    filter(gest_weeks == gest_week)
+
+  if (nrow(gest_only) == 0) {
+    episodes$has_gestational_info <- FALSE
+    episodes$gestational_weeks <- NA_real_
+    gestation_only_episodes <- identify_gestation_only_episodes(gest_records, episodes)
+    if (nrow(gestation_only_episodes) > 0) {
+      return(bind_rows(episodes, gestation_only_episodes))
+    }
+    return(episodes)
+  }
+
+  # Build episodes using corrected logic (same as identify_gestation_only_episodes)
+  gest_episodes <- gest_only %>%
+    group_by(person_id) %>%
+    arrange(event_date) %>%
+    mutate(
+      prev_weeks = lag(gest_week),
+      prev_date = lag(event_date),
+      days_diff = as.numeric(event_date - prev_date),
+      weeks_diff = gest_week - prev_weeks,
+      adj_weeks_diff = case_when(
+        is.na(prev_weeks) ~ NA_real_,
+        weeks_diff <= 0 & days_diff < 70 ~ 1,
+        TRUE ~ weeks_diff
+      ),
+      adj_weeks_diff2 = case_when(
+        is.na(adj_weeks_diff) ~ NA_real_,
+        adj_weeks_diff > 0 & days_diff >= (adj_weeks_diff * 7 + 28) ~ -1,
+        TRUE ~ adj_weeks_diff
+      ),
+      new_episode = is.na(prev_weeks) | adj_weeks_diff2 <= 0,
+      gest_episode = cumsum(new_episode)
+    ) %>%
+    ungroup()
+
+  # --- Step 2: Summarize gestation episodes (matching get_min_max_gestation) ---
+  gest_episode_summary <- gest_episodes %>%
+    group_by(person_id, gest_episode) %>%
+    summarise(
+      max_gest_week = max(gest_week),
+      min_gest_week = min(gest_week),
+      max_gest_date = min(event_date[gest_week == max(gest_week)]),  # First occurrence of max week
+      min_gest_date = min(event_date[gest_week == min(gest_week)]),  # First occurrence of min week
+      end_gest_date = max(event_date),  # Last visit date
+      n_gest_records = n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      # Estimated start dates from gestation data
+      max_gest_start_date = as.Date(max_gest_date - (max_gest_week * 7)),
+      min_gest_start_date = as.Date(min_gest_date - (min_gest_week * 7)),
+      # Ensure max_gest_start_date is always the earlier one (matching original)
+      temp_max = pmin(max_gest_start_date, min_gest_start_date),
+      min_gest_start_date = pmax(max_gest_start_date, min_gest_start_date),
+      max_gest_start_date = temp_max
+    ) %>%
+    select(-temp_max)
+
+  # --- Step 3: Match gestation episodes to outcome episodes using overlap ---
+  # Estimate outcome episode windows for overlap matching
+  # (outcome_date - 301 is the earliest possible start for any category)
+  episodes_for_match <- episodes %>%
+    mutate(
+      est_start = as.Date(outcome_date - 301)  # Conservative earliest start
+    )
+
+  # Find overlapping gestation and outcome episodes
+  # Original uses: overlaps(max_start_date, visit_date, max_gest_start_date, max_gest_date)
+  both_matched <- episodes_for_match %>%
+    inner_join(
+      gest_episode_summary,
       by = "person_id",
       relationship = "many-to-many"
     ) %>%
     filter(
-      # Gestational records within pregnancy window
-      gest_date >= outcome_date - 280,
-      gest_date <= outcome_date
+      # Temporal overlap: gestation episode overlaps with outcome episode window
+      max_gest_start_date <= outcome_date,
+      max_gest_date >= est_start
     ) %>%
-    group_by(person_id, episode_number) %>%
-    summarise(
-      gestational_weeks = max(coalesce(gest_value, value_as_number), na.rm = TRUE),
-      n_gest_records = n(),
-      .groups = "drop"
-    )
-  
-  # Merge back with episodes
-  result <- episodes %>%
-    left_join(
-      episodes_with_gest %>%
-        select(person_id, episode_number, gestational_weeks, n_gest_records),
-      by = c("person_id", "episode_number")
-    ) %>%
+    # Calculate days_diff (matching original: visit_date - max_gest_date)
     mutate(
-      has_gestational_info = !is.na(gestational_weeks),
-      gestational_weeks = ifelse(is.infinite(gestational_weeks), NA_real_, gestational_weeks)
+      days_diff = as.numeric(outcome_date - max_gest_date)
+    ) %>%
+    # When multiple overlaps: keep best match per outcome (closest days_diff)
+    group_by(person_id, episode_number) %>%
+    slice_min(order_by = abs(days_diff), n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    # When multiple overlaps: keep best match per gestation episode too
+    group_by(person_id, gest_episode) %>%
+    slice_min(order_by = abs(days_diff), n = 1, with_ties = FALSE) %>%
+    ungroup()
+
+  # --- Step 4: Separate into three groups ---
+  # Outcome episodes that matched gestation data
+  matched_episode_keys <- both_matched %>%
+    select(person_id, episode_number) %>%
+    distinct()
+
+  matched_gest_keys <- both_matched %>%
+    select(person_id, gest_episode) %>%
+    distinct()
+
+  # Outcome-only episodes (no gestation match)
+  outcome_only <- episodes %>%
+    anti_join(matched_episode_keys, by = c("person_id", "episode_number")) %>%
+    mutate(
+      has_gestational_info = FALSE,
+      gestational_weeks = NA_real_,
+      n_gest_records = NA_integer_
     )
-  
-  # NEW: Identify gestation-only episodes (pregnancies with only gestational timing, no outcomes)
-  gestation_only_episodes <- identify_gestation_only_episodes(gest_records, result)
-  
-  # Combine outcome-based episodes with gestation-only episodes
-  if (nrow(gestation_only_episodes) > 0) {
-    result <- bind_rows(result, gestation_only_episodes)
-  }
-  
+
+  # Episodes with both outcome and gestation
+  outcome_with_gest <- both_matched %>%
+    mutate(
+      has_gestational_info = TRUE,
+      gestational_weeks = max_gest_week
+    ) %>%
+    select(
+      person_id, episode_number, outcome_date, outcome_category,
+      has_gestational_info, gestational_weeks, n_gest_records
+    )
+
+  # Gestation-only episodes (no matching outcome)
+  gest_only_episodes <- gest_episode_summary %>%
+    anti_join(matched_gest_keys, by = c("person_id", "gest_episode")) %>%
+    mutate(
+      outcome_date = as.Date(max_gest_date),  # Last actual data point
+      outcome_category = "PREG",
+      has_gestational_info = TRUE,
+      gestational_weeks = max_gest_week,
+      episode_number = NA_integer_
+    ) %>%
+    select(
+      person_id, episode_number, outcome_date, outcome_category,
+      has_gestational_info, gestational_weeks, n_gest_records
+    )
+
+  # --- Step 5: Combine all three groups ---
+  result <- bind_rows(
+    outcome_with_gest,
+    outcome_only,
+    gest_only_episodes
+  ) %>%
+    mutate(
+      gestational_weeks = ifelse(is.infinite(gestational_weeks), NA_real_, gestational_weeks)
+    ) %>%
+    arrange(person_id, outcome_date)
+
   return(result)
 }
 
@@ -717,9 +867,11 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
       episode_end_date,
       outcome_category,
       gestational_age_days,
-      has_gestational_info
+      has_gestational_info,
+      min_term,
+      max_term
     )
-  
+
   return(result)
 }
 
@@ -765,7 +917,10 @@ identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
   }
   
   # Group gestational records into potential episodes
-  # A new episode starts when gestational age decreases or there's a large time gap
+  # Matches original gestation_episodes() logic with 70-day minimum gap check:
+  # - GA decrease + date gap >= 70 days → new episode
+  # - GA decrease + date gap < 70 days → recording error, NOT new episode
+  # - GA increase but date gap > expected progression + 28-day buffer → new episode
   potential_episodes <- gest_only %>%
     group_by(person_id) %>%
     arrange(gest_date) %>%
@@ -774,14 +929,24 @@ identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
       prev_date = lag(gest_date),
       days_diff = as.numeric(gest_date - prev_date),
       weeks_diff = gest_weeks - prev_weeks,
-      
-      # New episode if: gestational age decreases OR large time gap (>70 days)
-      new_episode = is.na(prev_weeks) | 
-                    weeks_diff <= 0 | 
-                    days_diff > 70 |
-                    # Or if time progression doesn't match gestational progression
-                    (weeks_diff > 0 & days_diff > (weeks_diff * 7 + 28)),
-      
+
+      # Original logic: if GA decreases but gap < 70 days, treat as recording error
+      # (set to positive so it doesn't trigger new episode)
+      adj_weeks_diff = case_when(
+        is.na(prev_weeks) ~ NA_real_,
+        weeks_diff <= 0 & days_diff < 70 ~ 1,  # Not a new episode (recording error)
+        TRUE ~ weeks_diff
+      ),
+      # If GA increases but gap exceeds expected progression + buffer, new episode
+      adj_weeks_diff2 = case_when(
+        is.na(adj_weeks_diff) ~ NA_real_,
+        adj_weeks_diff > 0 & days_diff >= (adj_weeks_diff * 7 + 28) ~ -1,  # New episode
+        TRUE ~ adj_weeks_diff
+      ),
+
+      # New episode if first record or adjusted diff indicates new pregnancy
+      new_episode = is.na(prev_weeks) | adj_weeks_diff2 <= 0,
+
       episode_num = cumsum(new_episode)
     ) %>%
     group_by(person_id, episode_num) %>%
@@ -796,8 +961,9 @@ identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
   # Let calculate_hip_start_dates handle date calculations to avoid redundancy
   gest_episodes <- potential_episodes %>%
     mutate(
-      # End date: last gestation date plus remaining pregnancy time
-      outcome_date = as.Date(last_gest_date + ((40 - max_gest_weeks) * 7)),
+      # End date: last actual gestation date (matching original visit_date = max_gest_date)
+      # Original does NOT extrapolate to 40 weeks — uses last observed data point
+      outcome_date = as.Date(last_gest_date),
       # Category is PREG for gestation-only
       outcome_category = "PREG",
       has_gestational_info = TRUE,
@@ -835,59 +1001,134 @@ identify_gestation_only_episodes <- function(gest_records, existing_episodes) {
 }
 
 #' Validate and clean pregnancy episodes following All of Us quality standards
-#' 
-#' QUALITY FILTERS:
-#' 1. Gestational age plausibility (0-320 days, ~45 weeks maximum)
-#' 2. Temporal validity (no future start dates, end >= start)  
-#' 3. Overlap resolution (adjust start dates to prevent episode overlap)
-#' 
+#'
+#' Matches original clean_episodes() logic: episodes failing category-specific
+#' term duration validation are RECLASSIFIED to "PREG" (not deleted), preserving
+#' pregnancy evidence. Uses Matcho et al. term durations per outcome category.
+#'
+#' VALIDATION RULES (from original clean_episodes):
+#' 1. Over max term: gestational_age_days > category max_term → reclassify to PREG
+#' 2. Under min term: gestational_age_days < category min_term → reclassify to PREG
+#' 3. Basic temporal validity (no future dates, end >= start)
+#'
 #' OVERLAP HANDLING:
 #' When episodes overlap after initial processing, start dates are adjusted
 #' forward to prevent overlap while maintaining episode validity. Episodes
 #' that become invalid after adjustment (duration <= 0) are removed.
-#' 
-#' This final validation ensures all returned episodes meet clinical plausibility
-#' standards and maintain temporal consistency for downstream analysis.
 #' @noRd
 validate_hip_episodes <- function(episodes) {
-  
+
+  # --- Basic temporal validity (remove truly invalid records) ---
   validated <- episodes %>%
     filter(
-      # Remove implausible gestational ages
-      gestational_age_days >= 0,
-      gestational_age_days <= 320,  # ~45 weeks
-      
-      # Remove episodes that start in the future
       episode_start_date <= Sys.Date(),
-      
-      # Remove episodes with end before start
       episode_end_date >= episode_start_date
-    ) %>%
-    group_by(person_id) %>%
-    arrange(episode_start_date) %>%
+    )
+
+  # --- Category-specific term validation: reclassify to PREG, don't delete ---
+  # Matches original clean_episodes() which reclassifies episodes outside
+  # [min_term, max_term] range to "PREG" category
+  validated <- validated %>%
     mutate(
-      # Check for overlapping episodes after validation
+      removed_category = NA_character_,
+      removed_outcome = 0L,
+
+      # Over max term for category → reclassify to PREG
+      removed_category = case_when(
+        !is.na(max_term) & gestational_age_days > max_term ~ outcome_category,
+        TRUE ~ removed_category
+      ),
+      removed_outcome = case_when(
+        !is.na(max_term) & gestational_age_days > max_term ~ 1L,
+        TRUE ~ removed_outcome
+      ),
+      outcome_category = case_when(
+        !is.na(max_term) & gestational_age_days > max_term ~ "PREG",
+        TRUE ~ outcome_category
+      ),
+
+      # Under min term for category → reclassify to PREG
+      removed_category = case_when(
+        !is.na(min_term) & gestational_age_days < min_term &
+          outcome_category != "PREG" ~ outcome_category,
+        TRUE ~ removed_category
+      ),
+      removed_outcome = case_when(
+        !is.na(min_term) & gestational_age_days < min_term &
+          outcome_category != "PREG" ~ 1L,
+        TRUE ~ removed_outcome
+      ),
+      outcome_category = case_when(
+        !is.na(min_term) & gestational_age_days < min_term &
+          outcome_category != "PREG" ~ "PREG",
+        TRUE ~ outcome_category
+      )
+    )
+
+  # --- Overlap resolution (matches original remove_overlaps) ---
+
+  # Step 1: Remove overlapping PREG episodes (lower confidence)
+  # When a PREG episode overlaps with a subsequent outcome episode, remove the PREG
+  validated <- validated %>%
+    group_by(person_id) %>%
+    arrange(episode_end_date) %>%
+    mutate(
       prev_end_date = lag(episode_end_date),
+      prev_category = lag(outcome_category),
+      has_overlap = !is.na(prev_end_date) & episode_start_date <= prev_end_date
+    ) %>%
+    ungroup()
+
+  # Identify PREG episodes to remove (previous episode is PREG and overlaps)
+  preg_to_remove <- validated %>%
+    filter(has_overlap & prev_category == "PREG") %>%
+    mutate(remove_key = paste(person_id, prev_end_date, sep = "_"))
+
+  if (nrow(preg_to_remove) > 0) {
+    # Get the PREG episodes that overlap with subsequent outcome episodes
+    validated <- validated %>%
+      mutate(
+        my_key = paste(person_id, episode_end_date, sep = "_"),
+        is_removable_preg = my_key %in% preg_to_remove$remove_key & outcome_category == "PREG"
+      ) %>%
+      filter(!is_removable_preg) %>%
+      select(-my_key, -is_removable_preg)
+  }
+
+  # Step 2: Use category-specific retry periods for remaining overlaps
+  # Retry periods: LB/SB/DELIV = 28 days, ECT/AB/SA/PREG = 14 days
+  validated <- validated %>%
+    group_by(person_id) %>%
+    arrange(episode_end_date) %>%
+    mutate(
+      prev_end_date = lag(episode_end_date),
+      prev_category = lag(outcome_category),
       overlap_days = as.numeric(pmax(0, prev_end_date - episode_start_date + 1)),
-      
-      # Adjust start date if overlapping
+      # Category-specific retry period (matching Matcho et al.)
+      prev_retry = case_when(
+        prev_category %in% c("LB", "SB", "DELIV") ~ 28L,
+        prev_category %in% c("ECT", "AB", "SA", "PREG") ~ 14L,
+        TRUE ~ 14L
+      ),
+      # Use retry period instead of simple prev_end + 1
       adjusted_start = case_when(
+        !is.na(overlap_days) & overlap_days > 0 & !is.na(prev_retry) ~
+          as.Date(prev_end_date + prev_retry),
         !is.na(overlap_days) & overlap_days > 0 ~ as.Date(prev_end_date + 1),
         TRUE ~ as.Date(episode_start_date)
       ),
-      
-      # Recalculate gestational age
       gestational_age_days = as.numeric(episode_end_date - adjusted_start)
     ) %>%
     filter(
-      # Remove episodes that become invalid after adjustment
       gestational_age_days > 0
     ) %>%
     ungroup() %>%
     mutate(
       episode_start_date = adjusted_start
     ) %>%
-    select(-prev_end_date, -overlap_days, -adjusted_start, -has_gestational_info)
-  
+    select(-prev_end_date, -prev_category, -overlap_days, -adjusted_start,
+           -prev_retry, -has_overlap,
+           -has_gestational_info, -min_term, -max_term)
+
   return(validated)
 }

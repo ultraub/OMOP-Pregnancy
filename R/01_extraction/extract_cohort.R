@@ -426,7 +426,7 @@ extract_gestational_timing_with_temp_table <- function(
       UNION ALL
       
       -- Observations
-      SELECT 
+      SELECT
         o.person_id,
         o.observation_concept_id AS concept_id,
         o.observation_date AS event_date,
@@ -438,6 +438,38 @@ extract_gestational_timing_with_temp_table <- function(
       FROM @cdm_schema.observation o
       INNER JOIN @person_temp_table p ON o.person_id = p.person_id
       INNER JOIN @pps_temp_table pc ON o.observation_concept_id = pc.concept_id
+
+      UNION ALL
+
+      -- Measurements (missing from original extraction)
+      SELECT
+        m.person_id,
+        m.measurement_concept_id AS concept_id,
+        m.measurement_date AS event_date,
+        'Measurement' AS domain_name,
+        m.value_as_number,
+        NULL AS value_as_string,
+        pc.min_month,
+        pc.max_month
+      FROM @cdm_schema.measurement m
+      INNER JOIN @person_temp_table p ON m.person_id = p.person_id
+      INNER JOIN @pps_temp_table pc ON m.measurement_concept_id = pc.concept_id
+
+      UNION ALL
+
+      -- Visit occurrence (matches original 5-table extraction)
+      SELECT
+        vo.person_id,
+        vo.visit_concept_id AS concept_id,
+        vo.visit_start_date AS event_date,
+        'Visit' AS domain_name,
+        NULL AS value_as_number,
+        NULL AS value_as_string,
+        pc.min_month,
+        pc.max_month
+      FROM @cdm_schema.visit_occurrence vo
+      INNER JOIN @person_temp_table p ON vo.person_id = p.person_id
+      INNER JOIN @pps_temp_table pc ON vo.visit_concept_id = pc.concept_id
     ) all_gestational
     ",
     cdm_schema = cdm_schema,
