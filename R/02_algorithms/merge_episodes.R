@@ -9,7 +9,7 @@
 #'
 #' @return Data frame of merged pregnancy episodes
 #' @export
-merge_pregnancy_episodes <- function(hip_episodes, pps_episodes, cohort_data = NULL) {
+merge_pregnancy_episodes <- function(hip_episodes, pps_episodes, cohort_data = NULL, matcho_limits = NULL) {
   
   # Handle empty inputs
   if (is.null(hip_episodes) || nrow(hip_episodes) == 0) {
@@ -46,8 +46,8 @@ merge_pregnancy_episodes <- function(hip_episodes, pps_episodes, cohort_data = N
     resolved_episodes <- add_window_outcomes(resolved_episodes, cohort_data)
   }
   
-  # Step 5: Finalize and renumber episodes
-  final_episodes <- finalize_merged_episodes(resolved_episodes)
+  # Step 5: Finalize and renumber episodes (uses category-specific max_term validation)
+  final_episodes <- finalize_merged_episodes(resolved_episodes, matcho_limits)
   
   # Step 6: Prepare final output structure matching All of Us
   final_episodes <- prepare_final_episodes(final_episodes)
@@ -688,8 +688,16 @@ add_window_outcomes <- function(episodes, cohort_data) {
 
 #' Finalize merged episodes
 #' @noRd
-finalize_merged_episodes <- function(episodes) {
-  
+finalize_merged_episodes <- function(episodes, matcho_limits = NULL) {
+
+  # Load matcho_limits if not provided (for category-specific max_term validation)
+  if (is.null(matcho_limits)) {
+    matcho_limits <- tryCatch(
+      load_matcho_limits(),
+      error = function(e) NULL
+    )
+  }
+
   # Clean up and renumber episodes
   final <- episodes %>%
     select(-any_of(c("lookback_date", "lookahead_date", "expected_end",
@@ -701,7 +709,30 @@ finalize_merged_episodes <- function(episodes) {
       episode_number = row_number()
     ) %>%
     ungroup()
-  
+
+  # Join with category-specific max_term for validation (replaces blanket 320-day filter)
+  # Original uses term_duration_flag with category-specific limits (ESD lines 568-571)
+  # PREG episodes validated against 301 days (max LB term)
+  if (!is.null(matcho_limits)) {
+    final <- final %>%
+      left_join(
+        matcho_limits %>% select(category, max_term),
+        by = c("outcome_category" = "category")
+      ) %>%
+      mutate(
+        # PREG gets 301 (LB max_term), others get their category max_term, fallback 320
+        episode_max_term = case_when(
+          outcome_category == "PREG" ~ 301L,
+          !is.na(max_term) ~ as.integer(max_term),
+          TRUE ~ 320L
+        )
+      ) %>%
+      select(-max_term)
+  } else {
+    final <- final %>%
+      mutate(episode_max_term = 320L)
+  }
+
   # Final validation to remove any remaining overlaps
   validated <- final %>%
     group_by(person_id) %>%
@@ -710,20 +741,20 @@ finalize_merged_episodes <- function(episodes) {
       # Check for overlaps with previous episode
       prev_end = lag(episode_end_date),
       overlap_with_prev = !is.na(prev_end) & episode_start_date <= prev_end,
-      
+
       # Adjust start date if overlapping
       adjusted_start = case_when(
         overlap_with_prev ~ as.Date(prev_end + 1),
         TRUE ~ as.Date(episode_start_date)
       ),
-      
+
       # Recalculate gestational age
       adjusted_gest_days = as.numeric(as.Date(episode_end_date) - as.Date(adjusted_start))
     ) %>%
     filter(
-      # Keep only valid episodes
+      # Keep only valid episodes (category-specific max_term instead of blanket 320)
       adjusted_gest_days > 0,
-      adjusted_gest_days <= 320
+      adjusted_gest_days <= episode_max_term
     ) %>%
     mutate(
       episode_start_date = adjusted_start,
@@ -741,7 +772,8 @@ finalize_merged_episodes <- function(episodes) {
         as.Date(NA)
       }
     ) %>%
-    select(-prev_end, -overlap_with_prev, -adjusted_start, -adjusted_gest_days) %>%
+    select(-prev_end, -overlap_with_prev, -adjusted_start, -adjusted_gest_days,
+           -episode_max_term) %>%
     ungroup()
   
   return(validated)
@@ -847,4 +879,107 @@ prepare_final_episodes <- function(episodes) {
       gestational_age_days,
       algorithm_used
     )
+}
+
+#' Add episode quality metadata (All of Us aligned)
+#'
+#' Port of original merged_episodes_with_metadata() quality assessment.
+#' Should be called AFTER ESD processing has added timing information.
+#'
+#' Adds:
+#' - term_duration_flag: 1 if GA within category [min_term, max_term], 0 otherwise
+#' - preterm_status_from_calculation: 1 if GA < 259 days (~37 weeks), 0 otherwise
+#' - outcome_concordance_score: 3-factor (outcome_match + term_duration_flag + GW_flag)
+#'   2 = highly concordant, 1 = somewhat concordant, 0 = not accurate/insufficient info
+#'
+#' @param episodes Data frame of episodes (post-ESD with GW_flag, GR3m_flag)
+#' @param matcho_limits Data frame with min_term and max_term per category
+#' @return Episodes with quality metadata columns added
+#' @export
+add_episode_quality_metadata <- function(episodes, matcho_limits = NULL) {
+
+  # Load matcho_limits if not provided
+  if (is.null(matcho_limits)) {
+    matcho_limits <- tryCatch(
+      load_matcho_limits(),
+      error = function(e) NULL
+    )
+  }
+
+  result <- episodes
+
+  # Ensure GW_flag and GR3m_flag exist (default to 0 if missing)
+  if (!"GW_flag" %in% names(result)) {
+    result$GW_flag <- 0L
+  }
+  if (!"GR3m_flag" %in% names(result)) {
+    result$GR3m_flag <- 0L
+  }
+
+  # Ensure outcome_match exists (may have been computed during merge as outcome_concordance)
+  if (!"outcome_match" %in% names(result)) {
+    # Compute outcome_match if not present (matching original ESD lines 494-501)
+    if (all(c("HIP_outcome_category", "PPS_outcome_category",
+              "HIP_end_date", "PPS_end_date") %in% names(result))) {
+      result <- result %>%
+        mutate(
+          outcome_match = case_when(
+            HIP_outcome_category == PPS_outcome_category &
+              HIP_outcome_category != "PREG" &
+              abs(as.numeric(difftime(HIP_end_date, PPS_end_date, units = "days"))) <= 14 ~ 1L,
+            HIP_outcome_category == "PREG" & PPS_outcome_category == "PREG" ~ 1L,
+            TRUE ~ 0L
+          )
+        )
+    } else {
+      result$outcome_match <- 0L
+    }
+  }
+
+  # Calculate gestational age from final dates (matching original line 564)
+  result <- result %>%
+    mutate(
+      gestational_age_days_calculated = as.integer(
+        difftime(episode_end_date, episode_start_date, units = "days")
+      )
+    )
+
+  # Join with matcho_limits for term validation
+  if (!is.null(matcho_limits)) {
+    result <- result %>%
+      left_join(
+        matcho_limits %>% select(category, min_term, max_term),
+        by = c("outcome_category" = "category")
+      ) %>%
+      mutate(
+        # term_duration_flag: 1 if within expected range (original lines 568-572)
+        term_duration_flag = case_when(
+          gestational_age_days_calculated >= min_term &
+            gestational_age_days_calculated <= max_term ~ 1L,
+          outcome_category == "PREG" &
+            gestational_age_days_calculated <= 301L ~ 1L,
+          TRUE ~ 0L
+        )
+      ) %>%
+      select(-min_term, -max_term)
+  } else {
+    result <- result %>%
+      mutate(term_duration_flag = NA_integer_)
+  }
+
+  # 3-factor outcome concordance score (original lines 577-581)
+  result <- result %>%
+    mutate(
+      outcome_concordance_score = case_when(
+        outcome_match == 1L & term_duration_flag == 1L & GW_flag == 1L ~ 2L,
+        outcome_match == 0L & term_duration_flag == 1L & GW_flag == 1L ~ 1L,
+        TRUE ~ 0L
+      ),
+      # Preterm status (original line 585): < 259 days = ~37 weeks
+      preterm_status_from_calculation = if_else(
+        gestational_age_days_calculated < 259L, 1L, 0L
+      )
+    )
+
+  return(result)
 }

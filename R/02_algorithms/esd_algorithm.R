@@ -103,6 +103,15 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
   current_group <- 0
   progress_interval <- max(1, n_groups_with_timing %/% 10)  # Show progress ~10 times
   
+  # Pre-compute GW_flag and GR3m_flag per episode (matching original lines 439-441)
+  episode_gt_flags <- timing_concepts %>%
+    group_by(person_id, episode_number) %>%
+    summarise(
+      GW_flag = as.integer(any(GT_type == "GW", na.rm = TRUE)),
+      GR3m_flag = as.integer(any(GT_type == "GR3m", na.rm = TRUE)),
+      .groups = "drop"
+    )
+
   episodes_with_timing <- episodes_for_join %>%
     inner_join(
       timing_concepts,
@@ -119,19 +128,21 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
     group_modify(function(x, keys) {
       # Update progress
       current_group <<- current_group + 1
-      
+
       # Show progress at intervals
       # All of Us shows progress per-episode, we show at intervals
       if (current_group %% progress_interval == 0 || current_group == n_groups_with_timing) {
         pct_complete <- round((current_group / n_groups_with_timing) * 100)
         message(sprintf("    %d%% complete", pct_complete))
       }
-      
+
       # Call the original function
       calculate_episode_esd(x)
     }, .keep = TRUE) %>%
-    ungroup()
-  
+    ungroup() %>%
+    # Attach GW_flag and GR3m_flag
+    left_join(episode_gt_flags, by = c("person_id", "episode_number"))
+
   # Then, handle episodes without timing concepts
   episodes_without_timing <- episodes %>%
     anti_join(
@@ -143,14 +154,21 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
       episode_start_date = as.Date(episode_start_date),
       episode_end_date = as.Date(episode_end_date),
       precision_category = "non-specific",
-      precision_days = 999
+      precision_days = 999,
+      GW_flag = 0L,
+      GR3m_flag = 0L
     )
-  
+
   # Combine results
   episodes_with_esd <- bind_rows(
     episodes_with_timing,
     episodes_without_timing
   ) %>%
+    # Ensure flags default to 0 (matching original lines 488-491)
+    mutate(
+      GW_flag = coalesce(GW_flag, 0L),
+      GR3m_flag = coalesce(GR3m_flag, 0L)
+    ) %>%
     arrange(person_id, episode_number)
   
   return(episodes_with_esd)
@@ -313,16 +331,18 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
   episode_timing <- episode_timing %>%
     mutate(
       # Determine timing type (GW vs GR3m)
+      # Primary classification matches original: "gestation period" name OR specific concept IDs
+      # OMOP extension: also accepts "gestational age" and gest_value as secondary signals
       GT_type = case_when(
-        # GW concepts: specific gestational week concepts
-        # All of Us uses str_detect on "gestation period," - we check column exists first
-        col_cache$has_concept_name & !is.na(concept_name) & 
-          grepl("gestation period,", concept_name, ignore.case = TRUE) ~ "GW",
-        col_cache$has_concept_name & !is.na(concept_name) & 
-          grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
-        # Specific concept IDs known to be gestational week concepts (module-level constant)
+        # Primary: exact match with original str_detect("gestation period")
+        col_cache$has_concept_name & !is.na(concept_name) &
+          grepl("gestation period", concept_name, ignore.case = TRUE) ~ "GW",
+        # Primary: specific concept IDs (matching original exactly)
         concept_id %in% ESD_GW_CONCEPTS ~ "GW",
-        # If we have a gest_value, it's a GW concept
+        # OMOP extension: "gestational age" concepts (not in original but valid in OMOP CDMs)
+        col_cache$has_concept_name & !is.na(concept_name) &
+          grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
+        # OMOP extension: records with gest_value populated (extraction-derived)
         col_cache$has_gest_value & !is.na(gest_value) ~ "GW",
         # GR3m concepts: range-based concepts from PPS with min/max months
         !is.na(min_month) & !is.na(max_month) ~ "GR3m",
@@ -357,6 +377,18 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
       mutate(gestational_weeks = NA_real_)
   }
   
+  # Validation: remove GW classification if no value could be extracted
+  # Matches original lines 386-392: GT_type set to NA if domain_value is NA
+  # or extrapolated_preg_start is NA. This prevents concepts from being
+  # classified as GW when no usable gestational week value exists.
+  episode_timing <- episode_timing %>%
+    mutate(
+      GT_type = case_when(
+        GT_type == "GW" & is.na(gestational_weeks) ~ NA_character_,
+        TRUE ~ GT_type
+      )
+    )
+
   # Calculate implied dates
   episode_timing <- episode_timing %>%
     mutate(
