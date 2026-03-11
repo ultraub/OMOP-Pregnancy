@@ -62,24 +62,24 @@ NULL
 #'   user = "token",
 #'   password = Sys.getenv("DATABRICKS_TOKEN"),
 #'   cdm_schema = "omop.data",
-#'   extraSettings = "HTTPPath=/sql/1.0/warehouses/warehouse_id"
+#'   extraSettings = "httpPath=/sql/1.0/warehouses/warehouse_id"
 #' )
 #' }
 create_omop_connection <- function(
-  dbms = NULL,
-  server = NULL,
-  database = NULL,
-  port = NULL,
-  user = NULL,
-  password = NULL,
-  use_windows_auth = FALSE,
-  connectionString = NULL,
-  pathToDriver = "jdbc_drivers",
-  cdm_schema = NULL,
-  vocabulary_schema = NULL,
-  results_schema = NULL,
-  extraSettings = NULL,
-  use_env = TRUE
+    dbms = NULL,
+    server = NULL,
+    database = NULL,
+    port = NULL,
+    user = NULL,
+    password = NULL,
+    use_windows_auth = FALSE,
+    connectionString = NULL,
+    pathToDriver = NULL,
+    cdm_schema = NULL,
+    vocabulary_schema = NULL,
+    results_schema = NULL,
+    extraSettings = NULL,
+    use_env = TRUE
 ) {
   
   # If use_env is TRUE, load from environment variables (SQL_ prefix for compatibility)
@@ -138,6 +138,12 @@ create_omop_connection <- function(
     if (is.null(results_schema)) {
       results_schema <- Sys.getenv("SQL_RESULTS_SCHEMA")
       if (results_schema == "") results_schema <- Sys.getenv("RESULTS_SCHEMA")
+    }
+    
+    # Get extra settings for Databricks
+    if (is.null(extraSettings)) {
+      extraSettings <- Sys.getenv("DB_EXTRA_SETTINGS")
+      if (extraSettings == "") extraSettings <- NULL
     }
     
     # Check for Windows auth flag in environment
@@ -260,14 +266,14 @@ create_omop_connection <- function(
 #' Create SQL Server connection with Windows AD support
 #' @noRd
 create_sqlserver_connection <- function(
-  server,
-  database,
-  port,
-  user,
-  password,
-  use_windows_auth,
-  connectionString,
-  pathToDriver
+    server,
+    database,
+    port,
+    user,
+    password,
+    use_windows_auth,
+    connectionString,
+    pathToDriver
 ) {
   
   if (!is.null(connectionString)) {
@@ -327,15 +333,28 @@ create_sqlserver_connection <- function(
 #' Create Databricks/Spark connection with Arrow optimization
 #' @noRd
 create_databricks_connection <- function(
-  server,
-  database,
-  port,
-  user,
-  password,
-  connectionString,
-  pathToDriver,
-  extraSettings
+    server,
+    database,
+    port,
+    user,
+    password,
+    connectionString,
+    pathToDriver,
+    extraSettings
 ) {
+  
+  # Ensure rJava is initialized for Databricks
+  # This is important for proper Arrow memory management
+  if (!exists(".jinit")) {
+    if (require("rJava", quietly = TRUE)) {
+      tryCatch({
+        .jinit()
+        message("  Initialized rJava for Databricks connection")
+      }, error = function(e) {
+        # rJava already initialized, continue
+      })
+    }
+  }
   
   if (!is.null(connectionString)) {
     # Use provided connection string
@@ -361,22 +380,47 @@ create_databricks_connection <- function(
     if (user == "token") {
       # Token authentication
       jdbc_url <- paste0(jdbc_url, 
-                        "AuthMech=3;",
-                        "UID=token;",
-                        "PWD=", password, ";")
+                         "AuthMech=3;",
+                         "UID=token;",
+                         "PWD=", password, ";")
     } else {
       # Username/password authentication
       jdbc_url <- paste0(jdbc_url,
-                        "AuthMech=3;",
-                        "UID=", user, ";",
-                        "PWD=", password, ";")
+                         "AuthMech=3;",
+                         "UID=", user, ";",
+                         "PWD=", password, ";")
     }
   }
   
   # Add performance optimizations
-  jdbc_url <- paste0(jdbc_url,
-                    "UseNativeQuery=0;",     # Disable native query optimization
-                    "EnableArrow=1;")         # Enable Arrow for performance
+  jdbc_url <- paste0(jdbc_url, "UseNativeQuery=0;")  # Disable native query optimization
+  
+  # Batch optimization note:
+  # The Databricks JDBC driver does not support batch-related parameters in the connection string.
+  # Performance optimization is achieved through:
+  # 1. DatabaseConnector's bulk upload functionality (DATABASE_CONNECTOR_BULK_UPLOAD=TRUE)
+  # 2. Application-level batch processing (DATABASE_CONNECTOR_BATCH_SIZE environment variable)
+  # 3. Arrow optimization when properly configured
+  # The batch_size variable is still used by our code for splitting large datasets
+  
+  # Only enable Arrow if explicitly requested (to avoid memory initialization errors)
+  enable_arrow <- Sys.getenv("ENABLE_ARROW", "FALSE")
+  if (toupper(enable_arrow) %in% c("TRUE", "1", "YES")) {
+    jdbc_url <- paste0(jdbc_url, "EnableArrow=1;")
+    message("  Arrow optimization enabled (requires proper JVM configuration)")
+  } else {
+    jdbc_url <- paste0(jdbc_url, "EnableArrow=0;")
+  }
+  
+  # Log optimization settings if in interactive mode
+  if (interactive()) {
+    batch_size <- Sys.getenv("DATABASE_CONNECTOR_BATCH_SIZE", "10000")
+    bulk_upload <- Sys.getenv("DATABASE_CONNECTOR_BULK_UPLOAD", "FALSE")
+    message(sprintf("  Batch processing size: %s rows", batch_size))
+    if (toupper(bulk_upload) %in% c("TRUE", "1", "YES")) {
+      message("  Bulk upload: enabled (DatabaseConnector)")
+    }
+  }
   
   return(DatabaseConnector::createConnectionDetails(
     dbms = "spark",
@@ -397,18 +441,9 @@ configure_spark_connection <- function(connection, results_schema) {
     options(sqlRenderTempEmulationSchema = results_schema)
   }
   
-  # Disable Arrow optimization if it causes issues
-  # Can be re-enabled with environment variable
-  if (Sys.getenv("ENABLE_ARROW", "FALSE") == "FALSE") {
-    options(sparklyr.arrow = FALSE)
-    
-    # Try to disable Arrow at connection level
-    tryCatch({
-      DBI::dbExecute(connection, "SET spark.sql.execution.arrow.enabled = false")
-    }, error = function(e) {
-      # Ignore if setting fails
-    })
-  }
+  # Arrow optimization is now controlled at connection creation time
+  # via the ENABLE_ARROW environment variable in the JDBC URL
+  # This ensures consistency between JDBC and R settings
   
   invisible(NULL)
 }
