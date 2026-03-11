@@ -1,0 +1,2500 @@
+---
+title: "Pregnancy Algorithm Validation Report - March 9"
+subtitle: "Comparison of Algorithm Predictions vs PMAP OB Ground Truth"
+author: "OMOP Pregnancy Team"
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    code-fold: true
+    code-summary: "Show code"
+    theme: flatly
+    self-contained: true
+execute:
+  echo: true
+  warning: false
+  message: false
+params:
+  prediction_file: "../output/pregnancy_episodes_2026-03-08.csv"
+  date_window_days: 30
+  min_ga_days: 0
+  max_ga_days: 320
+---
+
+```{r setup}
+#| include: false
+
+# Load required packages
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(lubridate)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(kableExtra)
+library(janitor)
+Sys.getenv("JAVA_HOME")
+library(rJava)
+library(dotenv)
+dotenv::load_dot_env()
+# Source the connection function from the project
+source("../R/00_connection/create_connection.R")
+
+# Set ggplot theme
+theme_set(theme_minimal(base_size = 12))
+```
+
+# Executive Summary
+
+This report validates the pregnancy identification algorithm by comparing its predictions against ground truth data from the PMAP OB registry. The validation covers:
+
+- **Episode-level matching**: Matching predicted episodes to ground truth using a ±`r params$date_window_days` day window
+- **Outcome classification**: Accuracy of outcome category predictions (LB, SB, ECT, AB, SA, DELIV, PREG)
+- **Gestational age estimation**: Comparison of predicted vs ground truth gestational age
+- **Person-level aggregation**: Total pregnancy counts per person
+
+```{r load-predictions}
+
+# Load algorithm predictions
+load_algorithm_predictions <- function(file_path) {
+  stopifnot(is.character(file_path), length(file_path) == 1L, nzchar(file_path))
+  if (!file.exists(file_path)) stop("File not found: ", file_path)
+
+  ext <- tolower(tools::file_ext(file_path))
+
+  predictions <- if (ext == "rds") {
+    readRDS(file_path)
+  } else if (ext %in% c("csv", "txt")) {
+    read.csv(file_path, stringsAsFactors = FALSE, check.names = FALSE)
+  } else {
+    stop("Unsupported file extension: .", ext, " (supported: rds, csv, txt)")
+  }
+
+  # Require deps explicitly (fail fast with clear message)
+  if (!requireNamespace("dplyr", quietly = TRUE)) stop("Package 'dplyr' is required.")
+  if (!requireNamespace("janitor", quietly = TRUE)) stop("Package 'janitor' is required.")
+
+  # Helper: robust Date coercion (supports Date/POSIXct/character/numeric)
+  to_date_safe <- function(x) {
+    if (inherits(x, "Date")) return(x)
+    if (inherits(x, "POSIXt")) return(as.Date(x))
+    if (is.numeric(x)) return(as.Date(x, origin = "1970-01-01"))
+    suppressWarnings(as.Date(x))
+  }
+
+  predictions <- predictions %>%
+    janitor::clean_names()
+
+  # If *_x columns exist (merge artifacts), coalesce into canonical fields
+  if (!"episode_start_date" %in% names(predictions) && "episode_start_date_x" %in% names(predictions)) {
+    predictions$episode_start_date <- predictions$episode_start_date_x
+  }
+  if (!"episode_end_date" %in% names(predictions) && "episode_end_date_x" %in% names(predictions)) {
+    predictions$episode_end_date <- predictions$episode_end_date_x
+  }
+
+  # Validate required columns
+  required_cols <- c(
+    "person_id", "episode_number", "episode_start_date", "episode_end_date",
+    "outcome_category", "gestational_age_days", "algorithm_used", "precision_category"
+  )
+  missing <- setdiff(required_cols, names(predictions))
+  if (length(missing) > 0) {
+    stop("Missing required columns after clean_names(): ", paste(missing, collapse = ", "))
+  }
+
+  # Clean / type-cast and select canonical fields
+  predictions <- predictions %>%
+    dplyr::mutate(
+      person_id = suppressWarnings(as.integer(person_id)),
+      episode_number = suppressWarnings(as.integer(episode_number)),
+      episode_start_date = to_date_safe(episode_start_date),
+      episode_end_date = to_date_safe(episode_end_date),
+      gestational_age_days = suppressWarnings(as.integer(gestational_age_days)),
+      outcome_category = as.character(outcome_category),
+      algorithm_used = as.character(algorithm_used),
+      precision_category = as.character(precision_category)
+    ) %>%
+    dplyr::select(dplyr::all_of(required_cols)) %>%
+    dplyr::distinct() %>%
+    dplyr::filter(episode_start_date < "2025-1-1")
+
+  return(predictions)
+}
+
+# Load predictions
+algo_predictions <- load_algorithm_predictions(params$prediction_file)
+algo_predictions <- algo_predictions %>%
+  dplyr::filter(gestational_age_days >= 140)
+cat(
+  "Loaded", nrow(algo_predictions), "algorithm predictions for",
+  dplyr::n_distinct(algo_predictions$person_id), "unique persons\n"
+)
+```
+
+```{r db-connect1}
+# Connect to database using project connection function
+con <- create_connection_from_env(".env")
+if (is.null(con)) stop("Connection returned NULL.")
+if (!DBI::dbIsValid(con)) stop("Database connection is not valid.")
+
+cat("Database connection established\n")
+
+```
+
+```{r query-ground-truth}
+
+# Query ground truth tables
+
+# 1. Pregnancy episodes
+pregnancies_sql <- "
+SELECT
+  EMRN,
+  PregnancyEstimatedStartDate,
+  PregnancyEstimatedEndDate,
+  PregnancyGravidaCount,
+  PregnancyParaCount,
+  PregnancyAbortionCount,
+  PregnancyTherapeuticAbortionCount,
+  PregnancySpontaneousAbortionCount,
+  PregnancyEctopicCount
+FROM Obstetrics_Minhas_IRB00501137_Scratch.phi.PMAP_OB_PREGNANCIES
+WHERE IsHistorical = 0 AND PregnancyEstimatedStartDate < '2025-1-1';
+"
+
+gt_pregnancies <- DatabaseConnector::querySql(con, pregnancies_sql) %>%
+  clean_names() %>%
+  mutate(
+    pregnancy_estimated_start_date = as.Date(pregnancy_estimated_start_date),
+    pregnancy_estimated_end_date = as.Date(pregnancy_estimated_end_date)
+  )
+
+cat("Loaded", nrow(gt_pregnancies), "ground truth pregnancy episodes\n")
+cat("Sample EMRNs from pregnancies:", head(gt_pregnancies$emrn, 5), "\n")
+
+# 2. Delivery outcomes
+deliveries_sql <- "
+SELECT
+  mom_emrn AS emrn,
+  GestationalAgeDays,
+  LivingStatus,
+  BornAlive,
+  NeonatalDemise
+FROM Obstetrics_Minhas_IRB00501137_Scratch.phi.PMAP_OB_DEL
+"
+
+gt_deliveries <- DatabaseConnector::querySql(con, deliveries_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(gt_deliveries), "ground truth delivery records\n")
+
+# 3. EMRN to cohort_id linkage
+emrn_cohort_sql <- "
+SELECT emrn, cohort_id
+FROM Obstetrics_Minhas_IRB00501137_Projection.phi.derived_epic_patient
+"
+
+emrn_to_cohort <- DatabaseConnector::querySql(con, emrn_cohort_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(emrn_to_cohort), "EMRN to cohort_id mappings\n")
+cat("Sample EMRNs from linkage:", head(emrn_to_cohort$emrn, 5), "\n")
+
+# Check EMRN overlap between pregnancies and linkage
+preg_emrns <- unique(gt_pregnancies$emrn)
+link_emrns <- unique(emrn_to_cohort$emrn)
+emrn_overlap <- length(intersect(preg_emrns, link_emrns))
+cat("EMRN overlap (pregnancies ∩ linkage):", emrn_overlap, "/", length(preg_emrns), "\n")
+
+# 4. cohort_id (pmap_id) to person_id linkage
+cohort_person_sql <- "
+SELECT pmap_id AS cohort_id, person_id
+FROM Obstetrics_Minhas_IRB00501137_OMOP.dbo.registry_idmap
+"
+
+cohort_to_person <- DatabaseConnector::querySql(con, cohort_person_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(cohort_to_person), "cohort_id to person_id mappings\n")
+```
+
+```{r id-linkage}
+
+# Build complete ID linkage: EMRN -> cohort_id -> person_id
+build_id_linkage <- function(emrn_cohort, cohort_person) {
+  linkage <- emrn_cohort %>%
+    inner_join(cohort_person, by = "cohort_id") %>%
+    select(emrn, person_id) %>%
+    distinct()
+
+  return(linkage)
+}
+
+# Debug: Check cohort_id overlap before building linkage
+cohort_ids_from_emrn <- unique(emrn_to_cohort$cohort_id)
+cohort_ids_from_person <- unique(cohort_to_person$cohort_id)
+cohort_overlap <- length(intersect(cohort_ids_from_emrn, cohort_ids_from_person))
+cat("Cohort_id overlap (emrn_table ∩ person_table):", cohort_overlap, "\n")
+cat("Sample cohort_ids from emrn table:", head(cohort_ids_from_emrn, 5), "\n")
+cat("Sample cohort_ids from person table:", head(cohort_ids_from_person, 5), "\n")
+
+id_linkage <- build_id_linkage(emrn_to_cohort, cohort_to_person)
+
+cat("\nCreated ID linkage table with", nrow(id_linkage), "unique EMRN-person_id pairs\n")
+cat("Columns in id_linkage:", names(id_linkage), "\n")
+
+# Debug: Show sample of linkage
+cat("Sample person_ids in linkage:", head(id_linkage$person_id, 10), "\n")
+cat("Sample emrns in linkage:", head(id_linkage$emrn, 5), "\n")
+
+# Check linkage coverage
+algo_persons <- n_distinct(algo_predictions$person_id)
+algo_person_ids <- unique(algo_predictions$person_id)
+linked_persons <- sum(algo_person_ids %in% id_linkage$person_id)
+cat("Algorithm persons with ID linkage:", linked_persons, "/", algo_persons,
+    "(", round(100 * linked_persons / algo_persons, 1), "%)\n")
+
+# Debug: Show sample algorithm person_ids
+cat("Sample algorithm person_ids:", head(algo_person_ids, 10), "\n")
+
+# Check for any overlap
+overlap_count <- length(intersect(algo_person_ids, id_linkage$person_id))
+cat("Overlapping person_ids between algorithm and linkage:", overlap_count, "\n")
+```
+
+```{r derive-outcomes}
+
+# Derive outcome category from ground truth cumulative counts
+derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkage) {
+
+  # Ensure count columns are numeric (may come as character from SQL)
+  pregnancies_df <- pregnancies_df %>%
+    mutate(
+      pregnancy_gravida_count = as.numeric(pregnancy_gravida_count),
+      pregnancy_para_count = as.numeric(pregnancy_para_count),
+      pregnancy_abortion_count = as.numeric(pregnancy_abortion_count),
+      pregnancy_therapeutic_abortion_count = as.numeric(pregnancy_therapeutic_abortion_count),
+      pregnancy_spontaneous_abortion_count = as.numeric(pregnancy_spontaneous_abortion_count),
+      pregnancy_ectopic_count = as.numeric(pregnancy_ectopic_count)
+    )
+
+  # Join pregnancies with ID linkage to get person_id
+  pregnancies_linked <- pregnancies_df %>%
+    inner_join(id_linkage, by = "emrn")
+
+  # Ensure delivery columns are proper types
+  deliveries_df <- deliveries_df %>%
+    mutate(
+      gestational_age_days = as.numeric(gestational_age_days),
+      born_alive = as.numeric(born_alive)
+    )
+
+  # Join with deliveries (if available) for BornAlive info
+  # Deliveries may have multiple records per EMRN, take the one closest to pregnancy end
+  deliveries_by_emrn <- deliveries_df %>%
+    group_by(emrn) %>%
+    summarise(
+      gestational_age_days = first(na.omit(gestational_age_days)),
+      born_alive = first(na.omit(born_alive)),
+      living_status = first(na.omit(living_status)),
+      .groups = "drop"
+    )
+
+  # Combine and derive outcomes
+  derived <- pregnancies_linked %>%
+    left_join(deliveries_by_emrn, by = "emrn") %>%
+    group_by(person_id) %>%
+    arrange(pregnancy_gravida_count) %>%
+    mutate(
+      # Calculate deltas from previous episode
+      prev_para = lag(pregnancy_para_count, default = 0),
+      prev_ab = lag(pregnancy_abortion_count, default = 0),
+      prev_therapeutic = lag(pregnancy_therapeutic_abortion_count, default = 0),
+      prev_spontaneous = lag(pregnancy_spontaneous_abortion_count, default = 0),
+      prev_ectopic = lag(pregnancy_ectopic_count, default = 0),
+
+      delta_para = pregnancy_para_count - prev_para,
+      delta_ab = pregnancy_abortion_count - prev_ab,
+      delta_therapeutic = pregnancy_therapeutic_abortion_count - prev_therapeutic,
+      delta_spontaneous = pregnancy_spontaneous_abortion_count - prev_spontaneous,
+      delta_ectopic = pregnancy_ectopic_count - prev_ectopic,
+
+      # Derive outcome category following Matcho hierarchy
+      gt_outcome_category = case_when(
+        # Live birth: para increased and born alive
+        delta_para > 0 & !is.na(born_alive) & born_alive == 1 ~ "LB",
+        # Stillbirth: para increased and not born alive (or living_status indicates)
+        delta_para > 0 & (!is.na(born_alive) & born_alive == 0) ~ "SB",
+        delta_para > 0 & (!is.na(living_status) & tolower(living_status) %in% c("stillborn", "fetal demise")) ~ "SB",
+        # Ectopic pregnancy
+        delta_ectopic > 0 ~ "ECT",
+        # Therapeutic/Induced abortion
+        delta_therapeutic > 0 ~ "AB",
+        # Spontaneous abortion
+        delta_spontaneous > 0 ~ "SA",
+        # Generic abortion (when not specified as therapeutic or spontaneous)
+        delta_ab > 0 & delta_therapeutic == 0 & delta_spontaneous == 0 ~ "AB",
+        # Delivery without specific birth info
+        delta_para > 0 ~ "DELIV",
+        # Pregnancy without recorded outcome
+        TRUE ~ "PREG"
+      )
+    ) %>%
+    ungroup() %>%
+    select(
+      person_id,
+      emrn,
+      gt_episode_num = pregnancy_gravida_count,
+      gt_start = pregnancy_estimated_start_date,
+      gt_end = pregnancy_estimated_end_date,
+      gt_outcome_category,
+      gt_ga_days = gestational_age_days,
+      born_alive,
+      living_status
+    )
+
+  return(derived)
+}
+
+gt_episodes <- derive_ground_truth_outcome(gt_pregnancies, gt_deliveries, id_linkage)
+
+cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
+cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
+
+# Debug: Check overlap between algorithm and ground truth persons
+algo_persons_set <- unique(algo_predictions$person_id)
+gt_persons_set <- unique(gt_episodes$person_id)
+person_overlap <- length(intersect(algo_persons_set, gt_persons_set))
+cat("Person overlap (algo ∩ GT):", person_overlap, "\n")
+
+# Debug: Sample dates
+cat("\nSample algorithm end dates:", head(algo_predictions$episode_end_date, 5), "\n")
+cat("Sample GT end dates:", head(gt_episodes$gt_end, 5), "\n")
+
+cat("\nGround truth outcome distribution:\n")
+gt_episodes %>%
+  count(gt_outcome_category) %>%
+  arrange(desc(n)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+```
+
+# Episode-level matching
+```{r episode-level-matching}
+# =========================================================
+# Episode-level matching
+# Primary analysis:
+#   - outcome-agnostic matching
+#   - exclude likely historical GT episodes
+# Sensitivity analyses:
+#   - include all GT episodes
+#   - end-date windows (±14 / ±30 / ±60 days)
+# =========================================================
+
+prepare_validation_inputs <- function(algo_episodes,
+                                      gt_episodes,
+                                      historical_buffer_days = 30) {
+
+  algo <- algo_episodes %>%
+    dplyr::select(
+      person_id,
+      episode_number,
+      episode_start_date,
+      episode_end_date,
+      outcome_category,
+      gestational_age_days
+    ) %>%
+    dplyr::rename(
+      algo_episode_num = episode_number,
+      algo_outcome = outcome_category,
+      algo_ga_days = gestational_age_days
+    ) %>%
+    dplyr::mutate(
+      algo_start = as.Date(episode_start_date),
+      algo_end   = as.Date(episode_end_date),
+      algo_start = dplyr::coalesce(algo_start, algo_end),
+      algo_end   = dplyr::coalesce(algo_end, algo_start)
+    ) %>%
+    dplyr::filter(!is.na(person_id), !is.na(algo_start), !is.na(algo_end)) %>%
+    dplyr::select(person_id, algo_episode_num, algo_start, algo_end, algo_outcome, algo_ga_days) %>%
+    dplyr::group_by(person_id) %>%
+    dplyr::arrange(algo_end, .by_group = TRUE) %>%
+    dplyr::mutate(algo_order = dplyr::row_number()) %>%
+    dplyr::ungroup()
+
+  gt_all <- gt_episodes %>%
+    dplyr::select(
+      person_id,
+      gt_episode_num,
+      gt_start,
+      gt_end,
+      gt_outcome_category,
+      gt_ga_days
+    ) %>%
+    dplyr::rename(
+      gt_outcome = gt_outcome_category
+    ) %>%
+    dplyr::mutate(
+      gt_start = as.Date(gt_start),
+      gt_end   = as.Date(gt_end),
+      gt_start = dplyr::coalesce(gt_start, gt_end),
+      gt_end   = dplyr::coalesce(gt_end, gt_start)
+    ) %>%
+    dplyr::filter(!is.na(person_id), !is.na(gt_start), !is.na(gt_end)) %>%
+    dplyr::group_by(person_id) %>%
+    dplyr::arrange(gt_end, .by_group = TRUE) %>%
+    dplyr::mutate(gt_order = dplyr::row_number()) %>%
+    dplyr::ungroup()
+
+  # Person-specific observable anchor from algorithm episodes
+  # GT episodes ending well before the first algorithm-observable episode
+  # are treated as likely historical and excluded from the primary analysis.
+  person_anchor <- algo %>%
+    dplyr::group_by(person_id) %>%
+    dplyr::summarise(
+      first_algo_start = min(algo_start, na.rm = TRUE),
+      last_algo_end = max(algo_end, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  gt_all <- gt_all %>%
+    dplyr::left_join(person_anchor, by = "person_id") %>%
+    dplyr::mutate(
+      likely_historical = dplyr::if_else(
+        !is.na(first_algo_start) & gt_end < (first_algo_start - historical_buffer_days),
+        TRUE,
+        FALSE,
+        missing = FALSE
+      ),
+      eligible_primary = !likely_historical
+    )
+
+  gt_primary <- gt_all %>%
+    dplyr::filter(eligible_primary)
+
+  historical_summary <- tibble::tibble(
+    total_gt_episodes = nrow(gt_all),
+    likely_historical_gt_episodes = sum(gt_all$likely_historical, na.rm = TRUE),
+    eligible_gt_episodes = nrow(gt_primary),
+    pct_historical = ifelse(nrow(gt_all) > 0,
+                            100 * sum(gt_all$likely_historical, na.rm = TRUE) / nrow(gt_all),
+                            NA_real_)
+  )
+
+  list(
+    algo = algo,
+    gt_all = gt_all,
+    gt_primary = gt_primary,
+    historical_summary = historical_summary
+  )
+}
+
+build_match_candidates <- function(algo, gt) {
+
+  common_persons <- intersect(unique(algo$person_id), unique(gt$person_id))
+
+  cat("Persons in algorithm:", length(unique(algo$person_id)), "\n")
+  cat("Persons in ground truth:", length(unique(gt$person_id)), "\n")
+  cat("Person overlap for matching:", length(common_persons), "\n")
+
+  if (length(common_persons) == 0) {
+    warning("No person_id overlap between algorithm and ground truth.")
+    return(tibble::tibble())
+  }
+
+  algo_sub <- algo %>%
+    dplyr::filter(person_id %in% common_persons) %>%
+    dplyr::mutate(.join_key = 1L)
+
+  gt_sub <- gt %>%
+    dplyr::filter(person_id %in% common_persons) %>%
+    dplyr::mutate(.join_key = 1L)
+
+  # Intentional many-to-many join:
+  # within each person, create all possible algorithm-GT episode pairs
+  candidates <- algo_sub %>%
+    dplyr::inner_join(
+      gt_sub,
+      by = c("person_id", ".join_key"),
+      relationship = "many-to-many"
+    ) %>%
+    dplyr::select(-.join_key) %>%
+    dplyr::mutate(
+      overlap_start = pmax(algo_start, gt_start),
+      overlap_end   = pmin(algo_end, gt_end),
+      overlap_days  = pmax(0, as.numeric(overlap_end - overlap_start) + 1),
+      overlap_any   = overlap_days > 0,
+      start_diff_days = abs(as.numeric(algo_start - gt_start)),
+      end_diff_days   = abs(as.numeric(algo_end - gt_end)),
+      mid_algo = algo_start + floor(as.numeric(algo_end - algo_start) / 2),
+      mid_gt   = gt_start + floor(as.numeric(gt_end - gt_start) / 2),
+      midpoint_diff_days = abs(as.numeric(mid_algo - mid_gt)),
+      algo_key = paste(person_id, algo_episode_num, sep = "::"),
+      gt_key   = paste(person_id, gt_episode_num, sep = "::")
+    )
+
+  candidates
+}
+
+greedy_one_to_one_match <- function(candidates,
+                                    algo,
+                                    gt,
+                                    rule = c("overlap", "window"),
+                                    date_window_days = 30) {
+
+  rule <- match.arg(rule)
+
+  if (nrow(candidates) == 0) {
+    return(list(
+      matched = tibble::tibble(),
+      unmatched_algo = algo,
+      unmatched_gt = gt,
+      stats = list(
+        total_algo = nrow(algo),
+        total_gt = nrow(gt),
+        matched = 0L,
+        match_rate_algo = 0,
+        match_rate_gt = 0
+      )
+    ))
+  }
+
+  candidates_ranked <- candidates
+
+  if (rule == "overlap") {
+    candidates_ranked <- candidates_ranked %>%
+      dplyr::filter(overlap_any) %>%
+      dplyr::arrange(
+        person_id,
+        dplyr::desc(overlap_days),
+        end_diff_days,
+        start_diff_days,
+        midpoint_diff_days,
+        algo_order,
+        gt_order
+      )
+  }
+
+  if (rule == "window") {
+    candidates_ranked <- candidates_ranked %>%
+      dplyr::filter(end_diff_days <= date_window_days) %>%
+      dplyr::arrange(
+        person_id,
+        end_diff_days,
+        start_diff_days,
+        midpoint_diff_days,
+        dplyr::desc(overlap_days),
+        algo_order,
+        gt_order
+      )
+  }
+
+  if (nrow(candidates_ranked) == 0) {
+    return(list(
+      matched = tibble::tibble(),
+      unmatched_algo = algo,
+      unmatched_gt = gt,
+      stats = list(
+        total_algo = nrow(algo),
+        total_gt = nrow(gt),
+        matched = 0L,
+        match_rate_algo = 0,
+        match_rate_gt = 0
+      )
+    ))
+  }
+
+  used_algo <- character(0)
+  used_gt <- character(0)
+  keep <- logical(nrow(candidates_ranked))
+
+  for (i in seq_len(nrow(candidates_ranked))) {
+    this_algo <- candidates_ranked$algo_key[i]
+    this_gt   <- candidates_ranked$gt_key[i]
+
+    if (!(this_algo %in% used_algo) && !(this_gt %in% used_gt)) {
+      keep[i] <- TRUE
+      used_algo <- c(used_algo, this_algo)
+      used_gt   <- c(used_gt, this_gt)
+    }
+  }
+
+  matched <- candidates_ranked[keep, , drop = FALSE]
+
+  unmatched_algo <- algo %>%
+    dplyr::filter(!(paste(person_id, algo_episode_num, sep = "::") %in% matched$algo_key))
+
+  unmatched_gt <- gt %>%
+    dplyr::filter(!(paste(person_id, gt_episode_num, sep = "::") %in% matched$gt_key))
+
+  stats <- list(
+    total_algo = nrow(algo),
+    total_gt = nrow(gt),
+    matched = nrow(matched),
+    match_rate_algo = ifelse(nrow(algo) > 0, nrow(matched) / nrow(algo), 0),
+    match_rate_gt   = ifelse(nrow(gt) > 0, nrow(matched) / nrow(gt), 0)
+  )
+
+  list(
+    matched = matched,
+    unmatched_algo = unmatched_algo,
+    unmatched_gt = unmatched_gt,
+    stats = stats
+  )
+}
+
+run_matching_analyses <- function(algo_episodes,
+                                  gt_episodes,
+                                  historical_buffer_days = 30) {
+
+  prepared <- prepare_validation_inputs(
+    algo_episodes = algo_episodes,
+    gt_episodes = gt_episodes,
+    historical_buffer_days = historical_buffer_days
+  )
+
+  algo <- prepared$algo
+  gt_all <- prepared$gt_all
+  gt_primary <- prepared$gt_primary
+
+  # Primary analysis: eligible GT only
+  candidates_primary <- build_match_candidates(algo, gt_primary)
+
+  primary_overlap <- greedy_one_to_one_match(
+    candidates = candidates_primary,
+    algo = algo,
+    gt = gt_primary,
+    rule = "overlap"
+  )
+
+  end_window_14 <- greedy_one_to_one_match(
+    candidates = candidates_primary,
+    algo = algo,
+    gt = gt_primary,
+    rule = "window",
+    date_window_days = 14
+  )
+
+  end_window_30 <- greedy_one_to_one_match(
+    candidates = candidates_primary,
+    algo = algo,
+    gt = gt_primary,
+    rule = "window",
+    date_window_days = 30
+  )
+
+  end_window_60 <- greedy_one_to_one_match(
+    candidates = candidates_primary,
+    algo = algo,
+    gt = gt_primary,
+    rule = "window",
+    date_window_days = 60
+  )
+
+  # Sensitivity: include all GT episodes
+  candidates_all_gt <- build_match_candidates(algo, gt_all)
+
+  all_gt_overlap <- greedy_one_to_one_match(
+    candidates = candidates_all_gt,
+    algo = algo,
+    gt = gt_all,
+    rule = "overlap"
+  )
+
+  summary_table <- tibble::tibble(
+    matching_rule = c(
+      "Primary: any episode overlap (eligible GT only)",
+      "Sensitivity: any episode overlap (all GT episodes)",
+      "Sensitivity: end date within ±14 days (eligible GT only)",
+      "Sensitivity: end date within ±30 days (eligible GT only)",
+      "Sensitivity: end date within ±60 days (eligible GT only)"
+    ),
+    matched_episodes = c(
+      primary_overlap$stats$matched,
+      all_gt_overlap$stats$matched,
+      end_window_14$stats$matched,
+      end_window_30$stats$matched,
+      end_window_60$stats$matched
+    ),
+    algorithm_match_rate = c(
+      primary_overlap$stats$match_rate_algo,
+      all_gt_overlap$stats$match_rate_algo,
+      end_window_14$stats$match_rate_algo,
+      end_window_30$stats$match_rate_algo,
+      end_window_60$stats$match_rate_algo
+    ),
+    ground_truth_match_rate = c(
+      primary_overlap$stats$match_rate_gt,
+      all_gt_overlap$stats$match_rate_gt,
+      end_window_14$stats$match_rate_gt,
+      end_window_30$stats$match_rate_gt,
+      end_window_60$stats$match_rate_gt
+    )
+  )
+
+  list(
+    algo = algo,
+    gt_all = gt_all,
+    gt_primary = gt_primary,
+    historical_summary = prepared$historical_summary,
+    candidates_primary = candidates_primary,
+    candidates_all_gt = candidates_all_gt,
+    primary_overlap = primary_overlap,
+    all_gt_overlap = all_gt_overlap,
+    end_window_14 = end_window_14,
+    end_window_30 = end_window_30,
+    end_window_60 = end_window_60,
+    summary_table = summary_table
+  )
+}
+
+match_results <- run_matching_analyses(
+  algo_episodes = algo_predictions,
+  gt_episodes   = gt_episodes,
+  historical_buffer_days = 30
+)
+
+matched_episodes <- match_results$primary_overlap$matched
+
+cat("Historical GT Filtering Summary:\n")
+cat("- Total GT episodes:", match_results$historical_summary$total_gt_episodes, "\n")
+cat("- Likely historical GT episodes removed from primary analysis:",
+    match_results$historical_summary$likely_historical_gt_episodes, "\n")
+cat("- Eligible GT episodes for primary analysis:",
+    match_results$historical_summary$eligible_gt_episodes, "\n")
+cat("- Percent likely historical:",
+    round(match_results$historical_summary$pct_historical, 1), "%\n\n")
+
+cat("Episode Matching Results (primary overlap-based analysis):\n")
+cat("- Algorithm episodes:", match_results$primary_overlap$stats$total_algo, "\n")
+cat("- Eligible GT episodes:", match_results$primary_overlap$stats$total_gt, "\n")
+cat("- Matched episodes:", match_results$primary_overlap$stats$matched, "\n")
+cat("- Algorithm match rate:",
+    round(100 * match_results$primary_overlap$stats$match_rate_algo, 1), "%\n")
+cat("- Eligible GT match rate:",
+    round(100 * match_results$primary_overlap$stats$match_rate_gt, 1), "%\n\n")
+
+cat("Sensitivity Analysis (all GT episodes):\n")
+cat("- All GT episodes:", match_results$all_gt_overlap$stats$total_gt, "\n")
+cat("- Matched episodes:", match_results$all_gt_overlap$stats$matched, "\n")
+cat("- Algorithm match rate:",
+    round(100 * match_results$all_gt_overlap$stats$match_rate_algo, 1), "%\n")
+cat("- All-GT match rate:",
+    round(100 * match_results$all_gt_overlap$stats$match_rate_gt, 1), "%\n")
+```
+
+## Matching summary table
+```{r historical-gt-summary-table}
+match_results$summary_table %>%
+  dplyr::mutate(
+    algorithm_match_rate = round(100 * algorithm_match_rate, 1),
+    ground_truth_match_rate = round(100 * ground_truth_match_rate, 1)
+  ) %>%
+  knitr::kable(
+    caption = "Episode Matching Summary Across Primary and Sensitivity Analyses",
+    col.names = c(
+      "Matching Rule",
+      "Matched Episodes",
+      "Algorithm Match Rate (%)",
+      "Ground Truth Match Rate (%)"
+    )
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+
+
+# Outcome classification analysis
+```{r outcome-classification-exploratory}
+# =========================================================
+# Exploratory outcome classification analysis
+# Labels are not yet finalized, so this is reported as
+# exploratory only and is not part of the primary endpoint.
+# =========================================================
+
+create_confusion_matrix <- function(matched_episodes) {
+
+  outcome_order <- c("LB", "SB", "ECT", "AB", "SA")
+
+  conf_matrix <- matched_episodes %>%
+    dplyr::filter(
+      algo_outcome %in% outcome_order,
+      gt_outcome %in% outcome_order
+    ) %>%
+    dplyr::mutate(
+      algo_outcome = factor(algo_outcome, levels = outcome_order),
+      gt_outcome   = factor(gt_outcome, levels = outcome_order)
+    ) %>%
+    dplyr::count(gt_outcome, algo_outcome, .drop = FALSE) %>%
+    tidyr::pivot_wider(
+      names_from = algo_outcome,
+      values_from = n,
+      values_fill = 0
+    ) %>%
+    dplyr::arrange(gt_outcome)
+
+  conf_matrix
+}
+
+calculate_classification_metrics <- function(matched_episodes) {
+
+  outcome_order <- c("LB", "SB", "ECT", "AB", "SA")
+
+  dat <- matched_episodes %>%
+    dplyr::filter(
+      algo_outcome %in% outcome_order,
+      gt_outcome %in% outcome_order
+    )
+
+  if (nrow(dat) == 0) {
+    return(list(
+      overall_accuracy = NA_real_,
+      total_correct = 0L,
+      total_matched = 0L,
+      by_category = tibble::tibble()
+    ))
+  }
+
+  metrics_by_category <- purrr::map_dfr(outcome_order, function(cat) {
+
+    tp <- sum(dat$algo_outcome == cat & dat$gt_outcome == cat, na.rm = TRUE)
+    fp <- sum(dat$algo_outcome == cat & dat$gt_outcome != cat, na.rm = TRUE)
+    fn <- sum(dat$algo_outcome != cat & dat$gt_outcome == cat, na.rm = TRUE)
+
+    precision <- ifelse(tp + fp > 0, tp / (tp + fp), NA_real_)
+    recall    <- ifelse(tp + fn > 0, tp / (tp + fn), NA_real_)
+    f1_score  <- ifelse(
+      !is.na(precision) && !is.na(recall) && (precision + recall) > 0,
+      2 * precision * recall / (precision + recall),
+      NA_real_
+    )
+
+    tibble::tibble(
+      category = cat,
+      support = sum(dat$gt_outcome == cat, na.rm = TRUE),
+      predicted = sum(dat$algo_outcome == cat, na.rm = TRUE),
+      tp = tp,
+      fp = fp,
+      fn = fn,
+      precision = precision,
+      recall = recall,
+      f1_score = f1_score
+    )
+  })
+
+  total_correct <- sum(dat$algo_outcome == dat$gt_outcome, na.rm = TRUE)
+  total_matched <- nrow(dat)
+  overall_accuracy <- ifelse(total_matched > 0, total_correct / total_matched, NA_real_)
+
+  list(
+    overall_accuracy = overall_accuracy,
+    total_correct = total_correct,
+    total_matched = total_matched,
+    by_category = metrics_by_category
+  )
+}
+
+conf_matrix <- create_confusion_matrix(matched_episodes)
+class_metrics <- calculate_classification_metrics(matched_episodes)
+
+cat("Exploratory Outcome Classification Results:\n")
+cat("- This analysis is exploratory only and excludes unresolved categories.\n")
+cat("- Overall accuracy:",
+    round(100 * class_metrics$overall_accuracy, 1), "%\n")
+cat("(", class_metrics$total_correct, "/", class_metrics$total_matched, "episodes with finalized labels)\n\n")
+```
+
+## Confusion Matrix
+```{r confusion-matrix}
+
+if (nrow(conf_matrix) > 0) {
+  conf_matrix %>%
+    knitr::kable(caption = "Exploratory Confusion Matrix: Ground Truth vs Algorithm Outcome") %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover"),
+      full_width = FALSE
+    )
+}
+```
+
+
+## Classification metrics by category
+```{r classifcation-metrics}
+if (nrow(class_metrics$by_category) > 0) {
+  class_metrics$by_category %>%
+    dplyr::mutate(
+      precision = round(precision, 3),
+      recall = round(recall, 3),
+      f1_score = round(f1_score, 3)
+    ) %>%
+    knitr::kable(
+      caption = "Exploratory Classification Metrics by Finalized Outcome Category"
+    ) %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover"),
+      full_width = FALSE
+    )
+}
+```
+
+# Gestational age comparison
+
+```{r gestational-age}
+# =========================================================
+# Gestational age comparison
+# Primary analysis: overlap-matched episodes using eligible GT only
+# =========================================================
+
+calculate_ga_metrics <- function(matched_episodes, min_ga = 0, max_ga = 320) {
+
+  with_ga <- matched_episodes %>%
+    dplyr::filter(
+      !is.na(algo_ga_days),
+      !is.na(gt_ga_days),
+      algo_ga_days >= min_ga,
+      algo_ga_days <= max_ga,
+      gt_ga_days >= min_ga,
+      gt_ga_days <= max_ga
+    ) %>%
+    dplyr::mutate(
+      ga_diff = algo_ga_days - gt_ga_days,
+      abs_ga_diff = abs(ga_diff)
+    )
+
+  if (nrow(with_ga) == 0) {
+    return(list(
+      summary = tibble::tibble(),
+      by_outcome = tibble::tibble(),
+      data = with_ga
+    ))
+  }
+
+  summary <- with_ga %>%
+    dplyr::summarise(
+      n = dplyr::n(),
+      mean_diff_days = mean(ga_diff, na.rm = TRUE),
+      median_diff_days = stats::median(ga_diff, na.rm = TRUE),
+      mean_abs_diff_days = mean(abs_ga_diff, na.rm = TRUE),
+      median_abs_diff_days = stats::median(abs_ga_diff, na.rm = TRUE),
+      within_7_days = mean(abs_ga_diff <= 7, na.rm = TRUE),
+      within_14_days = mean(abs_ga_diff <= 14, na.rm = TRUE),
+      within_21_days = mean(abs_ga_diff <= 21, na.rm = TRUE)
+    )
+
+  by_outcome <- with_ga %>%
+    dplyr::group_by(gt_outcome) %>%
+    dplyr::summarise(
+      n = dplyr::n(),
+      mean_diff_days = mean(ga_diff, na.rm = TRUE),
+      median_diff_days = stats::median(ga_diff, na.rm = TRUE),
+      mean_abs_diff_days = mean(abs_ga_diff, na.rm = TRUE),
+      within_7_days = mean(abs_ga_diff <= 7, na.rm = TRUE),
+      within_14_days = mean(abs_ga_diff <= 14, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    dplyr::arrange(dplyr::desc(n))
+
+  list(
+    summary = summary,
+    by_outcome = by_outcome,
+    data = with_ga
+  )
+}
+
+ga_metrics <- calculate_ga_metrics(matched_episodes)
+
+if (nrow(ga_metrics$summary) > 0) {
+  cat("Gestational Age Results (primary overlap-matched episodes):\n")
+  cat("- Mean GA difference:", round(ga_metrics$summary$mean_diff_days, 1), "days\n")
+  cat("- Median GA difference:", round(ga_metrics$summary$median_diff_days, 1), "days\n")
+  cat("- Mean absolute GA difference:", round(ga_metrics$summary$mean_abs_diff_days, 1), "days\n")
+  cat("- Within ±7 days:", round(100 * ga_metrics$summary$within_7_days, 1), "%\n")
+  cat("- Within ±14 days:", round(100 * ga_metrics$summary$within_14_days, 1), "%\n")
+  cat("- Within ±21 days:", round(100 * ga_metrics$summary$within_21_days, 1), "%\n")
+}
+```
+
+## GA summary table
+```{r GA-summary}
+if (nrow(ga_metrics$summary) > 0) {
+  ga_metrics$summary %>%
+    dplyr::mutate(dplyr::across(where(is.numeric), ~ round(., 2))) %>%
+    tidyr::pivot_longer(
+      everything(),
+      names_to = "Metric",
+      values_to = "Value"
+    ) %>%
+    knitr::kable(caption = "Gestational Age Comparison Summary") %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover"),
+      full_width = FALSE
+    )
+}
+```
+
+
+## GA by outcome category
+```{r GA-outcome-category}
+if (nrow(ga_metrics$by_outcome) > 0) {
+  ga_metrics$by_outcome %>%
+    dplyr::mutate(
+      dplyr::across(
+        where(is.numeric) & !dplyr::matches("^n$"),
+        ~ round(., 2)
+      )
+    ) %>%
+    knitr::kable(caption = "GA Agreement by Ground Truth Outcome Category") %>%
+    kableExtra::kable_styling(
+      bootstrap_options = c("striped", "hover"),
+      full_width = FALSE
+    )
+}
+```
+
+
+## GA agreement plots
+```{r GA-agreement}
+if (nrow(ga_metrics$data) > 0) {
+  ggplot2::ggplot(
+    ga_metrics$data,
+    ggplot2::aes(x = gt_ga_days, y = algo_ga_days)
+  ) +
+    ggplot2::geom_point(alpha = 0.3, size = 1.5) +
+    ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    ggplot2::labs(
+      title = "Predicted vs Ground Truth Gestational Age",
+      x = "Ground Truth GA (days)",
+      y = "Algorithm GA (days)"
+    ) +
+    ggplot2::theme_minimal()
+}
+```
+
+
+## GA metrics plot
+```{r GA-bland-altman-plot}
+if (nrow(ga_metrics$data) > 0) {
+
+  ba_data <- ga_metrics$data %>%
+    dplyr::mutate(
+      mean_ga = (algo_ga_days + gt_ga_days) / 2,
+      diff_ga = algo_ga_days - gt_ga_days
+    ) %>%
+    dplyr::filter(
+      !is.na(mean_ga),
+      !is.na(diff_ga)
+    )
+
+  if (nrow(ba_data) >= 2) {
+
+    mean_diff <- mean(ba_data$diff_ga, na.rm = TRUE)
+    sd_diff <- stats::sd(ba_data$diff_ga, na.rm = TRUE)
+
+    upper_loa <- mean_diff + 1.96 * sd_diff
+    lower_loa <- mean_diff - 1.96 * sd_diff
+
+    ggplot2::ggplot(
+      ba_data,
+      ggplot2::aes(x = mean_ga, y = diff_ga)
+    ) +
+      ggplot2::geom_point(alpha = 0.3, size = 1.5) +
+      ggplot2::geom_hline(
+        yintercept = mean_diff,
+        linetype = "solid",
+        color = "red"
+      ) +
+      ggplot2::geom_hline(
+        yintercept = upper_loa,
+        linetype = "dashed",
+        color = "gray40"
+      ) +
+      ggplot2::geom_hline(
+        yintercept = lower_loa,
+        linetype = "dashed",
+        color = "gray40"
+      ) +
+      ggplot2::annotate(
+        "text",
+        x = Inf,
+        y = mean_diff,
+        label = paste0("Mean bias = ", round(mean_diff, 1)),
+        hjust = 1.1,
+        vjust = -0.5,
+        size = 3.5,
+        color = "red"
+      ) +
+      ggplot2::annotate(
+        "text",
+        x = Inf,
+        y = upper_loa,
+        label = paste0("+1.96 SD = ", round(upper_loa, 1)),
+        hjust = 1.1,
+        vjust = -0.5,
+        size = 3.5,
+        color = "gray40"
+      ) +
+      ggplot2::annotate(
+        "text",
+        x = Inf,
+        y = lower_loa,
+        label = paste0("-1.96 SD = ", round(lower_loa, 1)),
+        hjust = 1.1,
+        vjust = 1.5,
+        size = 3.5,
+        color = "gray40"
+      ) +
+      ggplot2::labs(
+        title = "Bland-Altman Plot for Gestational Age",
+        x = "Mean GA (days)",
+        y = "Algorithm - Ground Truth GA (days)"
+      ) +
+      ggplot2::theme_minimal()
+
+  } else {
+    cat("Not enough non-missing observations to generate a Bland-Altman plot.\n")
+  }
+}
+```
+```{r plot-tests}
+ggplot2::ggplot(
+  ga_metrics$data,
+  ggplot2::aes(x = gt_ga_days, y = algo_ga_days)
+) +
+  ggplot2::geom_point(alpha = 0.3, size = 1.5) +
+  ggplot2::geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    color = "red"
+  ) +
+  ggplot2::labs(
+    title = "Algorithm vs Ground Truth Gestational Age",
+    x = "Ground Truth GA (days)",
+    y = "Algorithm GA (days)"
+  ) +
+  ggplot2::theme_minimal()
+
+ga_metrics$data %>%
+  dplyr::mutate(diff_ga = algo_ga_days - gt_ga_days) %>%
+  ggplot2::ggplot(
+    ggplot2::aes(x = diff_ga)
+  ) +
+  ggplot2::geom_density(fill = "steelblue", alpha = 0.5) +
+  ggplot2::geom_vline(xintercept = 0, linetype = "dashed") +
+  ggplot2::labs(
+    title = "Distribution of Gestational Age Differences",
+    x = "Algorithm − Ground Truth GA (days)",
+    y = "Density"
+  ) +
+  ggplot2::theme_minimal()
+
+ga_metrics$data %>%
+  dplyr::mutate(
+    abs_diff = abs(algo_ga_days - gt_ga_days)
+  ) %>%
+  ggplot2::ggplot(
+    ggplot2::aes(x = abs_diff)
+  ) +
+  ggplot2::stat_ecdf() +
+  ggplot2::labs(
+    title = "Cumulative Accuracy of Gestational Age Estimates",
+    x = "Absolute Difference (days)",
+    y = "Proportion of Episodes"
+  ) +
+  ggplot2::theme_minimal()
+
+ggplot2::ggplot(
+  ga_metrics$data,
+  ggplot2::aes(x = gt_ga_days, y = algo_ga_days)
+) +
+  ggplot2::geom_bin2d() +
+  ggplot2::scale_fill_viridis_c() +
+  ggplot2::labs(
+    title = "Density of Gestational Age Agreement",
+    x = "Ground Truth GA (days)",
+    y = "Algorithm GA (days)"
+  ) +
+  ggplot2::theme_minimal()
+```
+
+```{r plots-test2}
+ggplot2::ggplot(
+  ga_metrics$data,
+  ggplot2::aes(x = gt_ga_days, y = algo_ga_days)
+) +
+  ggplot2::geom_hex() +
+  ggplot2::scale_fill_viridis_c() +
+  ggplot2::geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  ggplot2::labs(
+    title = "Density of Gestational Age Agreement",
+    x = "Ground Truth GA (days)",
+    y = "Algorithm GA (days)"
+  ) +
+  ggplot2::theme_minimal()
+
+ga_metrics$data %>%
+  dplyr::mutate(
+    diff_ga = algo_ga_days - gt_ga_days
+  ) %>%
+  ggplot2::ggplot(
+    ggplot2::aes(y = diff_ga)
+  ) +
+  ggplot2::geom_boxplot(fill = "steelblue") +
+  ggplot2::geom_hline(yintercept = 0, linetype = "dashed") +
+  ggplot2::labs(
+    title = "Distribution of Gestational Age Error",
+    y = "Algorithm − Ground Truth (days)"
+  ) +
+  ggplot2::theme_minimal()
+
+
+ga_metrics$data %>%
+  dplyr::mutate(
+    diff_ga = algo_ga_days - gt_ga_days
+  ) %>%
+  ggplot2::ggplot(
+    ggplot2::aes(x = "", y = diff_ga)
+  ) +
+  ggplot2::geom_violin(fill = "steelblue", alpha = 0.6) +
+  ggplot2::geom_hline(yintercept = 0, linetype = "dashed") +
+  ggplot2::labs(
+    title = "Distribution of Gestational Age Differences",
+    x = "",
+    y = "Algorithm − Ground Truth (days)"
+  ) +
+  ggplot2::theme_minimal()
+
+
+ga_metrics$data %>%
+  dplyr::mutate(
+    abs_diff = abs(algo_ga_days - gt_ga_days),
+    category = dplyr::case_when(
+      abs_diff <= 7 ~ "≤7 days",
+      abs_diff <= 14 ~ "8–14 days",
+      abs_diff <= 30 ~ "15–30 days",
+      TRUE ~ ">30 days"
+    )
+  ) %>%
+  ggplot2::ggplot(
+    ggplot2::aes(x = category)
+  ) +
+  ggplot2::geom_bar(fill = "steelblue") +
+  ggplot2::labs(
+    title = "Accuracy Categories of Gestational Age Estimation",
+    x = "Absolute Difference",
+    y = "Number of Episodes"
+  ) +
+  ggplot2::theme_minimal()
+
+
+```
+
+```{r bland-altman-new}
+if (nrow(ga_metrics$data) > 0) {
+
+  ba_data <- ga_metrics$data %>%
+    dplyr::mutate(
+      mean_ga = (algo_ga_days + gt_ga_days) / 2,
+      diff_ga = algo_ga_days - gt_ga_days
+    ) %>%
+    dplyr::filter(
+      !is.na(mean_ga),
+      !is.na(diff_ga)
+    )
+
+  if (nrow(ba_data) >= 2) {
+
+    mean_diff <- mean(ba_data$diff_ga, na.rm = TRUE)
+    sd_diff <- stats::sd(ba_data$diff_ga, na.rm = TRUE)
+
+    upper_loa <- mean_diff + 1.96 * sd_diff
+    lower_loa <- mean_diff - 1.96 * sd_diff
+
+    x_max <- max(ba_data$mean_ga, na.rm = TRUE)
+    x_min <- min(ba_data$mean_ga, na.rm = TRUE)
+    x_pad <- 0.03 * (x_max - x_min)
+
+    ggplot2::ggplot(
+      ba_data,
+      ggplot2::aes(x = mean_ga, y = diff_ga)
+    ) +
+      ggplot2::annotate(
+        "rect",
+        xmin = -Inf, xmax = Inf,
+        ymin = lower_loa, ymax = upper_loa,
+        fill = "grey85",
+        alpha = 0.35
+      ) +
+      ggplot2::geom_hline(
+        yintercept = 0,
+        linetype = "dotted",
+        linewidth = 0.5,
+        color = "grey50"
+      ) +
+      ggplot2::geom_hline(
+        yintercept = mean_diff,
+        linewidth = 0.9,
+        color = "#C44E52"
+      ) +
+      ggplot2::geom_hline(
+        yintercept = upper_loa,
+        linetype = "dashed",
+        linewidth = 0.7,
+        color = "grey35"
+      ) +
+      ggplot2::geom_hline(
+        yintercept = lower_loa,
+        linetype = "dashed",
+        linewidth = 0.7,
+        color = "grey35"
+      ) +
+      ggplot2::geom_point(
+        alpha = 0.28,
+        size = 2,
+        color = "#3B76AF"
+      ) +
+      ggplot2::geom_smooth(
+        method = "loess",
+        se = FALSE,
+        linewidth = 0.9,
+        color = "#2F4B5C"
+      ) +
+      ggplot2::annotate(
+        "label",
+        x = x_max + x_pad,
+        y = mean_diff,
+        label = paste0("Mean bias = ", round(mean_diff, 1)),
+        hjust = 0,
+        vjust = -0.2,
+        size = 3.6,
+        label.size = 0.2,
+        fill = "white",
+        color = "#C44E52"
+      ) +
+      ggplot2::annotate(
+        "label",
+        x = x_max + x_pad,
+        y = upper_loa,
+        label = paste0("Upper LOA = ", round(upper_loa, 1)),
+        hjust = 0,
+        vjust = -0.2,
+        size = 3.4,
+        label.size = 0.2,
+        fill = "white",
+        color = "grey25"
+      ) +
+      ggplot2::annotate(
+        "label",
+        x = x_max + x_pad,
+        y = lower_loa,
+        label = paste0("Lower LOA = ", round(lower_loa, 1)),
+        hjust = 0,
+        vjust = 1.2,
+        size = 3.4,
+        label.size = 0.2,
+        fill = "white",
+        color = "grey25"
+      ) +
+      ggplot2::scale_x_continuous(
+        expand = ggplot2::expansion(mult = c(0.03, 0.22))
+      ) +
+      ggplot2::labs(
+        title = "Bland-Altman Plot for Gestational Age",
+        subtitle = "Difference between algorithm-derived and ground-truth gestational age",
+        x = "Mean gestational age (days)",
+        y = "Algorithm − Ground truth (days)",
+        caption = paste0(
+          "Shaded area indicates 95% limits of agreement. ",
+          "N = ", nrow(ba_data)
+        )
+      ) +
+      ggplot2::coord_cartesian(clip = "off") +
+      ggplot2::theme_minimal(base_size = 12) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold", size = 14),
+        plot.subtitle = ggplot2::element_text(size = 11, color = "grey30"),
+        axis.title = ggplot2::element_text(face = "bold"),
+        panel.grid.minor = ggplot2::element_blank(),
+        panel.grid.major.x = ggplot2::element_line(color = "grey90"),
+        panel.grid.major.y = ggplot2::element_line(color = "grey90"),
+        plot.caption = ggplot2::element_text(color = "grey35", hjust = 0),
+        plot.margin = ggplot2::margin(t = 10, r = 70, b = 10, l = 10)
+      )
+
+  } else {
+    cat("Not enough non-missing observations to generate a Bland-Altman plot.\n")
+  }
+}
+```
+
+# Bland-Altman Check
+
+## 1. Extract the suspicious region (manual inspection)
+```{r ba-check1}
+suspicious_cases <- ba_data %>%
+  dplyr::filter(
+    mean_ga < 180,
+    diff_ga < -100
+  )
+
+nrow(suspicious_cases)
+
+head(suspicious_cases)
+
+suspicious_cases %>%
+  dplyr::select(
+    person_id,
+    algo_episode_num,
+    gt_episode_num,
+    algo_ga_days,
+    gt_ga_days,
+    mean_ga,
+    diff_ga
+  ) %>%
+  head(50)
+```
+
+
+## 2. whether the pattern is caused by GT truncation
+```{r ba-check2}
+summary(ba_data$gt_ga_days)
+summary(ba_data$algo_ga_days)
+hist(ba_data$gt_ga_days, breaks = 50)
+hist(ba_data$algo_ga_days, breaks = 50)
+```
+
+## 3. N/A
+
+## 4. Check if the pattern is driven by episode type
+```{r ba-check4}
+ba_data %>%
+  dplyr::mutate(
+    abs_diff = abs(diff_ga)
+  ) %>%
+  dplyr::group_by(gt_outcome) %>%
+  dplyr::summarise(
+    n = dplyr::n(),
+    mean_diff = mean(diff_ga, na.rm = TRUE),
+    large_error = mean(abs_diff > 100)
+  )
+```
+
+## 5. Check whether historical pregnancies cause it
+```{r ba-check5}
+
+suspicious_cases <- ba_data %>%
+  dplyr::filter(
+    mean_ga < 180,
+    diff_ga < -100
+  )
+
+nrow(suspicious_cases)
+
+head(suspicious_cases, 20)
+
+```
+
+## 6. Visual diagnostic: highlight the suspicious region
+```{r ba-check6}
+
+ggplot2::ggplot(
+  ba_data,
+  ggplot2::aes(mean_ga, diff_ga)
+) +
+  ggplot2::geom_point(alpha = 0.2) +
+  ggplot2::geom_point(
+    data = suspicious_cases,
+    color = "red",
+    alpha = 0.6
+  ) +
+  ggplot2::labs(
+    title = "Highlighted Suspicious Region"
+  )
+```
+
+
+## 7. Check if GA calculation is inconsistent
+```{r ba-check7}
+
+cor(
+  ba_data$algo_ga_days,
+  ba_data$gt_ga_days,
+  use = "complete.obs"
+)
+```
+
+## 8. Plot GA difference vs GT GA
+```{r ba-check8}
+ggplot2::ggplot(
+  ba_data,
+  ggplot2::aes(
+    x = gt_ga_days,
+    y = diff_ga
+  )
+) +
+  ggplot2::geom_point(alpha = 0.2) +
+  ggplot2::geom_smooth()
+```
+
+
+
+# Personal-level aggregation
+```{r person-level-aggregation}
+# =========================================================
+# Person-level aggregation
+# Report both:
+#   - primary comparison against eligible GT only
+#   - sensitivity comparison against all GT episodes
+# =========================================================
+
+calculate_person_metrics <- function(algo_episodes, gt_episodes) {
+
+  algo_counts <- algo_episodes %>%
+    dplyr::group_by(person_id) %>%
+    dplyr::summarise(
+      algo_total = dplyr::n(),
+      .groups = "drop"
+    )
+
+  gt_counts <- gt_episodes %>%
+    dplyr::group_by(person_id) %>%
+    dplyr::summarise(
+      gt_total = dplyr::n(),
+      .groups = "drop"
+    )
+
+  person_data <- dplyr::full_join(algo_counts, gt_counts, by = "person_id") %>%
+    dplyr::mutate(
+      algo_total = dplyr::coalesce(algo_total, 0L),
+      gt_total   = dplyr::coalesce(gt_total, 0L),
+      total_diff = algo_total - gt_total,
+      abs_total_diff = abs(total_diff),
+      exact_match = algo_total == gt_total,
+      within_1 = abs_total_diff <= 1
+    )
+
+  summary <- person_data %>%
+    dplyr::summarise(
+      n_persons = dplyr::n(),
+      exact_match_rate = mean(exact_match, na.rm = TRUE),
+      within_1_rate = mean(within_1, na.rm = TRUE),
+      mean_abs_diff = mean(abs_total_diff, na.rm = TRUE),
+      median_abs_diff = stats::median(abs_total_diff, na.rm = TRUE)
+    )
+
+  list(
+    summary = summary,
+    person_data = person_data
+  )
+}
+
+person_metrics_primary <- calculate_person_metrics(
+  algo_episodes = algo_predictions,
+  gt_episodes   = match_results$gt_primary
+)
+
+person_metrics_all_gt <- calculate_person_metrics(
+  algo_episodes = algo_predictions,
+  gt_episodes   = match_results$gt_all
+)
+
+cat("Person-Level Aggregation Results (primary eligible GT analysis):\n")
+cat("- Exact count match:",
+    round(100 * person_metrics_primary$summary$exact_match_rate, 1), "%\n")
+cat("- Within ±1 episode:",
+    round(100 * person_metrics_primary$summary$within_1_rate, 1), "%\n")
+cat("- Mean absolute count difference:",
+    round(person_metrics_primary$summary$mean_abs_diff, 2), "\n")
+cat("- Median absolute count difference:",
+    round(person_metrics_primary$summary$median_abs_diff, 2), "\n\n")
+
+cat("Person-Level Aggregation Sensitivity (all GT episodes):\n")
+cat("- Exact count match:",
+    round(100 * person_metrics_all_gt$summary$exact_match_rate, 1), "%\n")
+cat("- Within ±1 episode:",
+    round(100 * person_metrics_all_gt$summary$within_1_rate, 1), "%\n")
+cat("- Mean absolute count difference:",
+    round(person_metrics_all_gt$summary$mean_abs_diff, 2), "\n")
+cat("- Median absolute count difference:",
+    round(person_metrics_all_gt$summary$median_abs_diff, 2), "\n")
+```
+
+
+## Person-level summary table
+```{r person-level-summary}
+person_summary_table <- tibble::tibble(
+  analysis = c("Primary: eligible GT only", "Sensitivity: all GT episodes"),
+  exact_match_rate = c(
+    person_metrics_primary$summary$exact_match_rate,
+    person_metrics_all_gt$summary$exact_match_rate
+  ),
+  within_1_rate = c(
+    person_metrics_primary$summary$within_1_rate,
+    person_metrics_all_gt$summary$within_1_rate
+  ),
+  mean_abs_diff = c(
+    person_metrics_primary$summary$mean_abs_diff,
+    person_metrics_all_gt$summary$mean_abs_diff
+  ),
+  median_abs_diff = c(
+    person_metrics_primary$summary$median_abs_diff,
+    person_metrics_all_gt$summary$median_abs_diff
+  )
+)
+
+person_summary_table %>%
+  dplyr::mutate(
+    exact_match_rate = round(100 * exact_match_rate, 1),
+    within_1_rate = round(100 * within_1_rate, 1),
+    mean_abs_diff = round(mean_abs_diff, 2),
+    median_abs_diff = round(median_abs_diff, 2)
+  ) %>%
+  knitr::kable(
+    caption = "Person-Level Aggregation Summary",
+    col.names = c(
+      "Analysis",
+      "Exact Match Rate (%)",
+      "Within ±1 Episode (%)",
+      "Mean Absolute Difference",
+      "Median Absolute Difference"
+    )
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+
+## Distribution of count differences
+```{r dist-cnt-diff}
+if (nrow(person_metrics_primary$person_data) > 0) {
+  ggplot2::ggplot(
+    person_metrics_primary$person_data,
+    ggplot2::aes(x = total_diff)
+  ) +
+    ggplot2::geom_histogram(
+      binwidth = 1,
+      fill = "steelblue",
+      color = "white"
+    ) +
+    ggplot2::labs(
+      title = "Distribution of Person-Level Episode Count Differences (Eligible GT Only)",
+      x = "Algorithm count - Ground truth count",
+      y = "Number of persons"
+    ) +
+    ggplot2::theme_minimal()
+}
+```
+
+# Summary and key findings
+```{r summary-key-findings}
+# =========================================================
+# Summary and key findings
+# Includes a podium-oriented subset
+# =========================================================
+
+summary_df <- tibble::tibble(
+  Metric = c(
+    "Algorithm episodes",
+    "Ground truth episodes (all)",
+    "Ground truth episodes (eligible for primary analysis)",
+    "Likely historical GT episodes removed",
+    "Primary matched episodes (overlap; eligible GT only)",
+    "Algorithm match rate (primary eligible GT analysis)",
+    "Eligible GT match rate (primary analysis)",
+    "Algorithm match rate (all GT sensitivity analysis)",
+    "All-GT match rate (sensitivity analysis)",
+    "Mean GA difference (days)",
+    "GA within ±7 days",
+    "GA within ±14 days",
+    "Person exact count match (eligible GT only)",
+    "Person count within ±1 episode (eligible GT only)"
+  ),
+  Value = c(
+    match_results$primary_overlap$stats$total_algo,
+    match_results$all_gt_overlap$stats$total_gt,
+    match_results$primary_overlap$stats$total_gt,
+    match_results$historical_summary$likely_historical_gt_episodes,
+    match_results$primary_overlap$stats$matched,
+    round(100 * match_results$primary_overlap$stats$match_rate_algo, 1),
+    round(100 * match_results$primary_overlap$stats$match_rate_gt, 1),
+    round(100 * match_results$all_gt_overlap$stats$match_rate_algo, 1),
+    round(100 * match_results$all_gt_overlap$stats$match_rate_gt, 1),
+    ifelse(nrow(ga_metrics$summary) > 0, round(ga_metrics$summary$mean_diff_days, 1), NA_real_),
+    ifelse(nrow(ga_metrics$summary) > 0, round(100 * ga_metrics$summary$within_7_days, 1), NA_real_),
+    ifelse(nrow(ga_metrics$summary) > 0, round(100 * ga_metrics$summary$within_14_days, 1), NA_real_),
+    round(100 * person_metrics_primary$summary$exact_match_rate, 1),
+    round(100 * person_metrics_primary$summary$within_1_rate, 1)
+  )
+)
+
+summary_df %>%
+  knitr::kable(caption = "Overall Validation Summary") %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+
+
+## Podium abstract subset:
+```{r podium-abstract}
+# Podium-oriented subset:
+# emphasize episode identification and gestational-age agreement
+podium_df <- tibble::tibble(
+  Metric = c(
+    "Algorithm episodes",
+    "Eligible GT episodes",
+    "Primary matched episodes (overlap)",
+    "Algorithm match rate (primary analysis)",
+    "Eligible GT match rate (primary analysis)",
+    "Mean GA difference (days)",
+    "GA within ±7 days",
+    "GA within ±14 days"
+  ),
+  Value = c(
+    match_results$primary_overlap$stats$total_algo,
+    match_results$primary_overlap$stats$total_gt,
+    match_results$primary_overlap$stats$matched,
+    round(100 * match_results$primary_overlap$stats$match_rate_algo, 1),
+    round(100 * match_results$primary_overlap$stats$match_rate_gt, 1),
+    ifelse(nrow(ga_metrics$summary) > 0, round(ga_metrics$summary$mean_diff_days, 1), NA_real_),
+    ifelse(nrow(ga_metrics$summary) > 0, round(100 * ga_metrics$summary$within_7_days, 1), NA_real_),
+    ifelse(nrow(ga_metrics$summary) > 0, round(100 * ga_metrics$summary$within_14_days, 1), NA_real_)
+  )
+)
+
+podium_df %>%
+  knitr::kable(caption = "Podium-Focused Result Subset") %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+
+## Key findings
+```{r key-findings}
+cat("Key Findings:\n")
+cat(
+  "1. After excluding likely historical ground-truth episodes from the primary analysis,",
+  match_results$primary_overlap$stats$matched,
+  "episodes were matched using outcome-agnostic overlap-based matching.\n"
+)
+
+cat(
+  "2. In the primary analysis, the algorithm-side match rate was",
+  round(100 * match_results$primary_overlap$stats$match_rate_algo, 1),
+  "% and the eligible ground-truth-side match rate was",
+  round(100 * match_results$primary_overlap$stats$match_rate_gt, 1),
+  "%.\n"
+)
+
+cat(
+  "3. Gestational age agreement among primary matched episodes was",
+  ifelse(
+    nrow(ga_metrics$summary) > 0,
+    paste0(round(100 * ga_metrics$summary$within_14_days, 1), "% within ±14 days"),
+    "not available"
+  ),
+  ".\n"
+)
+
+cat(
+  "4. Exploratory outcome classification was not used as a primary endpoint because the outcome labels are not yet finalized.\n"
+)
+
+cat(
+  "5. Person-level exact episode-count agreement was",
+  round(100 * person_metrics_primary$summary$exact_match_rate, 1),
+  "% in the primary eligible-GT analysis and",
+  round(100 * person_metrics_all_gt$summary$exact_match_rate, 1),
+  "% when all GT episodes were included.\n"
+)
+
+cat(
+  "6. The difference between the primary and all-GT analyses quantifies the impact of likely historical registry episodes that may not be observable in the Hopkins healthcare system data used by the algorithm.\n"
+)
+```
+```{r cleanup1}
+#| include: false
+
+# Disconnect from database
+if (exists("con")) {
+  DatabaseConnector::disconnect(con)
+  cat("Database connection closed\n")
+}
+```
+
+
+# Pregnancy complication
+
+## setup
+```{r pregnancy-complications-setup}
+# =========================================================
+# Pregnancy complications detected by either approach
+# New section:
+#   - preeclampsia
+#   - pregnancy-induced hypertension
+#   - gestational diabetes
+# =========================================================
+
+complication_concepts <- tibble::tibble(
+  complication = c(
+    "Preeclampsia",
+    "Pregnancy-induced hypertension",
+    "Gestational diabetes"
+  ),
+  concept_id = c(
+    439393,
+    4167493,
+    4024659
+  ),
+  short_name = c(
+    "preeclampsia",
+    "pih",
+    "gdm"
+  )
+)
+```
+
+```{r db-connect2}
+# Connect to database using project connection function
+con <- create_connection_from_env(".env")
+if (is.null(con)) stop("Connection returned NULL.")
+if (!DBI::dbIsValid(con)) stop("Database connection is not valid.")
+
+cat("Database connection established\n")
+
+```
+
+
+```{r pregnancy-complications-descendants}
+# =========================================================
+# Step 1A: get all descendant concept IDs from OMOP
+# =========================================================
+
+ensure_connection <- function(conn) {
+  ok <- tryCatch(DBI::dbIsValid(conn), error = function(e) FALSE)
+  if (!ok) {
+    stop("Database connection is no longer valid. Please re-run the db-connect chunk.")
+  }
+  invisible(conn)
+}
+
+get_complication_descendants <- function(conn, complication_concepts) {
+
+  ensure_connection(conn)
+
+  omop_database <- "Obstetrics_Minhas_IRB00501137_OMOP"
+  omop_schema   <- "dbo"
+
+  ancestor_table <- paste0(
+    "[", omop_database, "].[", omop_schema, "].[CONCEPT_ANCESTOR]"
+  )
+
+  out_list <- lapply(seq_len(nrow(complication_concepts)), function(i) {
+    ancestor_id <- complication_concepts$concept_id[i]
+    short_name  <- complication_concepts$short_name[i]
+
+    sql <- paste0(
+      "SELECT DISTINCT ",
+      ancestor_id, " AS ancestor_concept_id, ",
+      "'", short_name, "' AS short_name, ",
+      "descendant_concept_id ",
+      "FROM ", ancestor_table, " ",
+      "WHERE ancestor_concept_id = ", ancestor_id, " ",
+      "UNION ",
+      "SELECT DISTINCT ",
+      ancestor_id, " AS ancestor_concept_id, ",
+      "'", short_name, "' AS short_name, ",
+      ancestor_id, " AS descendant_concept_id"
+    )
+
+    DBI::dbGetQuery(conn, sql) %>%
+      tibble::as_tibble()
+  })
+
+  dplyr::bind_rows(out_list) %>%
+    dplyr::distinct()
+}
+
+complication_descendants <- get_complication_descendants(
+  conn = con,
+  complication_concepts = complication_concepts
+)
+
+cat("Complication descendant concepts:\n")
+cat("- Total descendant concept rows:", nrow(complication_descendants), "\n")
+cat("- Unique descendant concept IDs:",
+    dplyr::n_distinct(complication_descendants$descendant_concept_id), "\n")
+
+```
+
+
+
+```{r pregnancy-complications-query}
+# =========================================================
+# Step 1B: query condition_occurrence using descendant IDs
+# =========================================================
+
+query_complication_conditions <- function(conn, person_ids, complication_descendants, batch_size = 5000) {
+
+  ensure_connection(conn)
+
+  if (is.null(person_ids) || length(person_ids) == 0) {
+    return(tibble::tibble())
+  }
+
+  omop_database <- "Obstetrics_Minhas_IRB00501137_OMOP"
+  omop_schema   <- "dbo"
+
+  condition_table <- paste0(
+    "[", omop_database, "].[", omop_schema, "].[CONDITION_OCCURRENCE]"
+  )
+
+  person_ids <- unique(person_ids[!is.na(person_ids)])
+  concept_ids <- unique(complication_descendants$descendant_concept_id)
+
+  concept_sql <- paste(concept_ids, collapse = ", ")
+
+  person_batches <- split(
+    person_ids,
+    ceiling(seq_along(person_ids) / batch_size)
+  )
+
+  out_list <- lapply(seq_along(person_batches), function(i) {
+    batch_ids <- person_batches[[i]]
+    person_sql <- paste(batch_ids, collapse = ", ")
+
+    sql <- paste0(
+      "SELECT person_id, ",
+      "CAST(condition_start_date AS DATE) AS condition_start_date, ",
+      "condition_concept_id ",
+      "FROM ", condition_table, " ",
+      "WHERE condition_concept_id IN (", concept_sql, ") ",
+      "  AND person_id IN (", person_sql, ") ",
+      "  AND condition_concept_id <> 0"
+    )
+
+    cat("Querying batch", i, "of", length(person_batches), "...\n")
+
+    DBI::dbGetQuery(conn, sql) %>%
+      tibble::as_tibble()
+  })
+
+  dplyr::bind_rows(out_list) %>%
+    dplyr::mutate(
+      condition_start_date = as.Date(condition_start_date)
+    ) %>%
+    dplyr::inner_join(
+      complication_descendants,
+      by = c("condition_concept_id" = "descendant_concept_id"),
+      relationship = "many-to-many"
+    ) %>%
+    dplyr::distinct(
+      person_id,
+      condition_start_date,
+      condition_concept_id,
+      ancestor_concept_id,
+      short_name
+    )
+}
+
+gt_persons <- unique(match_results$gt_all$person_id)
+algo_persons <- unique(algo_predictions$person_id)
+persons_of_interest <- unique(c(gt_persons, algo_persons))
+
+complication_conditions <- query_complication_conditions(
+  conn = con,
+  person_ids = persons_of_interest,
+  complication_descendants = complication_descendants,
+  batch_size = 5000
+)
+
+cat("Pregnancy Complication Condition Records:\n")
+cat("- Persons in GT:", length(gt_persons), "\n")
+cat("- Persons in algorithm predictions:", length(algo_persons), "\n")
+cat("- Persons queried in union:", length(persons_of_interest), "\n")
+cat("- Total records queried for target concepts + descendants:", nrow(complication_conditions), "\n")
+cat("- Unique persons with at least one target complication code:",
+    dplyr::n_distinct(complication_conditions$person_id), "\n")
+cat("- Unique complication concept IDs returned:",
+    dplyr::n_distinct(complication_conditions$condition_concept_id), "\n")
+```
+
+
+
+
+```{r pregnancy-complications-derive-episode-flags}
+# =========================================================
+# Derive episode-level complication flags
+# A complication is considered detected if the condition date
+# falls within the episode window.
+# Uses short_name already returned from the OMOP query.
+# =========================================================
+
+flag_episode_complications <- function(episodes,
+                                       person_col,
+                                       episode_col,
+                                       start_col,
+                                       end_col,
+                                       conditions) {
+
+  ep <- episodes %>%
+    dplyr::transmute(
+      person_id = .data[[person_col]],
+      episode_id = .data[[episode_col]],
+      episode_start = as.Date(.data[[start_col]]),
+      episode_end   = as.Date(.data[[end_col]])
+    ) %>%
+    dplyr::mutate(
+      episode_start = dplyr::coalesce(episode_start, episode_end),
+      episode_end   = dplyr::coalesce(episode_end, episode_start),
+      episode_key = paste(person_id, episode_id, sep = "::")
+    ) %>%
+    dplyr::filter(!is.na(person_id), !is.na(episode_start), !is.na(episode_end))
+
+  if (nrow(ep) == 0) {
+    return(tibble::tibble())
+  }
+
+  cond <- conditions %>%
+    dplyr::filter(
+      !is.na(person_id),
+      !is.na(condition_start_date),
+      !is.na(short_name)
+    ) %>%
+    dplyr::distinct(person_id, condition_start_date, condition_concept_id, short_name)
+
+  if (nrow(cond) == 0) {
+    return(
+      ep %>%
+        dplyr::transmute(
+          episode_key,
+          preeclampsia_flag = 0L,
+          pih_flag = 0L,
+          gdm_flag = 0L,
+          any_complication_flag = 0L
+        )
+    )
+  }
+
+  episode_hits_long <- ep %>%
+    dplyr::inner_join(
+      cond,
+      by = "person_id",
+      relationship = "many-to-many"
+    ) %>%
+    dplyr::filter(
+      condition_start_date >= episode_start,
+      condition_start_date <= episode_end
+    ) %>%
+    dplyr::distinct(episode_key, short_name)
+
+  flags_wide <- episode_hits_long %>%
+    dplyr::mutate(flag = 1L) %>%
+    tidyr::pivot_wider(
+      names_from = short_name,
+      values_from = flag,
+      values_fill = 0
+    )
+
+  out <- ep %>%
+    dplyr::distinct(episode_key) %>%
+    dplyr::left_join(flags_wide, by = "episode_key") %>%
+    dplyr::mutate(
+      preeclampsia = dplyr::coalesce(preeclampsia, 0L),
+      pih = dplyr::coalesce(pih, 0L),
+      gdm = dplyr::coalesce(gdm, 0L)
+    ) %>%
+    dplyr::transmute(
+      episode_key,
+      preeclampsia_flag = as.integer(preeclampsia > 0),
+      pih_flag = as.integer(pih > 0),
+      gdm_flag = as.integer(gdm > 0),
+      any_complication_flag = as.integer((preeclampsia > 0) | (pih > 0) | (gdm > 0))
+    )
+
+  out
+}
+
+algo_complication_flags <- flag_episode_complications(
+  episodes = algo_predictions,
+  person_col = "person_id",
+  episode_col = "episode_number",
+  start_col = "episode_start_date",
+  end_col = "episode_end_date",
+  conditions = complication_conditions
+)
+
+gt_primary_complication_flags <- flag_episode_complications(
+  episodes = match_results$gt_primary,
+  person_col = "person_id",
+  episode_col = "gt_episode_num",
+  start_col = "gt_start",
+  end_col = "gt_end",
+  conditions = complication_conditions
+)
+
+gt_all_complication_flags <- flag_episode_complications(
+  episodes = match_results$gt_all,
+  person_col = "person_id",
+  episode_col = "gt_episode_num",
+  start_col = "gt_start",
+  end_col = "gt_end",
+  conditions = complication_conditions
+)
+
+cat("Episode-Level Complication Flags Created:\n")
+cat("- Algorithm episodes with flags:", nrow(algo_complication_flags), "\n")
+cat("- Eligible GT episodes with flags:", nrow(gt_primary_complication_flags), "\n")
+cat("- All GT episodes with flags:", nrow(gt_all_complication_flags), "\n")
+```
+
+
+## Summary
+
+```{r pregnancy-complications-overall-summary}
+# =========================================================
+# Overall complication prevalence by approach
+# =========================================================
+
+summarise_complication_flags <- function(flags, approach_label) {
+
+  flags %>%
+    dplyr::summarise(
+      preeclampsia = mean(preeclampsia_flag, na.rm = TRUE),
+      pih = mean(pih_flag, na.rm = TRUE),
+      gdm = mean(gdm_flag, na.rm = TRUE),
+      any_complication = mean(any_complication_flag, na.rm = TRUE)
+    ) %>%
+    dplyr::mutate(approach = approach_label) %>%
+    dplyr::select(
+      approach,
+      preeclampsia,
+      pih,
+      gdm,
+      any_complication
+    )
+}
+
+complication_prevalence_summary <- dplyr::bind_rows(
+  summarise_complication_flags(algo_complication_flags, "Algorithm episodes"),
+  summarise_complication_flags(gt_primary_complication_flags, "Eligible GT episodes"),
+  summarise_complication_flags(gt_all_complication_flags, "All GT episodes")
+)
+
+complication_prevalence_summary %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(preeclampsia, pih, gdm, any_complication),
+      ~ round(100 * ., 1)
+    )
+  ) %>%
+  knitr::kable(
+    caption = "Overall Pregnancy Complication Prevalence by Approach",
+    col.names = c(
+      "Approach",
+      "Preeclampsia (%)",
+      "Pregnancy-Induced Hypertension (%)",
+      "Gestational Diabetes (%)",
+      "Any Complication (%)"
+    )
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+
+## matched episodes
+
+```{r pregnancy-complications-matched-episodes}
+# =========================================================
+# Compare complication detection between approaches
+# among primary matched episodes
+# =========================================================
+
+matched_complications <- matched_episodes %>%
+  dplyr::left_join(
+    algo_complication_flags %>%
+      dplyr::rename(
+        algo_preeclampsia_flag = preeclampsia_flag,
+        algo_pih_flag = pih_flag,
+        algo_gdm_flag = gdm_flag,
+        algo_any_complication_flag = any_complication_flag
+      ),
+    by = c("algo_key" = "episode_key")
+  ) %>%
+  dplyr::left_join(
+    gt_primary_complication_flags %>%
+      dplyr::rename(
+        gt_preeclampsia_flag = preeclampsia_flag,
+        gt_pih_flag = pih_flag,
+        gt_gdm_flag = gdm_flag,
+        gt_any_complication_flag = any_complication_flag
+      ),
+    by = c("gt_key" = "episode_key")
+  ) %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(
+        algo_preeclampsia_flag, algo_pih_flag, algo_gdm_flag, algo_any_complication_flag,
+        gt_preeclampsia_flag, gt_pih_flag, gt_gdm_flag, gt_any_complication_flag
+      ),
+      ~ dplyr::coalesce(., 0L)
+    )
+  )
+
+cat("Matched Episode Complication Comparison:\n")
+cat("- Primary matched episodes available for complication comparison:",
+    nrow(matched_complications), "\n")
+```
+
+
+## Agreement summary
+```{r pregnancy-complications-agreement-summary}
+# =========================================================
+# Agreement metrics for complication detection
+# GT episode window used as reference
+# =========================================================
+
+calculate_binary_comparison_metrics <- function(dat, algo_col, gt_col, label) {
+
+  algo_vec <- dat[[algo_col]]
+  gt_vec   <- dat[[gt_col]]
+
+  tp <- sum(algo_vec == 1 & gt_vec == 1, na.rm = TRUE)
+  fp <- sum(algo_vec == 1 & gt_vec == 0, na.rm = TRUE)
+  fn <- sum(algo_vec == 0 & gt_vec == 1, na.rm = TRUE)
+  tn <- sum(algo_vec == 0 & gt_vec == 0, na.rm = TRUE)
+
+  n <- tp + fp + fn + tn
+
+  sensitivity <- ifelse(tp + fn > 0, tp / (tp + fn), NA_real_)
+  specificity <- ifelse(tn + fp > 0, tn / (tn + fp), NA_real_)
+  ppv <- ifelse(tp + fp > 0, tp / (tp + fp), NA_real_)
+  agreement <- ifelse(n > 0, (tp + tn) / n, NA_real_)
+
+  # Cohen's kappa
+  p_obs <- agreement
+  p_exp <- ifelse(
+    n > 0,
+    ((tp + fp) / n) * ((tp + fn) / n) +
+    ((fn + tn) / n) * ((fp + tn) / n),
+    NA_real_
+  )
+
+  kappa <- ifelse(
+    !is.na(p_exp) && (1 - p_exp) > 0,
+    (p_obs - p_exp) / (1 - p_exp),
+    NA_real_
+  )
+
+  tibble::tibble(
+    complication = label,
+    n = n,
+    algorithm_positive = sum(algo_vec == 1, na.rm = TRUE),
+    gt_positive = sum(gt_vec == 1, na.rm = TRUE),
+    both_positive = tp,
+    algorithm_only = fp,
+    gt_only = fn,
+    both_negative = tn,
+    sensitivity = sensitivity,
+    specificity = specificity,
+    ppv = ppv,
+    agreement = agreement,
+    kappa = kappa
+  )
+}
+
+complication_agreement_summary <- dplyr::bind_rows(
+  calculate_binary_comparison_metrics(
+    matched_complications,
+    "algo_preeclampsia_flag",
+    "gt_preeclampsia_flag",
+    "Preeclampsia"
+  ),
+  calculate_binary_comparison_metrics(
+    matched_complications,
+    "algo_pih_flag",
+    "gt_pih_flag",
+    "Pregnancy-induced hypertension"
+  ),
+  calculate_binary_comparison_metrics(
+    matched_complications,
+    "algo_gdm_flag",
+    "gt_gdm_flag",
+    "Gestational diabetes"
+  ),
+  calculate_binary_comparison_metrics(
+    matched_complications,
+    "algo_any_complication_flag",
+    "gt_any_complication_flag",
+    "Any complication"
+  )
+)
+
+complication_agreement_summary %>%
+  dplyr::mutate(
+    dplyr::across(
+      c(sensitivity, specificity, ppv, agreement),
+      ~ round(100 * ., 1)
+      ),
+    kappa = round(kappa, 3)
+  ) %>%
+  knitr::kable(
+    caption = "Pregnancy Complication Detection Agreement Among Primary Matched Episodes",
+    col.names = c(
+      "Complication",
+      "N",
+      "Algorithm Positive",
+      "GT Positive",
+      "Both Positive",
+      "Algorithm Only",
+      "GT Only",
+      "Both Negative",
+      "Sensitivity (%)",
+      "Specificity (%)",
+      "PPV (%)",
+      "Agreement (%)",
+      "Cohen's Kappa"
+)
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+## Detection Rate
+
+```{r pregnancy-complications-detection-rates}
+# =========================================================
+# Detection rates by approach among matched episodes
+# =========================================================
+
+matched_complication_rates <- tibble::tibble(
+  complication = c(
+    "Preeclampsia",
+    "Pregnancy-induced hypertension",
+    "Gestational diabetes",
+    "Any complication"
+  ),
+  algorithm_rate = c(
+    mean(matched_complications$algo_preeclampsia_flag, na.rm = TRUE),
+    mean(matched_complications$algo_pih_flag, na.rm = TRUE),
+    mean(matched_complications$algo_gdm_flag, na.rm = TRUE),
+    mean(matched_complications$algo_any_complication_flag, na.rm = TRUE)
+  ),
+  gt_rate = c(
+    mean(matched_complications$gt_preeclampsia_flag, na.rm = TRUE),
+    mean(matched_complications$gt_pih_flag, na.rm = TRUE),
+    mean(matched_complications$gt_gdm_flag, na.rm = TRUE),
+    mean(matched_complications$gt_any_complication_flag, na.rm = TRUE)
+  )
+)
+
+matched_complication_rates %>%
+  dplyr::mutate(
+    algorithm_rate = round(100 * algorithm_rate, 1),
+    gt_rate = round(100 * gt_rate, 1)
+  ) %>%
+  knitr::kable(
+    caption = "Pregnancy Complication Detection Rates Among Primary Matched Episodes",
+    col.names = c(
+      "Complication",
+      "Algorithm Detection Rate (%)",
+      "GT Detection Rate (%)"
+    )
+  ) %>%
+  kableExtra::kable_styling(
+    bootstrap_options = c("striped", "hover"),
+    full_width = FALSE
+  )
+```
+
+
+## Plot
+```{r pregnancy-complications-plot}
+if (nrow(matched_complication_rates) > 0) {
+
+  complication_rates_long <- matched_complication_rates %>%
+    tidyr::pivot_longer(
+      cols = c(algorithm_rate, gt_rate),
+      names_to = "approach",
+      values_to = "rate"
+    ) %>%
+    dplyr::mutate(
+      approach = dplyr::recode(
+        approach,
+        algorithm_rate = "Algorithm window",
+        gt_rate = "GT window"
+      )
+    )
+
+  ggplot2::ggplot(
+    complication_rates_long,
+    ggplot2::aes(x = complication, y = rate, fill = approach)
+  ) +
+    ggplot2::geom_col(position = "dodge") +
+    ggplot2::scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    ggplot2::labs(
+      title = "Pregnancy Complication Detection Rates Among Primary Matched Episodes",
+      x = "Complication",
+      y = "Detection Rate",
+      fill = "Approach"
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      axis.text.x = ggplot2::element_text(angle = 20, hjust = 1)
+    )
+}
+```
+
+## Key findings
+```{r pregnancy-complications-key-findings}
+cat("Pregnancy Complication Findings:\n")
+cat(
+  "1. Episode-level complication flags were derived for preeclampsia, pregnancy-induced hypertension, and gestational diabetes using direct condition concept IDs within each episode window.\n"
+)
+
+cat(
+  "2. Among primary matched episodes, any-complication detection was",
+  round(100 * mean(matched_complications$algo_any_complication_flag, na.rm = TRUE), 1),
+  "% using the algorithm-defined window and",
+  round(100 * mean(matched_complications$gt_any_complication_flag, na.rm = TRUE), 1),
+  "% using the ground-truth-defined window.\n"
+)
+
+cat(
+  "3. Complication-specific agreement metrics are reported for preeclampsia, pregnancy-induced hypertension, and gestational diabetes to assess whether the two episode definitions capture similar clinically relevant pregnancy events.\n"
+)
+
+cat(
+  "4. This section complements the primary outcome-agnostic episode matching analysis by evaluating whether clinically important pregnancy complications are detected within the episodes identified by either approach.\n"
+)
+```
+
+```{r cleanup2}
+#| include: false
+
+# Disconnect from database
+if (exists("con")) {
+  DatabaseConnector::disconnect(con)
+  cat("Database connection closed\n")
+}
+```
+
+

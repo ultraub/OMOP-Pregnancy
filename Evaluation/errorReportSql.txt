@@ -1,0 +1,52 @@
+DBMS:
+sql server
+
+Error:
+com.microsoft.sqlserver.jdbc.SQLServerException: Conversion failed when converting the nvarchar value '2013-02-19' to data type int.
+
+SQL:
+
+SELECT
+  EMRN,
+  PregnancyEstimatedStartDate,
+  PregnancyEstimatedEndDate,
+  PregnancyGravidaCount,
+  PregnancyParaCount,
+  PregnancyAbortionCount,
+  PregnancyTherapeuticAbortionCount,
+  PregnancySpontaneousAbortionCount,
+  PregnancyEctopicCount
+FROM Obstetrics_Minhas_IRB00501137_Scratch.phi.PMAP_OB_PREGNANCIES
+WHERE IsHistorical = 0 AND PregnancyEstimatedStartDate < 2025-1-1;
+
+
+R version:
+R version 4.5.2 (2025-10-31 ucrt)
+
+Platform:
+x86_64-w64-mingw32
+
+Attached base packages:
+- stats
+- graphics
+- grDevices
+- utils
+- datasets
+- methods
+- base
+
+Other attached packages:
+- ggridges (0.5.7)
+- ggstats (0.11.0)
+- BlandAltmanLeh (0.3.1)
+- dotenv (1.0.3)
+- rJava (1.0-11)
+- janitor (2.2.1)
+- kableExtra (1.4.0)
+- knitr (1.50)
+- scales (1.4.0)
+- ggplot2 (4.0.2)
+- lubridate (1.9.5)
+- purrr (1.2.1)
+- tidyr (1.3.2)
+- dplyr (1.2.0)
