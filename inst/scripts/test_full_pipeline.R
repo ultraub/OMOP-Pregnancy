@@ -84,13 +84,6 @@ tryCatch({
   message("\n==== PHASE 2: LOAD CONCEPTS ====")
   concepts <- load_concept_sets()
   
-  # Enrich with domains
-  concepts$hip_concepts <- enrich_concepts_with_domains(
-    concepts$hip_concepts,
-    connection,
-    cdm_schema
-  )
-  
   message(sprintf("✓ Loaded %d HIP concepts", nrow(concepts$hip_concepts)))
   message(sprintf("✓ Loaded %d PPS concepts", nrow(concepts$pps_concepts)))
   message(sprintf("✓ Loaded %d outcome categories", nrow(concepts$matcho_limits)))

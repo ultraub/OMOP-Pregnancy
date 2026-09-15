@@ -101,52 +101,22 @@ extract_pregnancy_cohort <- function(
     
     if (use_temp_tables && exists("person_temp")) {
       
-      # Create concept temp tables by domain
+      # Create concept temp tables
       message("  Creating concept temp tables...")
-      
-      # HIP concepts by domain - initialize variables
-      hip_cond_temp <- NULL
-      hip_proc_temp <- NULL
-      hip_obs_temp <- NULL
-      hip_meas_temp <- NULL
+
+      # One HIP concept table joined to every domain table, as in the
+      # reference. Records are found wherever the ETL placed them, and the
+      # concept CSV needs no domain column.
+      hip_temp <- NULL
       pps_temp <- NULL
-      
-      hip_conditions <- hip_concepts %>% 
-        filter(!is.na(domain_name) & domain_name == "Condition")
-      if (nrow(hip_conditions) > 0) {
-        hip_cond_temp <- create_concept_temp_table(connection, hip_conditions, "#hip_conditions")
-        if (!is.null(hip_cond_temp)) {
-          temp_tables_created <- c(temp_tables_created, hip_cond_temp)
+
+      if (nrow(hip_concepts) > 0) {
+        hip_temp <- create_concept_temp_table(connection, hip_concepts, "#hip_concepts")
+        if (!is.null(hip_temp)) {
+          temp_tables_created <- c(temp_tables_created, hip_temp)
         }
       }
-      
-      hip_procedures <- hip_concepts %>% 
-        filter(!is.na(domain_name) & domain_name == "Procedure")
-      if (nrow(hip_procedures) > 0) {
-        hip_proc_temp <- create_concept_temp_table(connection, hip_procedures, "#hip_procedures")
-        if (!is.null(hip_proc_temp)) {
-          temp_tables_created <- c(temp_tables_created, hip_proc_temp)
-        }
-      }
-      
-      hip_observations <- hip_concepts %>% 
-        filter(!is.na(domain_name) & domain_name == "Observation")
-      if (nrow(hip_observations) > 0) {
-        hip_obs_temp <- create_concept_temp_table(connection, hip_observations, "#hip_observations")
-        if (!is.null(hip_obs_temp)) {
-          temp_tables_created <- c(temp_tables_created, hip_obs_temp)
-        }
-      }
-      
-      hip_measurements <- hip_concepts %>% 
-        filter(!is.na(domain_name) & domain_name == "Measurement")
-      if (nrow(hip_measurements) > 0) {
-        hip_meas_temp <- create_concept_temp_table(connection, hip_measurements, "#hip_measurements")
-        if (!is.null(hip_meas_temp)) {
-          temp_tables_created <- c(temp_tables_created, hip_meas_temp)
-        }
-      }
-      
+
       # PPS concepts
       if (nrow(pps_concepts) > 0) {
         pps_temp <- create_concept_temp_table(connection, pps_concepts, "#pps_concepts")
@@ -154,60 +124,60 @@ extract_pregnancy_cohort <- function(
           temp_tables_created <- c(temp_tables_created, pps_temp)
         }
       }
-      
+
       # Extract using temp tables (use the actual returned names)
-      message(sprintf("  Extracting conditions (%d concepts)...", nrow(hip_conditions)))
-      conditions <- if (!is.null(hip_cond_temp)) {
+      message(sprintf("  Extracting conditions (%d concepts)...", nrow(hip_concepts)))
+      conditions <- if (!is.null(hip_temp)) {
         extract_domain_with_temp_table(
           connection, cdm_schema, target_dialect,
           table_name = "condition_occurrence",
           concept_column = "condition_concept_id",
           date_column = "condition_start_date",
           person_temp_table = person_temp,
-          concept_temp_table = hip_cond_temp
+          concept_temp_table = hip_temp
         )
       } else {
         data.frame()
       }
-      
-      message(sprintf("  Extracting procedures (%d concepts)...", nrow(hip_procedures)))
-      procedures <- if (!is.null(hip_proc_temp)) {
+
+      message(sprintf("  Extracting procedures (%d concepts)...", nrow(hip_concepts)))
+      procedures <- if (!is.null(hip_temp)) {
         extract_domain_with_temp_table(
           connection, cdm_schema, target_dialect,
           table_name = "procedure_occurrence",
           concept_column = "procedure_concept_id",
           date_column = "procedure_date",
           person_temp_table = person_temp,
-          concept_temp_table = hip_proc_temp
+          concept_temp_table = hip_temp
         )
       } else {
         data.frame()
       }
-      
-      message(sprintf("  Extracting observations (%d concepts)...", nrow(hip_observations)))
-      observations <- if (!is.null(hip_obs_temp)) {
+
+      message(sprintf("  Extracting observations (%d concepts)...", nrow(hip_concepts)))
+      observations <- if (!is.null(hip_temp)) {
         extract_domain_with_temp_table(
           connection, cdm_schema, target_dialect,
           table_name = "observation",
           concept_column = "observation_concept_id",
           date_column = "observation_date",
           person_temp_table = person_temp,
-          concept_temp_table = hip_obs_temp,
+          concept_temp_table = hip_temp,
           include_value = TRUE
         )
       } else {
         data.frame()
       }
-      
-      message(sprintf("  Extracting measurements (%d concepts)...", nrow(hip_measurements)))
-      measurements <- if (!is.null(hip_meas_temp)) {
+
+      message(sprintf("  Extracting measurements (%d concepts)...", nrow(hip_concepts)))
+      measurements <- if (!is.null(hip_temp)) {
         extract_domain_with_temp_table(
           connection, cdm_schema, target_dialect,
           table_name = "measurement",
           concept_column = "measurement_concept_id",
           date_column = "measurement_date",
           person_temp_table = person_temp,
-          concept_temp_table = hip_meas_temp,
+          concept_temp_table = hip_temp,
           include_value = TRUE
         )
       } else {
@@ -240,7 +210,7 @@ extract_pregnancy_cohort <- function(
         table_name = "condition_occurrence",
         concept_column = "condition_concept_id",
         date_column = "condition_start_date",
-        concepts = hip_concepts[!is.na(hip_concepts$domain_name) & hip_concepts$domain_name == "Condition", ],
+        concepts = hip_concepts,
         person_ids = person_ids
       )
       
@@ -249,7 +219,7 @@ extract_pregnancy_cohort <- function(
         table_name = "procedure_occurrence",
         concept_column = "procedure_concept_id",
         date_column = "procedure_date",
-        concepts = hip_concepts[!is.na(hip_concepts$domain_name) & hip_concepts$domain_name == "Procedure", ],
+        concepts = hip_concepts,
         person_ids = person_ids
       )
       
@@ -258,7 +228,7 @@ extract_pregnancy_cohort <- function(
         table_name = "observation",
         concept_column = "observation_concept_id",
         date_column = "observation_date",
-        concepts = hip_concepts[!is.na(hip_concepts$domain_name) & hip_concepts$domain_name == "Observation", ],
+        concepts = hip_concepts,
         person_ids = person_ids,
         include_value = TRUE
       )
@@ -268,7 +238,7 @@ extract_pregnancy_cohort <- function(
         table_name = "measurement",
         concept_column = "measurement_concept_id",
         date_column = "measurement_date",
-        concepts = hip_concepts[!is.na(hip_concepts$domain_name) & hip_concepts$domain_name == "Measurement", ],
+        concepts = hip_concepts,
         person_ids = person_ids,
         include_value = TRUE
       )

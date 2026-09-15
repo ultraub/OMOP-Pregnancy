@@ -186,16 +186,6 @@ tryCatch({
   message("\nStep 1: Loading concept definitions...")
   concepts <- load_concept_sets()
   
-  # Enrich HIP concepts with domain information
-  if (any(is.na(concepts$hip_concepts$domain_name))) {
-    message("  Enriching concepts with domain information...")
-    concepts$hip_concepts <- enrich_concepts_with_domains(
-      concepts$hip_concepts,
-      connection,
-      vocabulary_schema
-    )
-  }
-  
   message(sprintf("  ✓ Loaded %d HIP concepts", nrow(concepts$hip_concepts)))
   message(sprintf("  ✓ Loaded %d PPS concepts", nrow(concepts$pps_concepts)))
   message(sprintf("  ✓ Loaded %d outcome categories", nrow(concepts$matcho_limits)))
