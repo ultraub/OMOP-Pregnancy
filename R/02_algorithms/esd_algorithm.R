@@ -16,17 +16,24 @@
 # domains. Concept names can be looked up in Athena: https://athena.ohdsi.org/
 # =============================================================================
 
-# Gestational Week (GW) concepts - used for GW classification in precision scoring
+# Concept lists are those of Jones et al. (N3C) as carried into the All of Us
+# reference implementation; all are standard OMOP concepts (verified against
+# the N3C code, none are All of Us-specific).
+
+# Gestational week (GW) concepts: classified as week-level evidence
 ESD_GW_CONCEPTS <- c(3048230, 3002209, 3012266, 3050433)
+
+# Gestational age concepts whose numeric value is read as weeks (0 < v < 44)
+ESD_GA_VALUE_CONCEPTS <- c(3048230, 3002209, 3012266)
 
 # Observation concepts that may contain gestational timing
 ESD_OBSERVATION_CONCEPTS <- c(
-  3011536, 3026070, 3024261, 4260747, 40758410,
-  3002549, 43054890, 46234792, 4266763, 40485048
+  3011536, 3026070, 3024261, 4260747, 40758410, 3002549, 43054890,
+  46234792, 4266763, 40485048, 3048230, 3002209, 3012266
 )
 
 # Measurement concepts that may contain gestational timing
-ESD_MEASUREMENT_CONCEPTS <- c(3036844, 3001105)
+ESD_MEASUREMENT_CONCEPTS <- c(3036844, 3048230, 3001105, 3002209, 3050433, 3012266)
 
 # Estimated Date of Delivery (EDD) concepts
 ESD_DELIVERY_DATE_CONCEPTS <- c(
@@ -40,7 +47,7 @@ ESD_CONCEPTION_DATE_CONCEPTS <- c(3002314, 3043737, 4058439, 4072438, 4089559, 4
 # Length of Gestation at Birth (LOG) concepts
 ESD_GESTATION_LENGTH_CONCEPTS <- c(4260747, 43054890, 46234792, 4266763, 40485048)
 
-# Combined list of all ESD timing concepts for filtering
+# Combined list of all ESD timing concepts for extraction and filtering
 ESD_ALL_TIMING_CONCEPTS <- unique(c(
   ESD_GW_CONCEPTS,
   ESD_OBSERVATION_CONCEPTS,
@@ -180,247 +187,186 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
 }
 
 #' Get timing concepts for ESD calculation (All of Us aligned)
+#'
+#' Builds the ESD evidence per episode the way the reference does:
+#' 1. Records come from cohort_data$esd_timing (concept-table driven
+#'    extraction: names containing "gestation period" plus the fixed ESD
+#'    lists and all PPS concepts). If that is absent, falls back to the HIP
+#'    domain frames plus the PPS timing frame, deduplicated per record.
+#' 2. Window: episode working start to recorded end, no padding.
+#' 3. Week value: "Gestation period, N weeks" name, else the numeric value
+#'    for the gestational age concepts when 0 < v < 44; truncated to integer.
+#' 4. GT_type: GW if name contains "gestation period" or concept is in
+#'    ESD_GW_CONCEPTS (dropped if no week value); else GR3m if the concept
+#'    has PPS month bounds.
+#' 5. Rollup: GW rows collapse to one per date (highest week), others to one
+#'    per concept per date; ordered as the reference groups them.
 #' @noRd
 get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
 
-  # Get timing concept IDs to filter for
-  timing_concept_ids <- pps_concepts$concept_id
-
-  # ESD timing concepts are defined at module level (ESD_ALL_TIMING_CONCEPTS)
-  # to allow reuse across functions in this file
-
-  # OMOP OPTIMIZATION: Single-pass filtering for database performance
-  # Unlike All of Us which filters each domain separately, we combine domains first
-  # to reduce database round-trips while maintaining identical results
-  
-  # Cache column existence checks to avoid SQL errors on missing columns
-  # All of Us assumes all columns exist, but OHDSI CDMs may vary in their
-  # measurement/observation value columns (value_as_number, value_as_string, etc.).
-  # This defensive programming ensures compatibility across diverse CDM implementations
-  col_cache <- list()
-  
-  # Combine all domain data into single dataframe for efficient filtering
-  all_domain_data <- bind_rows(
-    if (!is.null(cohort_data$conditions) && nrow(cohort_data$conditions) > 0) 
-      cohort_data$conditions %>% mutate(domain_source = "condition") else NULL,
-    if (!is.null(cohort_data$procedures) && nrow(cohort_data$procedures) > 0) 
-      cohort_data$procedures %>% mutate(domain_source = "procedure") else NULL,
-    if (!is.null(cohort_data$observations) && nrow(cohort_data$observations) > 0) 
-      cohort_data$observations %>% mutate(domain_source = "observation") else NULL,
-    if (!is.null(cohort_data$measurements) && nrow(cohort_data$measurements) > 0) 
-      cohort_data$measurements %>% mutate(domain_source = "measurement") else NULL
-  )
-  
-  # Check which columns exist in the combined data
-  if (!is.null(all_domain_data) && nrow(all_domain_data) > 0) {
-    col_cache$has_concept_name <- "concept_name" %in% names(all_domain_data)
-    col_cache$has_gest_value <- "gest_value" %in% names(all_domain_data)
-    col_cache$has_category <- "category" %in% names(all_domain_data)
-    col_cache$has_value_as_number <- "value_as_number" %in% names(all_domain_data)
-    
-    # Filter for timing concepts - aligned with All of Us implementation
-    # Captures concepts from multiple sources:
-    #   1. PPS timing concept IDs (from pps_concepts.csv)
-    #   2. ESD timing concepts (hardcoded lists above - EDD, EDC, LOG, GW)
-    #   3. Pattern matching on "gestation" in concept name
-    #   4. GEST category from HIP concepts
-    #   5. Records with gest_value populated
-    timing_from_domains <- all_domain_data %>%
-      filter(
-        concept_id %in% timing_concept_ids |
-        concept_id %in% ESD_ALL_TIMING_CONCEPTS |
-        (col_cache$has_concept_name & !is.na(concept_name) & grepl("gestation", concept_name, ignore.case = TRUE)) |
-        (col_cache$has_category & !is.na(category) & category == "GEST") |
-        (col_cache$has_gest_value & !is.na(gest_value))
-      ) %>%
-      select(-domain_source)  # Remove temporary column
-  } else {
-    timing_from_domains <- NULL
-  }
-  
-  # Handle gestational_timing separately since it's already timing-specific
-  gestational_timing_normalized <- NULL
-  if (!is.null(cohort_data$gestational_timing) && nrow(cohort_data$gestational_timing) > 0) {
-    gestational_timing_normalized <- cohort_data$gestational_timing %>%
-      mutate(
-        concept_name = if (!"concept_name" %in% names(.)) NA_character_ else concept_name,
-        category = "GEST",
-        gest_value = if (!"gest_value" %in% names(.)) NA_real_ else gest_value,
-        value_as_number = if (!"value_as_number" %in% names(.)) NA_real_ else value_as_number,
-        value_as_string = if (!"value_as_string" %in% names(.)) NA_character_ else value_as_string
-      ) %>%
-      select(any_of(c("person_id", "concept_id", "event_date", "concept_name", 
-                      "category", "gest_value", "value_as_number", "value_as_string",
-                      "min_month", "max_month")))
-  }
-  
-  # Combine the filtered timing records
-  timing_records <- bind_rows(
-    timing_from_domains,
-    gestational_timing_normalized
-  )
-  
-  if (is.null(timing_records) || nrow(timing_records) == 0) {
+  records <- get_esd_timing_records(cohort_data)
+  if (is.null(records) || nrow(records) == 0) {
     return(data.frame())
   }
-  
-  # Add compute step if this is a lazy tbl (like All of Us's aou_compute())
-  if ("tbl_lazy" %in% class(timing_records) || "tbl_sql" %in% class(timing_records)) {
-    # Source database utilities
-    source("R/03_utilities/database_utils.R")
-    
-    # Compute to temp table for better performance
-    message("    Computing filtered timing records to temp table...")
-    timing_records <- omop_compute(timing_records)
-  }
-  
-  # Use cached column checks or check now if not already cached
-  if (length(col_cache) == 0) {
-    col_cache$has_concept_name <- "concept_name" %in% names(timing_records)
-    col_cache$has_gest_value <- "gest_value" %in% names(timing_records)
-    col_cache$has_value_as_number <- "value_as_number" %in% names(timing_records)
-  }
-  
-  # Join with PPS concepts to get min_month and max_month (if not already present)
-  if (!"min_month" %in% names(timing_records) || !"max_month" %in% names(timing_records)) {
-    timing_records <- timing_records %>%
-      left_join(
-        pps_concepts %>% select(concept_id, min_month, max_month),
-        by = "concept_id"
-      )
-  } else {
-    # If min_month/max_month already exist from gestational_timing, use coalesce to fill gaps
-    timing_records <- timing_records %>%
-      left_join(
-        pps_concepts %>% select(concept_id, pps_min = min_month, pps_max = max_month),
-        by = "concept_id"
-      ) %>%
-      mutate(
-        min_month = coalesce(min_month, pps_min),
-        max_month = coalesce(max_month, pps_max)
-      ) %>%
-      select(-pps_min, -pps_max)
-  }
-  
-  # Prepare episode windows for efficient joining
-  episode_windows <- episodes %>%
-    select(person_id, episode_number, episode_start_date, episode_end_date) %>%
+
+  # PPS month bounds (GR3m evidence)
+  pps_months <- pps_concepts %>%
+    select(concept_id, pps_min = min_month, pps_max = max_month) %>%
+    distinct(concept_id, .keep_all = TRUE)
+  records <- records %>%
+    left_join(pps_months, by = "concept_id") %>%
     mutate(
-      episode_start_date = as.Date(episode_start_date),
-      episode_end_date = as.Date(episode_end_date),
-      window_start = episode_start_date - 30,
-      window_end = episode_end_date + 30
+      min_month = if ("min_month" %in% names(.)) coalesce(as.numeric(min_month), pps_min) else pps_min,
+      max_month = if ("max_month" %in% names(.)) coalesce(as.numeric(max_month), pps_max) else pps_max
+    ) %>%
+    select(-pps_min, -pps_max)
+
+  # Episode windows: [working start, recorded end], no padding (reference)
+  episode_windows <- episodes %>%
+    transmute(
+      person_id,
+      episode_number,
+      window_start = as.Date(episode_start_date),
+      window_end = if ("recorded_episode_end" %in% names(.)) {
+        as.Date(coalesce(recorded_episode_end, episode_end_date))
+      } else {
+        as.Date(episode_end_date)
+      }
     )
-  
-  # Use inner join with date conditions (more efficient than left join + filter)
-  # This follows the All of Us pattern of filtering during the join but uses
-  # modern dplyr join_by syntax for cleaner date range conditions.
-  # Window of ±30 days captures timing concepts near episode boundaries
-  episode_timing <- timing_records %>%
+
+  episode_timing <- records %>%
     mutate(event_date = as.Date(event_date)) %>%
     inner_join(
       episode_windows,
-      by = join_by(
-        person_id,
-        event_date >= window_start,
-        event_date <= window_end
-      )
+      by = join_by(person_id, event_date >= window_start, event_date <= window_end)
     ) %>%
     select(-window_start, -window_end)
-  
-  # Classify timing concepts as GW (gestational week) or GR3m (3-month range)
-  # This follows All of Us logic for precision category assignment:
-  # - GW concepts: specific gestational week with high precision
-  # - GR3m concepts: broader 3-month ranges with lower precision
-  # Handles missing columns gracefully for OHDSI CDM variations
+
+  if (nrow(episode_timing) == 0) {
+    return(data.frame())
+  }
+
+  # Week value (reference domain_value): name first, then numeric value.
+  # Reference reads value_as_string for observations and value_as_number for
+  # measurements; a generic CDM may hold weeks in either, so take both.
   episode_timing <- episode_timing %>%
     mutate(
-      # Determine timing type (GW vs GR3m)
-      # Primary classification matches original: "gestation period" name OR specific concept IDs
-      # OMOP extension: also accepts "gestational age" and gest_value as secondary signals
+      concept_name = as.character(concept_name),
+      name_lower = tolower(coalesce(concept_name, "")),
+      value_from_name = suppressWarnings(as.numeric(
+        ifelse(grepl("gestation period, *[0-9]+", name_lower),
+               sub(".*gestation period, *([0-9]+).*", "\\1", name_lower), NA)
+      )),
+      value_from_string = suppressWarnings(as.numeric(
+        ifelse(!is.na(value_as_string) & grepl("[0-9]", value_as_string),
+               sub(".*?([0-9]+(\\.[0-9]+)?).*", "\\1", value_as_string), NA)
+      )),
+      domain_value = coalesce(value_from_name, as.numeric(value_as_number), value_from_string),
+      domain_value = as.integer(domain_value),
+      # Jones et al. (N3C) rule: a "Gestation period, N weeks" name, or a
+      # numeric value on the gestational age concepts within (0, 44). The
+      # All of Us port also accepts any "gestational age" name, which makes
+      # the bound dead (those concepts are named "Gestational age"); we keep
+      # the N3C bound so implausible values (e.g. 50 weeks) are excluded.
+      keep_value = grepl("gestation period,", name_lower, fixed = TRUE) |
+        (concept_id %in% ESD_GA_VALUE_CONCEPTS & !is.na(domain_value) &
+           domain_value < 44 & domain_value > 0),
+      gestational_weeks = if_else(keep_value, as.numeric(domain_value), NA_real_),
+      implied_start_date = if_else(keep_value & !is.na(domain_value),
+                                   event_date - domain_value * 7, as.Date(NA)),
+
       GT_type = case_when(
-        # Primary: exact match with original str_detect("gestation period")
-        col_cache$has_concept_name & !is.na(concept_name) &
-          grepl("gestation period", concept_name, ignore.case = TRUE) ~ "GW",
-        # Primary: specific concept IDs (matching original exactly)
-        concept_id %in% ESD_GW_CONCEPTS ~ "GW",
-        # OMOP extension: "gestational age" concepts (not in original but valid in OMOP CDMs)
-        col_cache$has_concept_name & !is.na(concept_name) &
-          grepl("gestational age", concept_name, ignore.case = TRUE) ~ "GW",
-        # OMOP extension: records with gest_value populated (extraction-derived)
-        col_cache$has_gest_value & !is.na(gest_value) ~ "GW",
-        # GR3m concepts: range-based concepts from PPS with min/max months
+        grepl("gestation period", name_lower, fixed = TRUE) |
+          concept_id %in% ESD_GW_CONCEPTS ~ "GW",
         !is.na(min_month) & !is.na(max_month) ~ "GR3m",
         TRUE ~ NA_character_
-      )
-    )
-  
-  # Extract gestational weeks for GW concepts following All of Us priority:
-  # 1. gest_value field (most reliable if available)
-  # 2. value_as_number field (if reasonable <50 weeks)
-  # 3. Text extraction from concept_name (e.g., "Gestation period, 20 weeks")
-  # Column availability checked first to prevent SQL errors in diverse CDMs
-  if (col_cache$has_gest_value || col_cache$has_value_as_number || col_cache$has_concept_name) {
-    episode_timing <- episode_timing %>%
-      mutate(
-        gestational_weeks = case_when(
-          # Priority 1: Use gest_value if available (most reliable)
-          GT_type == "GW" & col_cache$has_gest_value & !is.na(gest_value) ~ gest_value,
-          # Priority 2: Use value_as_number if reasonable (< 50 weeks)
-          GT_type == "GW" & col_cache$has_value_as_number & !is.na(value_as_number) & 
-            value_as_number < 50 ~ value_as_number,
-          # Priority 3: Extract from concept_name text (e.g., "Gestation period, 20 weeks")
-          GT_type == "GW" & col_cache$has_concept_name & !is.na(concept_name) & 
-            grepl("\\d+ weeks?", concept_name) ~ 
-            suppressWarnings(as.numeric(gsub(".*?(\\d+) weeks?.*", "\\1", concept_name))),
-          TRUE ~ NA_real_
-        )
-      )
-  } else {
-    # No columns available for extracting gestational weeks
-    episode_timing <- episode_timing %>%
-      mutate(gestational_weeks = NA_real_)
-  }
-  
-  # Validation: remove GW classification if no value could be extracted
-  # Matches original lines 386-392: GT_type set to NA if domain_value is NA
-  # or extrapolated_preg_start is NA. This prevents concepts from being
-  # classified as GW when no usable gestational week value exists.
-  episode_timing <- episode_timing %>%
-    mutate(
+      ),
       GT_type = case_when(
-        GT_type == "GW" & is.na(gestational_weeks) ~ NA_character_,
+        GT_type == "GW" & (is.na(domain_value) | is.na(implied_start_date)) ~ NA_character_,
         TRUE ~ GT_type
-      )
+      ),
+
+      # GR3m start-date range (reference uses 30.4 days per month)
+      range_start = if_else(GT_type == "GR3m", event_date - round(max_month * 30.4), as.Date(NA)),
+      range_end = if_else(GT_type == "GR3m", event_date - round(min_month * 30.4), as.Date(NA))
+    ) %>%
+    filter(GT_type %in% c("GW", "GR3m")) %>%
+    mutate(
+      implied_start_date = if_else(GT_type == "GW", implied_start_date, as.Date(NA)),
+      gestational_weeks = if_else(GT_type == "GW", gestational_weeks, NA_real_),
+      # Reference rollup: all GW rows share one label so one date keeps
+      # only its highest week; other concepts are unique per concept/date
+      concept_rollup = if_else(GT_type == "GW" & !is.na(domain_value),
+                               "Gestation Week",
+                               coalesce(concept_name, as.character(concept_id)))
+    ) %>%
+    arrange(person_id, episode_number, desc(domain_value)) %>%
+    group_by(person_id, episode_number, concept_rollup, event_date, GT_type) %>%
+    slice(1) %>%
+    ungroup() %>%
+    arrange(person_id, episode_number, concept_rollup, event_date, GT_type) %>%
+    select(
+      person_id, episode_number, concept_id, concept_name, event_date,
+      GT_type, gestational_weeks, implied_start_date, range_start, range_end,
+      min_month, max_month
     )
 
-  # Calculate implied dates
-  episode_timing <- episode_timing %>%
-    mutate(
-      # Calculate implied start date for GW concepts
-      implied_start_date = case_when(
-        GT_type == "GW" & !is.na(gestational_weeks) ~ as.Date(event_date) - (gestational_weeks * 7),
-        TRUE ~ as.Date(NA)
-      ),
-      
-      # Calculate range for GR3m concepts (original uses 30.4 days/month, not 30)
-      range_start = case_when(
-        GT_type == "GR3m" & !is.na(max_month) ~ as.Date(event_date) - round(max_month * 30.4),
-        TRUE ~ as.Date(NA)
-      ),
-      range_end = case_when(
-        GT_type == "GR3m" & !is.na(min_month) ~ as.Date(event_date) - round(min_month * 30.4),
-        TRUE ~ as.Date(NA)
+  episode_timing
+}
+
+#' Assemble ESD timing records from cohort data
+#'
+#' Prefers cohort_data$esd_timing (see extract_esd_timing_records). Falls
+#' back to the HIP domain frames plus the PPS timing frame, deduplicated per
+#' (person, concept, date) preferring the row that carries a concept name, so
+#' a record is never classified twice.
+#' @noRd
+get_esd_timing_records <- function(cohort_data) {
+
+  std_cols <- c("person_id", "concept_id", "concept_name", "event_date",
+                "value_as_number", "value_as_string", "min_month", "max_month")
+
+  normalize <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    for (col in std_cols) if (!col %in% names(df)) df[[col]] <- NA
+    df %>%
+      transmute(
+        person_id = as.integer(person_id),
+        concept_id = as.integer(concept_id),
+        concept_name = as.character(concept_name),
+        event_date = as.Date(event_date),
+        value_as_number = suppressWarnings(as.numeric(value_as_number)),
+        value_as_string = as.character(value_as_string),
+        min_month = suppressWarnings(as.numeric(min_month)),
+        max_month = suppressWarnings(as.numeric(max_month))
       )
-    ) %>%
-    # Filter out invalid concepts
-    filter(
-      (GT_type == "GW" & !is.na(implied_start_date)) |
-      (GT_type == "GR3m" & !is.na(range_start) & !is.na(range_end)) |
-      (!is.na(GT_type))  # Keep any valid GT_type even if dates are missing
+  }
+
+  if (!is.null(cohort_data$esd_timing) && nrow(cohort_data$esd_timing) > 0) {
+    return(normalize(cohort_data$esd_timing) %>% distinct())
+  }
+
+  fallback <- bind_rows(
+    normalize(cohort_data$conditions),
+    normalize(cohort_data$procedures),
+    normalize(cohort_data$observations),
+    normalize(cohort_data$measurements),
+    normalize(cohort_data$gestational_timing)
+  )
+  if (is.null(fallback) || nrow(fallback) == 0) return(NULL)
+
+  fallback %>%
+    filter(!is.na(event_date)) %>%
+    arrange(person_id, concept_id, event_date, is.na(concept_name), is.na(min_month)) %>%
+    group_by(person_id, concept_id, event_date) %>%
+    summarise(
+      concept_name = first(concept_name),
+      value_as_number = first(value_as_number),
+      value_as_string = first(value_as_string),
+      min_month = first(na.omit(min_month), default = NA_real_),
+      max_month = first(na.omit(max_month), default = NA_real_),
+      .groups = "drop"
     )
-  
-  return(episode_timing)
 }
 
 #' Calculate ESD for a single episode

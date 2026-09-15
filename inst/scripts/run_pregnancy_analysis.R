@@ -201,6 +201,7 @@ tryCatch({
     pps_concepts = concepts$pps_concepts,
     min_age = 15,
     max_age = 56,
+    vocabulary_schema = vocabulary_schema,
     use_temp_tables = TRUE
   )
   

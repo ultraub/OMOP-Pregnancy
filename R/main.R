@@ -44,7 +44,8 @@ run_pregnancy_identification <- function(
   results_database_schema = NULL,
   output_folder = NULL,
   min_age = 15,
-  max_age = 56
+  max_age = 56,
+  vocabulary_database_schema = NULL
 ) {
   
   # Start timer
@@ -75,7 +76,8 @@ run_pregnancy_identification <- function(
     hip_concepts = concepts$hip_concepts,
     pps_concepts = concepts$pps_concepts,
     min_age = min_age,
-    max_age = max_age
+    max_age = max_age,
+    vocabulary_schema = vocabulary_database_schema
   )
   
   message(sprintf("  - Extracted data for %d persons", 

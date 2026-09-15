@@ -231,7 +231,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
   
   if (is.null(table_names)) {
     # Default tables to clean up (without # prefix - will be added as needed)
-    table_names <- c("person_cohort", "hip_concepts", "pps_concepts", 
+    table_names <- c("person_cohort", "hip_concepts", "pps_concepts", "esd_concepts", 
                     "hip_conditions", "hip_procedures", "hip_observations",
                     "hip_measurements")
   }
@@ -268,7 +268,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
         # For views created with CREATE TEMPORARY VIEW (person_cohort and concept tables)
         # they don't have schema qualification
         if (clean_table_name %in% c("person_cohort", "hip_concepts", "pps_concepts",
-                                     "hip_conditions", "hip_procedures",
+                                     "esd_concepts", "hip_conditions", "hip_procedures",
                                      "hip_observations", "hip_measurements")) {
           # These are created as temporary views without schema prefix
           drop_view_sql <- SqlRender::render(
