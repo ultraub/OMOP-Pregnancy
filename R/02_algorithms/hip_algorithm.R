@@ -790,7 +790,8 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
       has_gestational_info = FALSE,
       gestational_weeks = NA_real_,
       n_gest_records = NA_integer_,
-      max_gest_date = as.Date(NA)
+      max_gest_date = as.Date(NA),
+      max_gest_start_date = as.Date(NA)
     )
 
   # Episodes with both outcome and gestation
@@ -798,11 +799,13 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
     mutate(
       has_gestational_info = TRUE,
       gestational_weeks = max_gest_week,
-      max_gest_date = as.Date(max_gest_date)
+      max_gest_date = as.Date(max_gest_date),
+      max_gest_start_date = as.Date(max_gest_start_date)
     ) %>%
     select(
       person_id, episode_number, outcome_date, outcome_category,
-      has_gestational_info, gestational_weeks, n_gest_records, max_gest_date
+      has_gestational_info, gestational_weeks, n_gest_records, max_gest_date,
+      max_gest_start_date
     )
 
   # Gestation-only episodes (no matching outcome)
@@ -814,11 +817,13 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
       has_gestational_info = TRUE,
       gestational_weeks = max_gest_week,
       episode_number = NA_integer_,
-      max_gest_date = as.Date(max_gest_date)
+      max_gest_date = as.Date(max_gest_date),
+      max_gest_start_date = as.Date(max_gest_start_date)
     ) %>%
     select(
       person_id, episode_number, outcome_date, outcome_category,
-      has_gestational_info, gestational_weeks, n_gest_records, max_gest_date
+      has_gestational_info, gestational_weeks, n_gest_records, max_gest_date,
+      max_gest_start_date
     )
 
   # --- Step 5: Combine all three groups ---
@@ -843,7 +848,8 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
 #' Calculate pregnancy start dates using hierarchical estimation approach
 #' 
 #' Start date calculation follows Matcho et al. methodology with preference order:
-#' 1. PREFERRED: Gestational age-based calculation (outcome_date - gestational_weeks * 7)
+#' 1. PREFERRED: Gestational age-based calculation (gestation record date - its
+#'    gestational weeks * 7, taking the earlier of the max- and min-week estimates)
 #' 2. FALLBACK: Term duration-based calculation (outcome_date - max_term from category)
 #' 3. DEFAULT: Standard pregnancy duration (outcome_date - 280 days)
 #' 
@@ -864,10 +870,13 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
   # Calculate start dates
   result <- episodes_with_terms %>%
     mutate(
-      # If we have gestational info, use it
+      # If we have gestational info, use the start anchored on the gestation
+      # record date (max_gest_date - max_gest_week*7, or the min-week estimate
+      # if earlier), as in the reference. Not outcome_date - weeks*7, which is
+      # late by the gap between the last GA record and the outcome.
       gest_based_start = case_when(
-        has_gestational_info & !is.na(gestational_weeks) ~ 
-          as.Date(outcome_date) - (gestational_weeks * 7),
+        has_gestational_info & !is.na(max_gest_start_date) ~
+          as.Date(max_gest_start_date),
         TRUE ~ as.Date(NA)
       ),
       
