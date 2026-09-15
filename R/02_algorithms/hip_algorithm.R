@@ -177,7 +177,17 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
   if ("tbl_lazy" %in% class(final_episodes) || "tbl_sql" %in% class(final_episodes)) {
     final_episodes <- omop_compute(final_episodes)
   }
-  
+
+  # Episode numbers so far were assigned within each outcome category, so
+  # they collide across categories (LB #1 and SA #1). Renumber once per
+  # person so (person_id, episode_number) is a unique key, equivalent to
+  # the reference's concat(person_id, visit_date).
+  final_episodes <- final_episodes %>%
+    arrange(person_id, outcome_date, outcome_category) %>%
+    group_by(person_id) %>%
+    mutate(episode_number = row_number()) %>%
+    ungroup()
+
   # Step 3: Add gestational age information
   episodes_with_gest <- add_gestational_age_info(final_episodes, all_records, matcho_limits)
   
@@ -820,7 +830,12 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
     mutate(
       gestational_weeks = ifelse(is.infinite(gestational_weeks), NA_real_, gestational_weeks)
     ) %>%
-    arrange(person_id, outcome_date)
+    # Renumber so gestation-only PREG episodes (added with NA) get a real
+    # number and downstream ids built from episode_number stay unique.
+    arrange(person_id, outcome_date) %>%
+    group_by(person_id) %>%
+    mutate(episode_number = row_number()) %>%
+    ungroup()
 
   return(result)
 }
