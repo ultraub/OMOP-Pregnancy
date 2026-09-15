@@ -235,11 +235,12 @@ resolve_episode_overlaps <- function(hip_episodes, pps_episodes, overlaps) {
         algo2_id = paste(person_id, episode_number, "2", sep = "_"),
         algorithm_used = "PPS",
         HIP_outcome_category = NA_character_,
-        PPS_outcome_category = outcome_category,
+        # No outcome in window -> PREG with last concept date (reference)
+        PPS_outcome_category = coalesce(outcome_category, "PREG"),
         HIP_end_date = as.Date(NA),
-        PPS_end_date = episode_end_date,
-        episode_min_date = episode_start_date,
-        episode_max_date = episode_end_date
+        PPS_end_date = coalesce(outcome_date, episode_max_date),
+        episode_min_date = episode_min_date,
+        episode_max_date = episode_max_date
       )
 
     return(bind_rows(hip_only, pps_only))
@@ -288,11 +289,14 @@ create_merged_episode_set <- function(hip_episodes, pps_episodes, overlaps) {
     transmute(
       person_id,
       algo2_id = paste(person_id, episode_number, "2", sep = "_"),
-      episode_min_date = episode_start_date,
-      episode_max_date = episode_end_date,
-      episode_max_date_plus_two_months = episode_end_date + (2 * DAYS_PER_MONTH),
+      # First/last gestational timing concept dates, and the outcome found in
+      # the lookahead window (NA if none), exactly as the reference joins them
+      episode_min_date = as.Date(episode_min_date),
+      episode_max_date = as.Date(episode_max_date),
+      episode_max_date_plus_two_months = lubridate::`%m+%`(as.Date(episode_max_date),
+                                                            lubridate::period(2, "months")),
       algo2_category = outcome_category,
-      algo2_outcome_date = episode_end_date,
+      algo2_outcome_date = as.Date(outcome_date),
       pps_gest_days = if("gestational_age_days" %in% names(.)) gestational_age_days else NA_real_
     )
 
@@ -476,14 +480,6 @@ format_resolved_episodes <- function(resolved, hip_episodes, pps_episodes) {
       HIP_end_date = pregnancy_end,
       PPS_end_date = algo2_outcome_date,
 
-      # Outcome concordance check (matches original merged_episodes_with_metadata)
-      outcome_match = case_when(
-        category == algo2_category & category != "PREG" &
-          abs(as.numeric(difftime(pregnancy_end, algo2_outcome_date, units = "days"))) <= 14 ~ 1L,
-        category == "PREG" & algo2_category == "PREG" ~ 1L,
-        TRUE ~ 0L
-      ),
-
       # Gestational age
       gestational_age_days = case_when(
         !is.na(hip_gest_days) & !is.na(pps_gest_days) ~
@@ -504,6 +500,16 @@ format_resolved_episodes <- function(resolved, hip_episodes, pps_episodes) {
         !is.na(algo2_id) & is.na(PPS_end_date),
         episode_max_date,
         PPS_end_date
+      )
+    ) %>%
+    # Outcome concordance check, computed after the PREG fill as in the
+    # reference merged_episodes_with_metadata (so PREG/PREG can match)
+    mutate(
+      outcome_match = case_when(
+        HIP_outcome_category == PPS_outcome_category & HIP_outcome_category != "PREG" &
+          abs(as.numeric(difftime(HIP_end_date, PPS_end_date, units = "days"))) <= 14 ~ 1L,
+        HIP_outcome_category == "PREG" & PPS_outcome_category == "PREG" ~ 1L,
+        TRUE ~ 0L
       )
     ) %>%
     # Complex outcome resolution (matching original merged_episodes_with_metadata)

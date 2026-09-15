@@ -417,15 +417,17 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
     cohort_data$observations,
     cohort_data$measurements
   ) %>%
-    filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG")) %>%
+    # Real outcomes only; PREG markers are not outcomes (matches reference)
+    filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA")) %>%
     select(person_id, outcome_date = event_date, outcome_category = category)
-  
+
   if (nrow(outcome_records) == 0) {
-    # No outcomes found, episodes are PREG only
+    # No outcomes found: leave outcome NA, as the reference's left join does.
+    # The merge step labels these PREG with the last concept date as end.
     return(episode_boundaries %>%
            mutate(
-             outcome_category = "PREG",
-             outcome_date = expected_end_date
+             outcome_category = NA_character_,
+             outcome_date = as.Date(NA)
            ))
   }
   
@@ -464,21 +466,21 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
     group_by(person_id, person_episode_number) %>%
     # Use Matcho hierarchy to select outcome (matches original: LB > SB > ECT > SA > AB > DELIV)
     arrange(
-      factor(outcome_category, levels = c("LB", "SB", "ECT", "SA", "AB", "DELIV", "PREG")),
+      factor(outcome_category, levels = c("LB", "SB", "ECT", "SA", "AB", "DELIV")),
       outcome_date
     ) %>%
     slice(1) %>%  # Take highest priority outcome
     ungroup()
-  
-  # Add episodes without outcomes
+
+  # Episodes without outcomes keep NA outcome (reference left join)
   episodes_no_outcome <- boundaries_with_windows %>%
     anti_join(
       episodes_with_outcomes,
       by = c("person_id", "person_episode_number")
     ) %>%
     mutate(
-      outcome_category = "PREG",
-      outcome_date = expected_end_date
+      outcome_category = NA_character_,
+      outcome_date = as.Date(NA)
     )
   
   # Combine
@@ -492,47 +494,43 @@ identify_pps_outcomes <- function(episode_boundaries, cohort_data, timing_data) 
   return(all_episodes)
 }
 
-#' Validate PPS episodes V2
+#' Shape PPS episode output V2
+#'
+#' The reference defines a PPS episode by its observed evidence only:
+#' episode_min_date / episode_max_date are the first and last gestational
+#' timing concept dates, and the outcome (if one was found in the lookahead
+#' window) is a nullable extra. No start date is estimated here (that is the
+#' ESD step) and no length filter is applied (the 12-month rule was already
+#' applied during episode assignment).
+#'
+#' episode_start_date / episode_end_date are provided for convenience and the
+#' PPS-only path; they equal what the reference merge would produce for a
+#' PPS-only episode (first concept date; outcome date or last concept date).
 #' @noRd
 validate_pps_episodes <- function(episodes) {
-  
-  validated <- episodes %>%
-    mutate(
-      # Calculate estimated start date
-      episode_start_date = as.Date(case_when(
-        # Use gestational timing if available
-        !is.na(earliest_ga_min) ~ as.Date(episode_min_date) - (earliest_ga_min * DAYS_PER_MONTH),
-        # Otherwise assume start is 3 months before first concept
-        TRUE ~ as.Date(episode_min_date) - 90
-      )),
-      
-      # End date is outcome date
-      episode_end_date = as.Date(outcome_date),
-      
-      # Calculate gestational age
-      gestational_age_days = as.numeric(episode_end_date - episode_start_date)
-    ) %>%
-    filter(
-      # Remove implausible episodes
-      gestational_age_days > 0,
-      gestational_age_days <= 320,  # ~45 weeks
-      episode_start_date <= Sys.Date(),
-      episode_end_date >= episode_start_date
-    ) %>%
-    # Renumber episodes
+
+  episodes %>%
+    arrange(person_id, episode_min_date) %>%
     group_by(person_id) %>%
     mutate(episode_number = row_number()) %>%
     ungroup() %>%
+    mutate(
+      episode_min_date = as.Date(episode_min_date),
+      episode_max_date = as.Date(episode_max_date),
+      outcome_date = as.Date(outcome_date),
+      episode_start_date = episode_min_date,
+      episode_end_date = coalesce(outcome_date, episode_max_date)
+    ) %>%
     select(
       person_id,
       episode_number,
+      episode_min_date,
+      episode_max_date,
+      outcome_category,
+      outcome_date,
       episode_start_date,
       episode_end_date,
-      outcome_category,
-      gestational_age_days,
       n_GT_concepts,
       n_records
     )
-  
-  return(validated)
 }
