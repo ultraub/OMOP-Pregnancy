@@ -289,7 +289,16 @@ extract_pregnancy_cohort <- function(
       measurements = enforce_types(measurements, "measurement"),
       gestational_timing = enforce_types(gestational_timing, "gestational")
     )
-    
+
+    # Keep only records where the person was of reproductive age at the event
+    message("  Filtering records to age at event...")
+    for (domain in c("conditions", "procedures", "observations",
+                     "measurements", "gestational_timing")) {
+      result[[domain]] <- filter_records_by_age(
+        result[[domain]], result$persons, min_age, max_age
+      )
+    }
+
     return(result)
     
   }, finally = {
@@ -725,4 +734,35 @@ extract_gestational_timing <- function(
   } else {
     return(data.frame())
   }
+}
+
+#' Filter records to persons of reproductive age at the event date
+#'
+#' Matches the reference All of Us implementation: birth date is built from
+#' year/month/day of birth with missing month or day imputed to 1, age is
+#' (event_date - birth_date) / 365, and a record is kept when
+#' min_age <= age < max_age.
+#' @noRd
+filter_records_by_age <- function(records, persons, min_age, max_age) {
+
+  if (is.null(records) || nrow(records) == 0) {
+    return(records)
+  }
+
+  birth_dates <- persons %>%
+    transmute(
+      person_id,
+      birth_date = as.Date(sprintf(
+        "%d-%02d-%02d",
+        as.integer(year_of_birth),
+        as.integer(coalesce(month_of_birth, 1L)),
+        as.integer(coalesce(day_of_birth, 1L))
+      ))
+    )
+
+  records %>%
+    inner_join(birth_dates, by = "person_id") %>%
+    mutate(age_at_event = as.numeric(as.Date(event_date) - birth_date) / 365) %>%
+    filter(age_at_event >= min_age, age_at_event < max_age) %>%
+    select(-birth_date, -age_at_event)
 }

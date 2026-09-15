@@ -60,33 +60,14 @@ run_pps_algorithm <- function(cohort_data, pps_concepts) {
   return(final_episodes)
 }
 
-#' Prepare PPS data with age filtering V2
+#' Prepare PPS data V2
+#'
+#' Age-at-event eligibility is applied once for all domains in
+#' extract_pregnancy_cohort(), so this only orders the records.
 #' @noRd
 prepare_pps_data <- function(timing_data, persons_data) {
-  
-  # Calculate age at event for each record
-  timing_with_age <- timing_data %>%
-    left_join(
-      persons_data %>% 
-        select(person_id, year_of_birth, month_of_birth, day_of_birth),
-      by = "person_id"
-    ) %>%
-    mutate(
-      # Handle missing birth components
-      month_of_birth = ifelse(is.na(month_of_birth), 1, month_of_birth),
-      day_of_birth = ifelse(is.na(day_of_birth), 1, day_of_birth),
-      
-      # Calculate age at event
-      birth_date = as.Date(paste(year_of_birth, month_of_birth, day_of_birth, sep = "-")),
-      age_at_event = as.numeric(event_date - birth_date) / 365.25,
-      
-      # Filter to reproductive age (15-55)
-      is_eligible = age_at_event >= 15 & age_at_event < 56
-    ) %>%
-    filter(is_eligible) %>%
+  timing_data %>%
     arrange(person_id, event_date)
-  
-  return(timing_with_age)
 }
 
 #' Assign PPS episodes with retry and bridging logic V2
