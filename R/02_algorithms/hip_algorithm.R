@@ -196,10 +196,14 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
   
   # Step 5: Validate and finalize
   validated_episodes <- validate_hip_episodes(episodes_with_dates)
-  
+
+  # Step 6: Earliest gestational-age record observed within each episode
+  # (reference final_episodes_with_length gest_date); used by the merge
+  validated_episodes <- add_first_gest_date(validated_episodes, all_records)
+
   # Add algorithm identifier
   validated_episodes$algorithm_used <- "HIP"
-  
+
   return(validated_episodes)
 }
 
@@ -1245,4 +1249,39 @@ validate_hip_episodes <- function(episodes, buffer_days = 28L) {
     select(-has_gestational_info, -max_gest_date, -min_term, -max_term, -post_adj_reclassify)
 
   return(validated)
+}
+#' Add the date of the first gestational-age record within each episode
+#'
+#' Port of the reference final_episodes_with_length(): among gestational-age
+#' records (gest_value from the concept, or value_as_number in (0, 44] on the
+#' gestational age measurement concepts) dated between the episode start and
+#' end, take the earliest. NA when the episode contains none. The merge uses
+#' this as first_gest_date when computing the recorded episode start.
+#' @noRd
+add_first_gest_date <- function(episodes, all_records) {
+
+  if (nrow(episodes) == 0) {
+    episodes$first_gest_date <- as.Date(character(0))
+    return(episodes)
+  }
+
+  gest_records <- all_records %>%
+    filter(
+      !is.na(gest_value) |
+        concept_id %in% c(3002209, 3048230, 3012266)
+    ) %>%
+    mutate(gest_weeks = coalesce(gest_value, value_as_number)) %>%
+    filter(!is.na(gest_weeks), gest_weeks > 0, gest_weeks <= 44) %>%
+    select(person_id, gest_date = event_date)
+
+  first_dates <- episodes %>%
+    select(person_id, episode_number, episode_start_date, episode_end_date) %>%
+    inner_join(gest_records, by = "person_id", relationship = "many-to-many") %>%
+    filter(gest_date >= episode_start_date, gest_date <= episode_end_date) %>%
+    group_by(person_id, episode_number) %>%
+    summarise(first_gest_date = as.Date(min(gest_date)), .groups = "drop")
+
+  episodes %>%
+    left_join(first_dates, by = c("person_id", "episode_number")) %>%
+    mutate(first_gest_date = as.Date(first_gest_date))
 }
