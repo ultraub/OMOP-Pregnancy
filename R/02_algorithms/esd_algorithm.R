@@ -382,9 +382,12 @@ calculate_episode_esd <- function(episode_data) {
     ))
   }
 
-  # If no usable timing data, return original with NA precision
-  if (!"implied_start_date" %in% names(episode_data) ||
-      all(is.na(episode_data$implied_start_date))) {
+  # If no usable timing data (neither week estimates nor ranges), return NA
+  has_gw <- "implied_start_date" %in% names(episode_data) &&
+    any(!is.na(episode_data$implied_start_date))
+  has_gr3m <- "range_start" %in% names(episode_data) &&
+    any(!is.na(episode_data$range_start))
+  if (!has_gw && !has_gr3m) {
 
     # Get first row and clean up any timing columns that might exist
     result <- episode_data[1, ] %>%
@@ -450,172 +453,95 @@ calculate_episode_esd <- function(episode_data) {
       episode_end_date = as.Date(episode_end_date),
       inferred_episode_start = as.Date(timing_result$inferred_start_date),
       precision_days = as.numeric(timing_result$precision_days),
-      precision_category = assign_precision_category(precision_days)
+      precision_category = assign_precision_category(precision_days),
+      intervalsCount = as.integer(timing_result$intervalsCount),
+      majorityOverlapCount = as.integer(timing_result$majorityOverlapCount)
     )
 
   return(result)
 }
 
-#' Find intersection of timing estimates (All of Us algorithm)
-#' 
-#' Implements the exact All of Us logic for finding consensus between
-#' multiple timing estimates using IQR-based outlier removal and
-#' intersection of date ranges for optimal precision categorization.
+#' Combine timing estimates for one episode (reference get_gt_timing)
+#'
+#' Direct port of the All of Us get_gt_timing():
+#' - GR3m ranges -> findIntersection(); if the intersection is narrower than
+#'   7 days it is widened to midpoint +/- 3 days before overlap testing.
+#' - With week (GW) estimates: if a GR3m intersection exists and more than
+#'   50% of the raw GW dates fall inside it, keep those, remove outliers and
+#'   use the first (earliest) as the start with precision = their spread;
+#'   otherwise use all GW dates after outlier removal, and -1 ("week,
+#'   poor support") if only one survives.
+#' - GR3m only: start = midpoint of the intersection, precision = span of
+#'   the union of surviving ranges.
+#' Week dates are expected in date order (get_timing_concepts guarantees it).
 #' @noRd
 find_timing_intersection <- function(week_concepts, range_concepts) {
-  
-  # Default result
+
   result <- list(
     inferred_start_date = as.Date(NA),
-    precision_days = 999,
-    precision_category = "non-specific"
+    precision_days = NA_real_,
+    precision_category = NA_character_,
+    intervalsCount = 0L,
+    majorityOverlapCount = 0L
   )
-  
-  # Separate GW and GR3m concepts
-  gw_concepts <- week_concepts %>% filter(GT_type == "GW")
-  gr3m_concepts <- rbind(
-    week_concepts %>% filter(GT_type == "GR3m"),
-    range_concepts
-  )
-  
-  # Process GR3m concepts first if available
-  gr3m_intersection <- NULL
-  if (nrow(gr3m_concepts) > 0) {
-    # Build list of ranges for intersection
-    ranges_list <- list()
-    for (i in 1:nrow(gr3m_concepts)) {
-      if (!is.na(gr3m_concepts$range_start[i]) && !is.na(gr3m_concepts$range_end[i])) {
-        ranges_list[[length(ranges_list) + 1]] <- c(
-          gr3m_concepts$range_start[i],
-          gr3m_concepts$range_end[i]
-        )
-      }
-    }
-    
-    if (length(ranges_list) > 0) {
-      # Find intersection using All of Us logic
-      gr3m_intersection <- findIntersection(ranges_list)
+
+  gw_dates <- as.Date(week_concepts$implied_start_date[
+    week_concepts$GT_type == "GW" & !is.na(week_concepts$implied_start_date)
+  ])
+
+  gr3m <- range_concepts[!is.na(range_concepts$range_start) & !is.na(range_concepts$range_end), , drop = FALSE]
+  ranges <- lapply(seq_len(nrow(gr3m)), function(i) {
+    c(as.Date(gr3m$range_start[i]), as.Date(gr3m$range_end[i]))
+  })
+
+  interval_s <- NULL
+  interval_e <- NULL
+  midpoint <- NULL
+  max_range_days <- 0
+
+  if (length(ranges) > 0) {
+    ci <- findIntersection(ranges)
+    range_e <- as.Date(ci[1])
+    range_s <- as.Date(ci[2])
+    interval_e <- as.Date(ci[3])
+    interval_s <- as.Date(ci[4])
+    plausible_days <- as.numeric(interval_e - interval_s)
+    max_range_days <- as.numeric(range_e - range_s)
+    midpoint <- interval_s + as.integer(plausible_days / 2)
+    if (plausible_days < 7) {
+      interval_s <- midpoint - 3
+      interval_e <- midpoint + 3
     }
   }
-  
-  # Process GW concepts
-  if (nrow(gw_concepts) > 0) {
-    # Remove outliers from GW concepts
-    gw_dates <- gw_concepts$implied_start_date
-    gw_dates_clean <- remove_GW_outliers(list(gw_dates))
-    
-    if (length(gw_dates_clean) > 0) {
-      # Check overlap with GR3m intersection if available
-      if (!is.null(gr3m_intersection)) {
-        # Extract intersection boundaries
-        interval_start <- as.Date(gr3m_intersection[4])  # max_start
-        interval_end <- as.Date(gr3m_intersection[3])    # min_start
-        
-        # Filter GW concepts that overlap with GR3m intersection
-        overlapping_gw <- gw_dates_clean[
-          gw_dates_clean >= interval_start & gw_dates_clean <= interval_end
-        ]
-        
-        # If >50% overlap, use overlapping GW concepts
-        if (length(overlapping_gw) / length(gw_dates_clean) > 0.5) {
-          result$inferred_start_date <- overlapping_gw[1]  # First date (matches original filtDates[[1]])
-          result$precision_days <- as.numeric(max(overlapping_gw) - min(overlapping_gw))
-        } else {
-          # Use all GW concepts
-          result$inferred_start_date <- gw_dates_clean[1]  # First date (matches original filtDates[[1]])
-          result$precision_days <- as.numeric(max(gw_dates_clean) - min(gw_dates_clean))
-        }
+
+  if (length(gw_dates) > 0) {
+    if (!is.null(interval_s)) {
+      result$intervalsCount <- 1L
+      overlapping <- gw_dates[gw_dates >= interval_s & gw_dates <= interval_e]
+      if ((length(overlapping) / length(gw_dates)) * 100 > 50) {
+        result$majorityOverlapCount <- 1L
+        filt <- remove_GW_outliers(list(overlapping))
+        result$inferred_start_date <- filt[1]
+        result$precision_days <- as.numeric(max(filt) - min(filt))
       } else {
-        # No GR3m intersection, use GW concepts alone
-        result$inferred_start_date <- gw_dates_clean[1]  # First date (matches original filtDates[[1]])
-        if (length(gw_dates_clean) > 1) {
-          result$precision_days <- as.numeric(max(gw_dates_clean) - min(gw_dates_clean))
-        } else {
-          result$precision_days <- -1  # Single GW concept (poor support)
-        }
+        filt <- remove_GW_outliers(list(gw_dates))
+        result$inferred_start_date <- filt[1]
+        result$precision_days <- as.numeric(max(filt) - min(filt))
+        if (length(filt) == 1) result$precision_days <- -1
       }
+    } else {
+      filt <- remove_GW_outliers(list(gw_dates))
+      result$inferred_start_date <- filt[1]
+      result$precision_days <- as.numeric(max(filt) - min(filt))
+      if (length(filt) == 1) result$precision_days <- -1
     }
-  } else if (!is.null(gr3m_intersection)) {
-    # Only GR3m concepts available
-    interval_start <- as.Date(gr3m_intersection[4])
-    interval_end <- as.Date(gr3m_intersection[3])
-    
-    # Use midpoint of intersection
-    result$inferred_start_date <- interval_start + 
-                                  as.integer((interval_end - interval_start) / 2)
-    result$precision_days <- as.numeric(interval_end - interval_start)
+  } else if (!is.null(midpoint)) {
+    result$inferred_start_date <- midpoint
+    result$precision_days <- max_range_days
   }
-  
-  # Assign precision category
+
   result$precision_category <- assign_precision_category(result$precision_days)
-  
-  return(result)
-}
-
-#' Remove outliers from dates using IQR method
-#' 
-#' Implements standard IQR * 1.5 outlier detection as used in All of Us
-#' to filter implausible gestational timing estimates.
-#' @noRd
-remove_date_outliers <- function(dates) {
-  
-  if (length(dates) <= 2) {
-    return(dates)
-  }
-  
-  # Convert to numeric for calculation
-  dates_numeric <- as.numeric(dates)
-  
-  # Calculate IQR
-  q1 <- quantile(dates_numeric, 0.25, na.rm = TRUE)
-  q3 <- quantile(dates_numeric, 0.75, na.rm = TRUE)
-  iqr <- q3 - q1
-  
-  # Define outlier thresholds
-  lower_bound <- q1 - 1.5 * iqr
-  upper_bound <- q3 + 1.5 * iqr
-  
-  # Filter outliers
-  clean_dates <- dates[dates_numeric >= lower_bound & dates_numeric <= upper_bound]
-  
-  return(clean_dates)
-}
-
-#' Find intersection of date ranges
-#' @noRd
-find_range_intersection <- function(range_concepts) {
-  
-  # Get all ranges
-  ranges <- range_concepts %>%
-    select(range_start, range_end) %>%
-    filter(!is.na(range_start), !is.na(range_end))
-  
-  if (nrow(ranges) == 0) {
-    return(list(midpoint = as.Date(NA), range_days = 999))
-  }
-  
-  # Find intersection
-  intersection_start <- max(ranges$range_start, na.rm = TRUE)
-  intersection_end <- min(ranges$range_end, na.rm = TRUE)
-  
-  if (intersection_start <= intersection_end) {
-    # Valid intersection
-    midpoint <- intersection_start + 
-                as.integer((intersection_end - intersection_start) / 2)
-    range_days <- as.numeric(intersection_end - intersection_start)
-    
-    return(list(midpoint = midpoint, range_days = range_days))
-  } else {
-    # No intersection, use median of all midpoints
-    midpoints <- ranges %>%
-      mutate(midpoint = range_start + as.integer((range_end - range_start) / 2)) %>%
-      pull(midpoint)
-    
-    return(list(
-      midpoint = median(midpoints, na.rm = TRUE),
-      range_days = 999
-    ))
-  }
+  result
 }
 
 #' Assign precision category based on days
@@ -643,105 +569,79 @@ assign_precision_category <- function(precision_days) {
   )
 }
 
-#' Find intersection of date ranges (All of Us algorithm)
-#' 
-#' Direct implementation of All of Us findIntersection function that:
-#' 1. Removes outlier ranges via IQR * 1.5 on overlap counts
-#' 2. Finds the intersection of remaining ranges
-#' 3. Returns boundaries for precision calculation
-#' Critical for accurate pregnancy dating from multiple timing sources.
+#' Find intersection of date ranges (reference findIntersection)
+#'
+#' Direct port. Counts pairwise overlaps, removes outlier ranges by the
+#' IQR*1.5 rule on overlap counts, orders survivors by overlap count, then
+#' narrows the intersection sequentially, only accepting a bound that stays
+#' inside the current intersection (so it is never empty). If no range
+#' survives the filter, the range with the most overlaps is used.
+#' Returns c(last, first, min_start, max_start): union end, union start,
+#' intersection end, intersection start.
 #' @noRd
 findIntersection <- function(intervals) {
   if (length(intervals) == 0) {
     return(NULL)
   }
-  
-  # Convert to data frame
-  if (length(intervals) == 1) {
-    intervals_df <- data.frame(
-      V1 = as.Date(intervals[[1]][1]),
-      V2 = as.Date(intervals[[1]][2])
-    )
-  } else {
-    intervals_df <- do.call(rbind, lapply(intervals, function(x) {
-      data.frame(V1 = as.Date(x[1]), V2 = as.Date(x[2]))
-    }))
-  }
-  
-  intervals_df <- intervals_df %>%
+
+  intervals_df <- data.frame(
+    V1 = do.call(c, lapply(intervals, function(x) as.Date(x[1]))),
+    V2 = do.call(c, lapply(intervals, function(x) as.Date(x[2])))
+  ) %>%
     arrange(V1)
-  
-  # Remove outliers based on overlap count
+
   n <- nrow(intervals_df)
-  overlapCount <- numeric(n)
-  
-  for (i in 1:n) {
-    for (j in 1:n) {
-      if (i != j) {
-        last_i <- intervals_df$V2[i]
-        first_i <- intervals_df$V1[i]
-        # 4 specific overlap conditions (matching original exactly)
-        if ((intervals_df$V1[j] == last_i) || (intervals_df$V1[j] == first_i)) {
-          overlapCount[i] <- overlapCount[i] + 1
-        } else if ((intervals_df$V2[j] == last_i) || (intervals_df$V2[j] == first_i)) {
-          overlapCount[i] <- overlapCount[i] + 1
-        } else if ((intervals_df$V2[j] < last_i) && (intervals_df$V2[j] > first_i)) {
-          overlapCount[i] <- overlapCount[i] + 1
-        } else if ((intervals_df$V1[j] < last_i) && (intervals_df$V1[j] > first_i)) {
-          overlapCount[i] <- overlapCount[i] + 1
+  overlapCount <- rep(0, n)
+  for (j in seq_len(n)) {
+    for (m in seq_len(n)) {
+      if (j != m) {
+        last <- intervals_df$V2[j]
+        first <- intervals_df$V1[j]
+        if ((intervals_df$V1[m] == last) || (intervals_df$V1[m] == first)) {
+          overlapCount[j] <- overlapCount[j] + 1
+        } else if ((intervals_df$V2[m] == last) || (intervals_df$V2[m] == first)) {
+          overlapCount[j] <- overlapCount[j] + 1
+        } else if ((intervals_df$V2[m] < last) && (intervals_df$V2[m] > first)) {
+          overlapCount[j] <- overlapCount[j] + 1
+        } else if ((intervals_df$V1[m] < last) && (intervals_df$V1[m] > first)) {
+          overlapCount[j] <- overlapCount[j] + 1
         }
       }
     }
   }
+  intervals_df$overlapCount <- overlapCount
 
-  # Remove outliers using IQR (matching original's abs() threshold)
-  if (length(overlapCount) > 1) {
-    q1 <- quantile(overlapCount, 0.25)
-    q3 <- quantile(overlapCount, 0.75)
-    outlierMetric <- (q3 - q1) * 1.5
-    outlierThreshold <- abs(q1 - outlierMetric)
-
-    if (outlierThreshold == 0) {
-      filtered <- intervals_df[overlapCount > outlierThreshold, ]
-    } else {
-      filtered <- intervals_df[overlapCount >= outlierThreshold, ]
-    }
+  q1 <- quantile(overlapCount, 0.25)
+  q3 <- quantile(overlapCount, 0.75)
+  outlierMetric <- (q3 - q1) * 1.5
+  outlierThreshold <- abs(q1 - outlierMetric)
+  if (outlierThreshold == 0) {
+    filtered <- intervals_df[intervals_df$overlapCount > outlierThreshold, , drop = FALSE]
   } else {
-    filtered <- intervals_df
+    filtered <- intervals_df[intervals_df$overlapCount >= outlierThreshold, , drop = FALSE]
   }
-  
-  if (nrow(filtered) == 0) {
-    filtered <- intervals_df[1, , drop = FALSE]
+  filtered <- filtered[order(filtered$overlapCount, decreasing = TRUE), , drop = FALSE]
+
+  N <- nrow(filtered)
+  if (N == 1) {
+    last <- filtered$V2[1]; min_start <- filtered$V2[1]
+    first <- filtered$V1[1]; max_start <- filtered$V1[1]
+  } else if (N == 0) {
+    sorted <- intervals_df[order(overlapCount, decreasing = TRUE), , drop = FALSE]
+    last <- sorted$V2[1]; min_start <- sorted$V2[1]
+    first <- sorted$V1[1]; max_start <- sorted$V1[1]
+  } else {
+    last <- filtered$V2[1]; min_start <- filtered$V2[1]
+    first <- filtered$V1[1]; max_start <- filtered$V1[1]
+    for (i in 2:N) {
+      if (filtered$V1[i] < first) first <- filtered$V1[i]
+      if (filtered$V2[i] > last) last <- filtered$V2[i]
+      if ((filtered$V2[i] < min_start) && (filtered$V2[i] > max_start)) min_start <- filtered$V2[i]
+      if ((filtered$V1[i] > max_start) && (filtered$V1[i] < min_start)) max_start <- filtered$V1[i]
+    }
   }
-  
-  # Find intersection
-  if (nrow(filtered) == 1) {
-    return(c(
-      filtered$V2[1],  # last day
-      filtered$V1[1],  # first day
-      filtered$V2[1],  # min_start (end of intersection)
-      filtered$V1[1]   # max_start (start of intersection)
-    ))
-  }
-  
-  # Multiple intervals - find overlapping region
-  first <- min(filtered$V1)
-  last <- max(filtered$V2)
-  max_start <- max(filtered$V1)  # Latest start = beginning of intersection
-  min_start <- min(filtered$V2)  # Earliest end = end of intersection
-  
-  # Ensure valid intersection
-  if (max_start > min_start) {
-    # No valid intersection, use first interval
-    return(c(
-      filtered$V2[1],
-      filtered$V1[1],
-      filtered$V2[1],
-      filtered$V1[1]
-    ))
-  }
-  
-  return(c(last, first, min_start, max_start))
+
+  c(last, first, min_start, max_start)
 }
 
 #' Remove outliers from GW concepts (All of Us algorithm)
@@ -788,46 +688,4 @@ remove_GW_outliers <- function(gw_concepts_list) {
   }
   
   return(filtered_dates)
-}
-
-#' Apply ESD refinement to episodes
-#' @export
-refine_episode_dates <- function(episodes, cohort_data, pps_concepts) {
-  
-  # Check if we have timing data
-  has_timing <- any(
-    !is.null(cohort_data$gestational_timing),
-    any(grepl("gest", names(cohort_data$observations)), ignore.case = TRUE),
-    any(grepl("gest", names(cohort_data$measurements)), ignore.case = TRUE)
-  )
-  
-  if (!has_timing) {
-    # No timing data available
-    episodes$precision_category <- "non-specific"
-    episodes$precision_days <- 999
-    return(episodes)
-  }
-  
-  # Apply ESD algorithm
-  refined_episodes <- calculate_estimated_start_dates(
-    episodes,
-    cohort_data,
-    pps_concepts
-  )
-  
-  # Validate refined dates
-  validated_episodes <- refined_episodes %>%
-    mutate(
-      # Ensure dates are reasonable
-      episode_start_date = case_when(
-        episode_start_date > episode_end_date ~ episode_end_date - 280,
-        episode_start_date < episode_end_date - 320 ~ episode_end_date - 280,
-        TRUE ~ episode_start_date
-      ),
-      
-      # Recalculate gestational age
-      gestational_age_days = as.numeric(episode_end_date - episode_start_date)
-    )
-  
-  return(validated_episodes)
 }
