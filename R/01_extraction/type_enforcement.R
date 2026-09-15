@@ -91,8 +91,9 @@ enforce_types <- function(data, domain) {
         across(any_of("domain_name"), as.character),
         value_as_number = as.numeric(value_as_number),
         value_as_string = as.character(value_as_string),
-        min_month = if("min_month" %in% names(.)) as.integer(min_month) else NA_integer_,
-        max_month = if("max_month" %in% names(.)) as.integer(max_month) else NA_integer_
+        # Keep fractional months (e.g. 3.75, 6.25); the reference never rounds them
+        min_month = if("min_month" %in% names(.)) as.numeric(min_month) else NA_real_,
+        max_month = if("max_month" %in% names(.)) as.numeric(max_month) else NA_real_
       ),
     
     # Default: just ensure basic types
