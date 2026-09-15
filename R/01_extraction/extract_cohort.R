@@ -15,6 +15,10 @@
 #' @param pps_concepts Data frame of PPS concepts
 #' @param min_age Minimum age for inclusion
 #' @param max_age Maximum age for inclusion
+#' @param male_concept_ids Gender concept IDs to exclude. Persons with any other
+#'   gender_concept_id (including unknown) are eligible, matching the reference
+#'   All of Us implementation which excludes only explicit males.
+#'   Default is the standard OMOP MALE concept (8507).
 #' @param use_temp_tables Whether to use temp tables (default: TRUE)
 #'
 #' @return List containing extracted cohort data
@@ -26,7 +30,7 @@ extract_pregnancy_cohort <- function(
   pps_concepts,
   min_age = 15,
   max_age = 56,
-  use_all_of_us_gender = FALSE,
+  male_concept_ids = 8507,
   use_temp_tables = TRUE
 ) {
   
@@ -48,23 +52,16 @@ extract_pregnancy_cohort <- function(
     
     # For Databricks/Spark: Create view directly without extracting to R
     if (target_dialect %in% c("spark", "databricks") && use_temp_tables) {
-      # Gender concept IDs
-      if (use_all_of_us_gender) {
-        gender_concepts <- c(45878463, 46273637, 903096, 4124462, 1177221)
-      } else {
-        gender_concepts <- c(8532, 8507, 45878463)  # Female, FEMALE, Woman
-      }
-      
       # Create view directly from SQL - no data extraction to R!
       sql <- SqlRender::render("
         CREATE OR REPLACE TEMPORARY VIEW person_cohort AS
         SELECT DISTINCT person_id
         FROM @cdm_schema.person
-        WHERE gender_concept_id IN (@gender_concepts)
+        WHERE gender_concept_id NOT IN (@male_concept_ids)
           AND year_of_birth >= YEAR(CURRENT_DATE) - @max_age
           AND year_of_birth <= YEAR(CURRENT_DATE) - @min_age",
         cdm_schema = cdm_schema,
-        gender_concepts = gender_concepts,
+        male_concept_ids = male_concept_ids,
         min_age = min_age,
         max_age = max_age
       )
@@ -78,7 +75,7 @@ extract_pregnancy_cohort <- function(
       # Still need persons data for demographics
       persons <- extract_persons(
         connection, cdm_schema, target_dialect,
-        min_age, max_age, use_all_of_us_gender
+        min_age, max_age, male_concept_ids
       )
       message(sprintf("  Created person cohort view with persons aged %d-%d", min_age, max_age))
       
@@ -87,9 +84,9 @@ extract_pregnancy_cohort <- function(
       message("  Extracting person demographics...")
       persons <- extract_persons(
         connection, cdm_schema, target_dialect,
-        min_age, max_age, use_all_of_us_gender
+        min_age, max_age, male_concept_ids
       )
-      
+
       # Get person IDs for filtering
       person_ids <- unique(persons$person_id)
       message(sprintf("  Found %d persons", length(person_ids)))
@@ -497,19 +494,10 @@ extract_persons <- function(
   target_dialect,
   min_age,
   max_age,
-  use_all_of_us_gender = FALSE
+  male_concept_ids = 8507
 ) {
-  
-  # Gender concept IDs
-  if (use_all_of_us_gender) {
-    # All of Us gender concepts
-    gender_concepts <- c(45878463, 45880669, 903096, 903079, 1177221)
-  } else {
-    # Standard OMOP female concepts
-    gender_concepts <- c(8532, 8507, 45878463)  # Female, FEMALE, Woman
-  }
-  
-  # Build SQL for person extraction
+
+  # Exclude explicit males only; everyone else is eligible (matches reference)
   sql <- SqlRender::render("
     SELECT DISTINCT
       p.person_id,
@@ -521,12 +509,12 @@ extract_persons <- function(
       p.ethnicity_concept_id,
       YEAR(GETDATE()) - p.year_of_birth AS age_current
     FROM @cdm_schema.person p
-    WHERE p.gender_concept_id IN (@gender_concepts)
+    WHERE p.gender_concept_id NOT IN (@male_concept_ids)
       AND p.year_of_birth >= YEAR(GETDATE()) - @max_age
       AND p.year_of_birth <= YEAR(GETDATE()) - @min_age
     ",
     cdm_schema = cdm_schema,
-    gender_concepts = gender_concepts,
+    male_concept_ids = male_concept_ids,
     min_age = min_age,
     max_age = max_age
   )
