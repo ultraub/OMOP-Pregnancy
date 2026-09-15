@@ -112,13 +112,18 @@ run_pregnancy_identification <- function(
   )
   message(sprintf("  - Final episode count: %d", nrow(final_episodes)))
   
-  # Step 6: Add estimated start dates
-  message("\nStep 6: Calculating estimated start dates...")
-  final_episodes <- calculate_episode_dates(
+  # Step 6: Estimated start dates (ESD) and quality metadata
+  message("\nStep 6: Calculating estimated start dates (ESD)...")
+  final_episodes <- calculate_estimated_start_dates(
     episodes = final_episodes,
-    gestational_data = cohort_data$gestational_timing
+    cohort_data = cohort_data,
+    pps_concepts = concepts$pps_concepts
   )
-  
+  final_episodes <- add_episode_quality_metadata(
+    episodes = final_episodes,
+    matcho_limits = concepts$matcho_limits
+  )
+
   # Print summary statistics
   print_summary_statistics(final_episodes)
   

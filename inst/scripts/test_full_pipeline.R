@@ -197,6 +197,10 @@ tryCatch({
       cohort_data,
       concepts$pps_concepts
     )
+    final_episodes <- add_episode_quality_metadata(
+      final_episodes,
+      concepts$matcho_limits
+    )
   } else {
     final_episodes <- data.frame()
   }

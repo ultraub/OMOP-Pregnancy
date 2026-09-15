@@ -279,7 +279,14 @@ tryCatch({
     cohort_data,
     concepts$pps_concepts
   )
-  
+
+  # Quality metadata: term-based fallbacks for episodes without timing
+  # evidence, term_duration_flag, outcome_concordance_score, preterm flag
+  final_episodes <- add_episode_quality_metadata(
+    final_episodes,
+    concepts$matcho_limits
+  )
+
   message(sprintf("  ✓ ESD refined %d episodes", nrow(final_episodes)))
   
   # Step 7: Correct date issues and save results

@@ -68,9 +68,13 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
   timing_concepts <- get_timing_concepts(episodes, cohort_data, pps_concepts)
   
   if (nrow(timing_concepts) == 0) {
-    # No timing data, return episodes with default precision
-    episodes$precision_category <- "non-specific"
-    episodes$precision_days <- 999
+    # No timing data anywhere: leave the inferred start and precision NA;
+    # add_episode_quality_metadata() applies the reference term-based fallback
+    episodes$inferred_episode_start <- as.Date(NA)
+    episodes$precision_days <- NA_real_
+    episodes$precision_category <- NA_character_
+    episodes$GW_flag <- 0L
+    episodes$GR3m_flag <- 0L
     return(episodes)
   }
   
@@ -153,8 +157,9 @@ calculate_estimated_start_dates <- function(episodes, cohort_data, pps_concepts)
       # Ensure date columns are Date type, using safe conversion
       episode_start_date = as.Date(episode_start_date),
       episode_end_date = as.Date(episode_end_date),
-      precision_category = "non-specific",
-      precision_days = 999,
+      inferred_episode_start = as.Date(NA),
+      precision_days = NA_real_,
+      precision_category = NA_character_,
       GW_flag = 0L,
       GR3m_flag = 0L
     )
@@ -425,26 +430,28 @@ calculate_episode_esd <- function(episode_data) {
   # Handle empty data frame
   if (nrow(episode_data) == 0) {
     return(data.frame(
-      precision_category = "non-specific",
-      precision_days = 999
+      inferred_episode_start = as.Date(NA),
+      precision_category = NA_character_,
+      precision_days = NA_real_
     ))
   }
-  
-  # If no timing data, return original with default precision
+
+  # If no usable timing data, return original with NA precision
   if (!"implied_start_date" %in% names(episode_data) ||
       all(is.na(episode_data$implied_start_date))) {
-    
+
     # Get first row and clean up any timing columns that might exist
     result <- episode_data[1, ] %>%
-      select(-any_of(c("implied_start_date", "gestational_weeks", 
+      select(-any_of(c("implied_start_date", "gestational_weeks",
                        "range_start", "range_end", "event_date", "concept_id",
                        "concept_name", "category", "gest_value",
                        "value_as_number", "value_as_string",
                        "min_month", "max_month",
                        "person_id", "episode_number"))) %>%  # Remove grouping columns since .keep = TRUE
       mutate(
-        precision_category = "non-specific",
-        precision_days = 999
+        inferred_episode_start = as.Date(NA),
+        precision_category = NA_character_,
+        precision_days = NA_real_
       )
     return(result)
   }
@@ -476,36 +483,30 @@ calculate_episode_esd <- function(episode_data) {
                        "min_month", "max_month",
                        "person_id", "episode_number"))) %>%
       mutate(
-        precision_category = "non-specific",
-        precision_days = 999
+        inferred_episode_start = as.Date(NA),
+        precision_category = NA_character_,
+        precision_days = NA_real_
       )
     return(result)
   }
-  
-  # Update episode with refined start date
+
+  # Attach the inferred start and precision. episode_start_date is left as
+  # the working start; add_episode_quality_metadata() finalizes dates.
   result <- original_episode %>%
     select(-any_of(c("implied_start_date", "gestational_weeks",
                      "range_start", "range_end", "event_date", "concept_id",
-                     "concept_name", "category", "gest_value", 
+                     "concept_name", "category", "gest_value",
                      "value_as_number", "value_as_string",
                      "min_month", "max_month",
                      "person_id", "episode_number"))) %>%  # Remove grouping columns since .keep = TRUE
     mutate(
-      # Ensure dates are Date type using safe conversion
-      episode_start_date = as.Date(coalesce(
-        timing_result$inferred_start_date,
-        episode_start_date
-      )),
+      episode_start_date = as.Date(episode_start_date),
       episode_end_date = as.Date(episode_end_date),
-      
-      # Add precision information
-      precision_days = timing_result$precision_days,
-      precision_category = assign_precision_category(timing_result$precision_days),
-      
-      # Recalculate gestational age with new start
-      gestational_age_days = as.numeric(as.Date(episode_end_date) - as.Date(episode_start_date))
+      inferred_episode_start = as.Date(timing_result$inferred_start_date),
+      precision_days = as.numeric(timing_result$precision_days),
+      precision_category = assign_precision_category(precision_days)
     )
-  
+
   return(result)
 }
 
@@ -684,7 +685,7 @@ find_range_intersection <- function(range_concepts) {
 #' @noRd
 assign_precision_category <- function(precision_days) {
   case_when(
-    is.na(precision_days) | precision_days == 999 ~ "non-specific",
+    is.na(precision_days) ~ NA_character_,
     precision_days == -1 ~ "week_poor-support",
     precision_days >= 0 & precision_days <= 7 ~ "week",
     precision_days > 7 & precision_days <= 14 ~ "two-week",

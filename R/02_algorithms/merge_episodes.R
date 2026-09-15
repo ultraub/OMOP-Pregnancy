@@ -505,42 +505,52 @@ prepare_final_episodes <- function(episodes) {
 
 #' Add episode quality metadata (All of Us aligned)
 #'
-#' Port of original merged_episodes_with_metadata() quality assessment.
-#' Should be called AFTER ESD processing has added timing information.
+#' Port of the reference merged_episodes_with_metadata(). Call after the
+#' merge and the ESD. Finalizes the inferred dates and adds quality flags:
+#' - inferred_episode_end: the merge's resolved end date
+#' - inferred_episode_start: the ESD start, or inferred end minus the
+#'   category max term when the ESD found no timing evidence
+#' - precision_days / precision_category: from the ESD, or
+#'   max_term - min_term when no timing evidence
+#' - gestational_age_days_calculated: inferred end minus inferred start
+#' - term_duration_flag: 1 if GA within category [min_term, max_term]
+#'   (PREG: <= 301), 0 otherwise
+#' - outcome_concordance_score: 2 = outcome match + term ok + GW evidence,
+#'   1 = term ok + GW evidence, 0 otherwise
+#' - preterm_status_from_calculation: 1 if GA < 259 days
+#' episode_start_date / episode_end_date / gestational_age_days are set to
+#' the inferred values so downstream output keeps its meaning.
 #'
-#' Adds:
-#' - term_duration_flag: 1 if GA within category [min_term, max_term], 0 otherwise
-#' - preterm_status_from_calculation: 1 if GA < 259 days (~37 weeks), 0 otherwise
-#' - outcome_concordance_score: 3-factor (outcome_match + term_duration_flag + GW_flag)
-#'   2 = highly concordant, 1 = somewhat concordant, 0 = not accurate/insufficient info
+#' Note: the reference term table has no PREG row, so a PREG episode with
+#' no timing evidence gets an NA inferred start there. matcho_limits.csv
+#' carries PREG (30, 301), which yields end - 301 and "non-specific".
 #'
-#' @param episodes Data frame of episodes (post-ESD with GW_flag, GR3m_flag)
+#' @param episodes Data frame of episodes (post-merge, post-ESD)
 #' @param matcho_limits Data frame with min_term and max_term per category
-#' @return Episodes with quality metadata columns added
+#' @return Episodes with finalized dates and quality metadata
 #' @export
 add_episode_quality_metadata <- function(episodes, matcho_limits = NULL) {
 
+  if (is.null(episodes) || nrow(episodes) == 0) {
+    return(episodes)
+  }
+
   # Load matcho_limits if not provided
   if (is.null(matcho_limits)) {
-    matcho_limits <- tryCatch(
-      load_matcho_limits(),
-      error = function(e) NULL
-    )
+    matcho_limits <- load_matcho_limits()
   }
 
   result <- episodes
 
-  # Ensure GW_flag and GR3m_flag exist (default to 0 if missing)
-  if (!"GW_flag" %in% names(result)) {
-    result$GW_flag <- 0L
-  }
-  if (!"GR3m_flag" %in% names(result)) {
-    result$GR3m_flag <- 0L
-  }
+  # Columns the ESD adds; default them if the ESD was not run
+  if (!"GW_flag" %in% names(result)) result$GW_flag <- 0L
+  if (!"GR3m_flag" %in% names(result)) result$GR3m_flag <- 0L
+  if (!"inferred_episode_start" %in% names(result)) result$inferred_episode_start <- as.Date(NA)
+  if (!"precision_days" %in% names(result)) result$precision_days <- NA_real_
+  if (!"precision_category" %in% names(result)) result$precision_category <- NA_character_
 
-  # Ensure outcome_match exists (may have been computed during merge as outcome_concordance)
+  # outcome_match (reference lines 494-501); the merge computes it too
   if (!"outcome_match" %in% names(result)) {
-    # Compute outcome_match if not present (matching original ESD lines 494-501)
     if (all(c("HIP_outcome_category", "PPS_outcome_category",
               "HIP_end_date", "PPS_end_date") %in% names(result))) {
       result <- result %>%
@@ -558,50 +568,58 @@ add_episode_quality_metadata <- function(episodes, matcho_limits = NULL) {
     }
   }
 
-  # Calculate gestational age from final dates (matching original line 564)
   result <- result %>%
     mutate(
+      GW_flag = coalesce(as.integer(GW_flag), 0L),
+      GR3m_flag = coalesce(as.integer(GR3m_flag), 0L),
+      # The merge already resolved the end date the reference way
+      inferred_episode_end = as.Date(episode_end_date),
+      inferred_episode_start = as.Date(inferred_episode_start),
+      precision_days = as.numeric(precision_days)
+    ) %>%
+    left_join(
+      matcho_limits %>% select(category, min_term, max_term),
+      by = c("outcome_category" = "category")
+    ) %>%
+    mutate(
+      # Reference fallbacks when the ESD found no timing evidence
+      inferred_episode_start = if_else(
+        is.na(inferred_episode_start),
+        inferred_episode_end - max_term,
+        inferred_episode_start
+      ),
+      precision_days = if_else(is.na(precision_days),
+                               as.numeric(max_term - min_term), precision_days),
+      precision_category = if_else(is.na(precision_category),
+                                   assign_precision_category(precision_days),
+                                   precision_category),
+
       gestational_age_days_calculated = as.integer(
-        difftime(episode_end_date, episode_start_date, units = "days")
-      )
-    )
+        difftime(inferred_episode_end, inferred_episode_start, units = "days")
+      ),
 
-  # Join with matcho_limits for term validation
-  if (!is.null(matcho_limits)) {
-    result <- result %>%
-      left_join(
-        matcho_limits %>% select(category, min_term, max_term),
-        by = c("outcome_category" = "category")
-      ) %>%
-      mutate(
-        # term_duration_flag: 1 if within expected range (original lines 568-572)
-        term_duration_flag = case_when(
-          gestational_age_days_calculated >= min_term &
-            gestational_age_days_calculated <= max_term ~ 1L,
-          outcome_category == "PREG" &
-            gestational_age_days_calculated <= 301L ~ 1L,
-          TRUE ~ 0L
-        )
-      ) %>%
-      select(-min_term, -max_term)
-  } else {
-    result <- result %>%
-      mutate(term_duration_flag = NA_integer_)
-  }
-
-  # 3-factor outcome concordance score (original lines 577-581)
-  result <- result %>%
-    mutate(
+      term_duration_flag = case_when(
+        gestational_age_days_calculated >= min_term &
+          gestational_age_days_calculated <= max_term ~ 1L,
+        outcome_category == "PREG" &
+          gestational_age_days_calculated <= 301L ~ 1L,
+        TRUE ~ 0L
+      ),
       outcome_concordance_score = case_when(
         outcome_match == 1L & term_duration_flag == 1L & GW_flag == 1L ~ 2L,
         outcome_match == 0L & term_duration_flag == 1L & GW_flag == 1L ~ 1L,
         TRUE ~ 0L
       ),
-      # Preterm status (original line 585): < 259 days = ~37 weeks
       preterm_status_from_calculation = if_else(
         gestational_age_days_calculated < 259L, 1L, 0L
-      )
-    )
+      ),
+
+      # Final dates for output
+      episode_start_date = inferred_episode_start,
+      episode_end_date = inferred_episode_end,
+      gestational_age_days = gestational_age_days_calculated
+    ) %>%
+    select(-min_term, -max_term)
 
   return(result)
 }
