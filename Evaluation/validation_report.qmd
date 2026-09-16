@@ -1,6 +1,6 @@
 ---
 title: "Pregnancy Algorithm Validation Report"
-subtitle: "Comparison of Algorithm Predictions vs PMAP OB Ground Truth"
+subtitle: "Comparison of Algorithm Predictions vs Obstetric Registry Ground Truth"
 author: "OMOP Pregnancy Team"
 date: "`r Sys.Date()`"
 format:
@@ -24,9 +24,20 @@ params:
   # Prediction filters: deliveries only (>= 20 weeks) and starts before this date
   min_ga_days: 140
   max_start_date: "2025-01-01"
-  # Ground truth (PMAP OB registry) and OMOP databases on the SQL Server instance
+  # Ground-truth source: "pmap_sqlserver" (PMAP OB registry tables on the SQL
+  # Server instance) or "edw_databricks" (EDW pregnancy/birth fact tables on
+  # Databricks). Both produce the same episode frame for the analyses below.
+  gt_source: "pmap_sqlserver"
+  # pmap_sqlserver: registry and linkage databases
   gt_scratch_database: "Obstetrics_Minhas_IRB00501137_Scratch"
   gt_projection_database: "Obstetrics_Minhas_IRB00501137_Projection"
+  # edw_databricks: catalog holding the EDW fact tables and the registry id map
+  edw_catalog: "obstetrics_irb00501137"
+  edw_phi_schema: "phi"
+  edw_idmap_schema: "omop"
+  # OMOP CDM used by the complication section: database (or Databricks catalog)
+  # and schema of the CDM tables, e.g. "Obstetrics_Minhas_IRB00501137_OMOP"/"dbo"
+  # on SQL Server or "omop"/"data" on Databricks
   omop_database: "Obstetrics_Minhas_IRB00501137_OMOP"
   omop_schema: "dbo"
   # .env with the database connection (project root by default)
@@ -51,10 +62,15 @@ library(janitor)
 source("../R/00_connection/create_connection.R")
 
 # Database names used in the ground-truth queries
+gt_source        <- match.arg(params$gt_source, c("pmap_sqlserver", "edw_databricks"))
 gt_scratch_db    <- params$gt_scratch_database
 gt_projection_db <- params$gt_projection_database
+edw_catalog      <- params$edw_catalog
+edw_phi_schema   <- params$edw_phi_schema
+edw_idmap_schema <- params$edw_idmap_schema
 omop_db          <- params$omop_database
 omop_schema_name <- params$omop_schema
+cat("Ground-truth source:", gt_source, "\n")
 
 # Set ggplot theme
 theme_set(theme_minimal(base_size = 12))
@@ -159,6 +175,7 @@ cat("Database connection established\n")
 ```
 
 ```{r query-ground-truth}
+#| eval: !expr gt_source == "pmap_sqlserver"
 
 # Query ground truth tables
 
@@ -235,6 +252,7 @@ cat("Loaded", nrow(cohort_to_person), "cohort_id to person_id mappings\n")
 ```
 
 ```{r id-linkage}
+#| eval: !expr gt_source == "pmap_sqlserver"
 
 # Build complete ID linkage: EMRN -> cohort_id -> person_id
 build_id_linkage <- function(emrn_cohort, cohort_person) {
@@ -279,6 +297,7 @@ cat("Overlapping person_ids between algorithm and linkage:", overlap_count, "\n"
 ```
 
 ```{r derive-outcomes}
+#| eval: !expr gt_source == "pmap_sqlserver"
 
 # Derive outcome category from ground truth cumulative counts
 derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkage) {
@@ -397,6 +416,142 @@ gt_episodes %>%
 ```
 
 # Episode-level matching
+```{r edw-ground-truth}
+#| eval: !expr gt_source == "edw_databricks"
+
+# =========================================================
+# Ground truth from the EDW obstetric fact tables (Databricks)
+#   <catalog>.<phi schema>.edw_pregnancyfact   one row per pregnancy
+#   <catalog>.<phi schema>.edw_birthfact       one row per baby (PregnancyKey)
+#   <catalog>.<idmap schema>.registry_idmap    PMAP_id -> OMOP person_id
+# Produces gt_episodes with the same columns as the PMAP adapter:
+#   person_id, gt_episode_num, gt_start, gt_end, gt_outcome_category, gt_ga_days
+# =========================================================
+
+edw_table <- function(schema, table) paste0(edw_catalog, ".", schema, ".", table)
+
+edw_sql <- paste0("
+WITH births AS (
+  SELECT
+    PregnancyKey,
+    COUNT(*)                                                     AS n_births,
+    SUM(CASE WHEN BornAlive = 1 THEN 1 ELSE 0 END)               AS n_born_alive,
+    SUM(CASE WHEN LivingStatus = 'Fetal Demise' THEN 1 ELSE 0 END) AS n_fetal_demise,
+    MAX(GestationalAgeDays)                                      AS ga_days_birth
+  FROM ", edw_table(edw_phi_schema, "edw_birthfact"), "
+  GROUP BY PregnancyKey
+)
+SELECT
+  r.person_id                     AS person_id,
+  p.cohort_id                     AS cohort_id,
+  p.PregnancyKey                  AS pregnancy_key,
+  p.PregnancyOutcome              AS pregnancy_outcome,
+  p.HasDelivery                   AS has_delivery,
+  p.HadFetalDemise                AS had_fetal_demise,
+  p.HadNeonatalDemise             AS had_neonatal_demise,
+  p.PregnancyEstimatedStartDate   AS pregnancy_estimated_start_date,
+  p.EpisodeStartDate              AS episode_start_date,
+  p.PregnancyEstimatedEndDate     AS pregnancy_estimated_end_date,
+  p.EpisodeEndDate                AS episode_end_date,
+  p.LastDeliveryDate              AS last_delivery_date,
+  p.LastDeliveryGestationalAge    AS last_delivery_gestational_age,
+  b.n_births                      AS n_births,
+  b.n_born_alive                  AS n_born_alive,
+  b.n_fetal_demise                AS n_fetal_demise,
+  b.ga_days_birth                 AS ga_days_birth
+FROM ", edw_table(edw_phi_schema, "edw_pregnancyfact"), " p
+INNER JOIN ", edw_table(edw_idmap_schema, "registry_idmap"), " r
+  ON p.cohort_id = r.PMAP_id
+LEFT JOIN births b
+  ON p.PregnancyKey = b.PregnancyKey
+WHERE p.PregnancyOutcome IS NULL OR p.PregnancyOutcome <> '*Deleted'
+")
+
+# Columns are aliased to snake_case in the SQL; clean_names() only normalizes case
+edw_raw <- DatabaseConnector::querySql(con, edw_sql) %>%
+  clean_names()
+
+cat("Loaded", nrow(edw_raw), "EDW pregnancy episodes for",
+    n_distinct(edw_raw$person_id), "linked persons\n")
+
+to_date_any <- function(x) {
+  if (inherits(x, "Date")) return(x)
+  if (inherits(x, "POSIXt")) return(as.Date(x))
+  suppressWarnings(as.Date(as.character(x)))
+}
+
+# Outcome mapping to the algorithm's categories (Matcho hierarchy):
+#   Term / Preterm with any liveborn (or no birth rows and no fetal demise) -> LB
+#   Term / Preterm where every birth was a fetal demise (or HadFetalDemise
+#     with no birth rows)                                                   -> SB
+#   Spontaneous Abortion -> SA; Induced Abortion and unspecified Abortion -> AB
+#   Ectopic -> ECT
+#   Molar -> AB (the HIP concept list has no molar codes, so the algorithm
+#     cannot produce a molar category; pooled with AB and flagged)
+#   Gravida / Para / *Unspecified -> PREG (recorded pregnancy, outcome not
+#     resolved; matches the PMAP adapter's treatment of no-outcome rows)
+edw_episodes <- edw_raw %>%
+  mutate(
+    pregnancy_outcome = as.character(pregnancy_outcome),
+    has_delivery = suppressWarnings(as.numeric(has_delivery)),
+    had_fetal_demise = suppressWarnings(as.numeric(had_fetal_demise)),
+    n_births = coalesce(suppressWarnings(as.numeric(n_births)), 0),
+    n_born_alive = coalesce(suppressWarnings(as.numeric(n_born_alive)), 0),
+    n_fetal_demise = coalesce(suppressWarnings(as.numeric(n_fetal_demise)), 0),
+    gt_start = coalesce(to_date_any(pregnancy_estimated_start_date),
+                        to_date_any(episode_start_date)),
+    gt_end = case_when(
+      !is.na(has_delivery) & has_delivery == 1 & !is.na(to_date_any(last_delivery_date)) ~
+        to_date_any(last_delivery_date),
+      TRUE ~ coalesce(to_date_any(pregnancy_estimated_end_date),
+                      to_date_any(episode_end_date))
+    ),
+    gt_ga_days = coalesce(suppressWarnings(as.numeric(last_delivery_gestational_age)),
+                          suppressWarnings(as.numeric(ga_days_birth))),
+    is_delivery_outcome = pregnancy_outcome %in% c("Term", "Preterm"),
+    all_fetal_demise = (n_births > 0 & n_fetal_demise == n_births & n_born_alive == 0) |
+      (n_births == 0 & coalesce(had_fetal_demise, 0) == 1),
+    gt_outcome_category = case_when(
+      is_delivery_outcome & all_fetal_demise ~ "SB",
+      is_delivery_outcome ~ "LB",
+      pregnancy_outcome == "Spontaneous Abortion" ~ "SA",
+      pregnancy_outcome %in% c("Induced Abortion", "Abortion") ~ "AB",
+      pregnancy_outcome == "Ectopic" ~ "ECT",
+      pregnancy_outcome == "Molar" ~ "AB",
+      TRUE ~ "PREG"
+    ),
+    gt_molar = pregnancy_outcome == "Molar",
+    gt_unresolved = pregnancy_outcome %in% c("Gravida", "Para", "*Unspecified")
+  ) %>%
+  filter(!is.na(person_id), !is.na(gt_start) | !is.na(gt_end)) %>%
+  filter(is.na(gt_start) | gt_start < as.Date(params$max_start_date))
+
+gt_episodes <- edw_episodes %>%
+  group_by(person_id) %>%
+  arrange(coalesce(gt_end, gt_start), .by_group = TRUE) %>%
+  mutate(gt_episode_num = row_number()) %>%
+  ungroup() %>%
+  select(person_id, cohort_id, pregnancy_key, gt_episode_num, gt_start, gt_end,
+         gt_outcome_category, gt_ga_days, pregnancy_outcome, gt_molar, gt_unresolved)
+
+cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
+cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
+cat("Unresolved (Gravida/Para/Unspecified) episodes mapped to PREG:",
+    sum(gt_episodes$gt_unresolved), "\n")
+cat("Molar pregnancies pooled with AB:", sum(gt_episodes$gt_molar), "\n")
+
+algo_persons_set <- unique(algo_predictions$person_id)
+gt_persons_set <- unique(gt_episodes$person_id)
+cat("Person overlap (algo ∩ GT):", length(intersect(algo_persons_set, gt_persons_set)), "\n")
+
+cat("\nGround truth outcome distribution (EDW PregnancyOutcome -> category):\n")
+gt_episodes %>%
+  count(pregnancy_outcome, gt_outcome_category) %>%
+  arrange(desc(n)) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
 ```{r episode-level-matching}
 # =========================================================
 # Episode-level matching
@@ -1912,7 +2067,7 @@ get_complication_descendants <- function(conn, complication_concepts) {
   omop_schema   <- params$omop_schema
 
   ancestor_table <- paste0(
-    "[", omop_database, "].[", omop_schema, "].[CONCEPT_ANCESTOR]"
+    omop_database, ".", omop_schema, ".concept_ancestor"
   )
 
   out_list <- lapply(seq_len(nrow(complication_concepts)), function(i) {
@@ -1972,7 +2127,7 @@ query_complication_conditions <- function(conn, person_ids, complication_descend
   omop_schema   <- params$omop_schema
 
   condition_table <- paste0(
-    "[", omop_database, "].[", omop_schema, "].[CONDITION_OCCURRENCE]"
+    omop_database, ".", omop_schema, ".condition_occurrence"
   )
 
   person_ids <- unique(person_ids[!is.na(person_ids)])

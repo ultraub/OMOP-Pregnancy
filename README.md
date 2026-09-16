@@ -193,10 +193,15 @@ The EDA document and the `ConceptSets` folder are not part of the pipeline.
 ## Evaluation
 
 `Evaluation/validation_report.qmd` compares the pipeline output with a
-registry of clinically recorded pregnancies (the PMAP OB registry on the
-same SQL Server instance as the CDM). It links registry patients to
-`person_id`, matches predicted episodes to registry episodes within a date
-window (primary analysis excludes registry pregnancies that predate the
+registry of clinically recorded pregnancies. Two ground-truth sources are
+supported through the `gt_source` parameter: the PMAP OB registry tables on
+the SQL Server instance (`pmap_sqlserver`, outcomes derived from cumulative
+obstetric counts) and the EDW pregnancy and birth fact tables on Databricks
+(`edw_databricks`, outcomes taken from `PregnancyOutcome` and the birth-level
+fetal-demise status, linked to `person_id` through `registry_idmap`). Both
+produce the same episode frame, so everything downstream is shared. The
+report links registry patients to `person_id`, matches predicted episodes
+to registry episodes within a date window (primary analysis excludes registry pregnancies that predate the
 patient's observable record; sensitivity analyses vary the window and
 include everything), reports outcome classification agreement, compares
 gestational age with agreement and Bland-Altman plots, aggregates pregnancy
@@ -212,6 +217,8 @@ project root:
 ```bash
 cd Evaluation
 quarto render validation_report.qmd -P prediction_file:../output/pregnancy_episodes_YYYY-MM-DD.csv
+# against the Databricks EDW tables, with the CDM at catalog omop, schema data:
+quarto render validation_report.qmd -P gt_source:edw_databricks -P omop_database:omop -P omop_schema:data
 ```
 
 `validation_report.html` is the most recent render and `figures/` holds
