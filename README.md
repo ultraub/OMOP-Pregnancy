@@ -1,192 +1,215 @@
-# OMOPPregnancyV2
+# OMOP Pregnancy
 
-Database-agnostic pregnancy episode identification in OMOP CDM databases.
+Identifies pregnancy episodes in an OMOP CDM database.
 
-## Overview
+This is an R implementation of the HIPPS algorithm (Jones et al. 2023),
+following the All of Us R implementation by Smith et al. (2024) and adapted
+to run against a standard OMOP CDM on SQL Server, PostgreSQL, or
+Databricks. The algorithm logic is kept as close to the reference as
+possible; the places where this implementation deliberately differs are
+listed below.
 
-This package implements the HIPPS (Hierarchical Identification of Pregnancy and Pregnancy Progression Signatures) algorithm to identify pregnancy episodes from OMOP CDM databases. It combines:
+## What the pipeline does
 
-- **HIP Algorithm**: Hierarchical outcome-based episode identification
-- **PPS Algorithm**: Temporal signature-based episode detection  
-- **ESD Algorithm**: Gestational timing refinement for accurate start dates
-- **Episode Merging**: Intelligent deduplication and episode consolidation
+1. **Load concept sets.** Reads the HIP and PPS concept lists and the Matcho
+   term and spacing tables from `inst/extdata/`. These are the same tables
+   used by the reference implementation.
+2. **Extract records.** Runs one set of queries against the CDM and brings
+   everything needed into R:
+   - persons not recorded as male (`gender_concept_id` not in a configurable
+     male list, default 8507), with year of birth within the age bounds;
+   - every record in `condition_occurrence`, `procedure_occurrence`,
+     `observation`, and `measurement` whose concept is in the HIP list;
+   - every record in those four tables plus `visit_occurrence` whose concept
+     is in the PPS list;
+   - every record whose concept name contains "gestation period" or is in
+     the ESD concept lists, with its concept name and value columns, for
+     start-date estimation.
+   Records are then restricted to those where the person was between the
+   minimum and maximum age on the record date.
+3. **HIP.** Builds outcome-based episodes from live birth, stillbirth,
+   ectopic, abortion, and delivery codes in that order of priority, applying
+   the Matcho minimum spacing between consecutive outcomes. Groups
+   gestational-age records into gestation episodes, matches them to outcome
+   episodes by temporal overlap, and creates PREG episodes for gestation
+   data with no outcome. Start dates come from the matched gestation record,
+   or from the category's maximum term when there is none. Outcomes whose
+   gestation data contradicts them are reclassified to PREG rather than
+   dropped.
+4. **PPS.** Builds episodes from gestational-timing concepts by checking
+   that consecutive records are consistent with the expected months of
+   gestation, then looks ahead from each episode for an outcome code. An
+   episode is described by its first and last concept dates and, if found,
+   its outcome.
+5. **Merge.** Joins HIP and PPS episodes on temporal overlap, resolves
+   episodes that overlap more than one from the other algorithm, and
+   reconciles outcome and end date when the two disagree. Nothing is
+   dropped at this stage.
+6. **Estimated start date (ESD) and quality flags.** Combines week-level
+   and range-level timing evidence within each episode to infer the start
+   date and a precision category. Episodes with no evidence get a start
+   based on the category's maximum term. Adds the term-duration flag,
+   outcome concordance score, and preterm flag.
 
-## Features
+Step 2 is the only database access. Everything else runs in R on data
+frames.
 
-- ✅ **Database Agnostic**: Supports both SQL Server and Databricks/Spark
-- ✅ **Performance Optimized**: Handles 300K+ person cohorts in ~60 seconds using temp tables
-- ✅ **Full Algorithm Alignment**: Implements All of Us algorithm specifications
-- ✅ **Comprehensive Output**: Identifies pregnancy episodes with outcome classification and date precision
+## Requirements
 
-## Architecture
+- R 4.0 or later
+- Java 8 or later and a JDBC driver for the database
+  (`inst/scripts/setup_jdbc_drivers.R` downloads drivers)
+- R packages: DatabaseConnector, SqlRender, dplyr, lubridate, readr, DBI
 
-The V2 implementation follows a clean three-layer architecture:
+## Configuration
 
-1. **Extraction Layer** (`R/01_extraction/`)
-   - Single database operation to extract all needed data
-   - Uses SqlRender for database-agnostic SQL generation
-   - Enforces consistent data types across platforms
-
-2. **Algorithm Layer** (`R/02_algorithms/`)
-   - Pure R implementations of HIP and PPS algorithms
-   - No SQL generation or database operations
-   - Clear, testable functions
-
-3. **Results Layer** (`R/03_results/`)
-   - Saves results to CSV or database
-   - Generates summary statistics
-   - Exports data for analysis
-
-## Key Improvements from V1
-
-- **No smart_compute**: Removed complex optimization logic that caused platform-specific issues
-- **No lazy evaluation**: All data collected immediately for consistent behavior
-- **No platform branching**: Same code path for all databases
-- **Type safety**: Explicit type enforcement prevents SQL Server date issues
-- **Simplified merging**: Pure R episode merging without SQL window functions
-
-## Installation
-
-```r
-# Install required packages
-install.packages(c("DatabaseConnector", "SqlRender", "dplyr", "lubridate", "readr"))
-
-# Setup JDBC drivers
-source("inst/scripts/setup_jdbc_drivers.R")
-
-# Create environment configuration
-cp inst/templates/.env.template .env
-# Edit .env with your database settings
-```
-
-## Quick Start
-
-### 1. Setup Environment
+Connection settings are read from a `.env` file in the project root.
 
 ```bash
-# Copy the environment template
 cp inst/templates/.env.template .env
-# Edit .env with your database settings
 ```
 
-### 2. Run Analysis
+The template covers SQL Server (SQL or Windows authentication), PostgreSQL,
+and Databricks. Platform-specific templates with more commentary are in the
+same folder. See `CONNECTION_SETUP.md` for details and troubleshooting.
+
+The variables that matter for the analysis are `DB_TYPE`, the connection
+fields, `CDM_SCHEMA`, `VOCABULARY_SCHEMA` (defaults to the CDM schema),
+`RESULTS_SCHEMA` (optional), and `OUTPUT_FOLDER`.
+
+## Running
+
+From the project root:
 
 ```r
-# Load connection functions
-source("R/00_connection/create_connection.R")
-
-# Create connection from environment
-conn <- create_connection_from_env()
-
-# Run pregnancy identification
-source("R/main.R")
-episodes <- run_pregnancy_identification(
-  connection = conn,
-  cdm_database_schema = "cdm_schema",
-  results_database_schema = "results_schema",  # optional
-  output_folder = "output/",
-  min_age = 15,
-  max_age = 56
-)
-
-DatabaseConnector::disconnect(conn)
-```
-
-### 3. Alternative: Run Complete Pipeline
-
-```r
-# Run the full pipeline script
 source("inst/scripts/run_pregnancy_analysis.R")
 ```
 
-## Files and Structure
+This connects using `.env`, runs every step, writes CSV and RDS files to the
+output folder, and writes a `pregnancy_episodes` table to the results schema
+when one is configured.
 
-```
-OMOPPregnancyV2/
-├── R/
-│   ├── 00_concepts/         # Concept loading and validation
-│   ├── 00_connection/       # Database connection management
-│   ├── 01_extraction/       # Database extraction layer
-│   ├── 02_algorithms/       # HIP, PPS, and merging algorithms
-│   ├── 03_results/          # Result saving and export
-│   ├── 03_utilities/        # Utility functions and helpers
-│   └── main.R               # Main analysis function
-├── inst/
-│   ├── extdata/             # Concept definition CSV files
-│   ├── scripts/             # Utility and setup scripts
-│   ├── sql/                 # SQL templates
-│   └── templates/           # Environment configuration templates
-├── DESCRIPTION              # Package description
-├── NAMESPACE                # Exported functions
-└── README.md                # This file
+The same pipeline is available as a single function:
+
+```r
+conn <- create_connection_from_env()
+episodes <- run_pregnancy_identification(
+  connection = conn,
+  cdm_database_schema = "cdm",
+  vocabulary_database_schema = "vocab",   # optional, defaults to the CDM schema
+  results_database_schema = "results",    # optional
+  output_folder = "output",               # optional
+  min_age = 15,
+  max_age = 56
+)
+DatabaseConnector::disconnect(conn)
 ```
 
-## Concept Files
-
-The algorithm requires concept definition files located in `inst/extdata/`:
-
-1. **hip_concepts.csv**: HIP algorithm concepts (outcomes, pregnancy indicators)
-2. **pps_concepts.csv**: PPS algorithm concepts with gestational timing
-3. **matcho_limits.csv**: Term duration limits for different outcomes
-4. **matcho_outcome_limits.csv**: Outcome-specific gestational limits
-5. **matcho_term_durations.csv**: Term duration definitions
-
-## Algorithms
-
-### HIP (Hierarchical Identification of Pregnancy)
-- Identifies pregnancies based on outcome codes
-- Uses Matcho hierarchy for outcome prioritization
-- Estimates start dates from gestational age or term limits
-
-### PPS (Pregnancy Progression Signatures)
-- Identifies pregnancies from temporal patterns
-- Uses gestational timing windows
-- Validates temporal consistency
-
-### Episode Merging
-- Combines HIP and PPS results
-- Resolves overlaps based on evidence quality
-- Assigns confidence scores
+Each step is also exported on its own (`extract_pregnancy_cohort`,
+`run_hip_algorithm`, `run_pps_algorithm`, `merge_pregnancy_episodes`,
+`calculate_estimated_start_dates`, `add_episode_quality_metadata`) for
+running the pipeline in pieces.
 
 ## Output
 
-The analysis produces:
-- **Pregnancy episodes**: Person-level pregnancy episodes with outcomes
-- **Summary statistics**: Counts by outcome, algorithm, and confidence
-- **Export files**: CSV and RDS formats for further analysis
+One row per pregnancy episode.
+
+| Column | Meaning |
+|---|---|
+| `person_id`, `episode_number` | Person and the episode's sequence number for that person |
+| `episode_start_date`, `episode_end_date` | Inferred start and end of the pregnancy; same as the two `inferred_` columns |
+| `inferred_episode_start`, `inferred_episode_end` | Start from the ESD (or end minus max term when no timing evidence); end reconciled from HIP and PPS |
+| `gestational_age_days`, `gestational_age_days_calculated` | Inferred end minus inferred start |
+| `recorded_episode_start`, `recorded_episode_end`, `recorded_episode_length` | Earliest and latest observed evidence, and their span in months |
+| `outcome_category` | LB, SB, DELIV, ECT, AB, SA, or PREG (no outcome found) |
+| `HIP_outcome_category`, `HIP_end_date`, `PPS_outcome_category`, `PPS_end_date` | What each algorithm found on its own |
+| `HIP_flag`, `PPS_flag`, `algorithm_used` | Which algorithm(s) identified the episode |
+| `outcome_match` | 1 if HIP and PPS agree on the outcome within 14 days |
+| `precision_days`, `precision_category` | ESD precision, from `week` to `non-specific`; `week_poor-support` when only one non-overlapping week estimate exists |
+| `GW_flag`, `GR3m_flag` | Whether week-level and range-level timing evidence was found |
+| `intervalsCount`, `majorityOverlapCount` | ESD diagnostics: whether a range intersection existed and whether the week estimates mostly fell inside it |
+| `term_duration_flag` | 1 if the inferred length is within the category's term range (PREG: at most 301 days) |
+| `outcome_concordance_score` | 2 = outcomes match, term ok, week evidence; 1 = term ok and week evidence; 0 otherwise |
+| `preterm_status_from_calculation` | 1 if the inferred length is under 259 days |
+
+Term ranges, retry periods, and the outcome hierarchy are in
+`inst/extdata/matcho_limits.csv`; minimum spacing between consecutive
+outcomes is in `matcho_outcome_limits.csv`.
+
+## Differences from the reference implementation
+
+Adaptations for a standard OMOP CDM:
+
+- Eligibility uses `gender_concept_id` with an exclude-list of male concepts,
+  rather than the All of Us `sex_at_birth_concept_id`.
+- Extraction uses SqlRender and temporary tables through DatabaseConnector
+  instead of dbplyr against BigQuery.
+- ESD timing concepts are found by querying the vocabulary's `concept`
+  table; week values are read from `value_as_number` first and then from a
+  numeric parse of `value_as_string`, since a generic CDM may hold them in
+  either.
+
+Deliberate departures from the reference R code, each noted in a comment at
+the relevant place:
+
+- The gestational-age measurement concepts contribute a week value only when
+  it is strictly between 0 and 44, as in the N3C original. The reference R
+  code also accepts any concept named "gestational age", which makes that
+  bound inoperative.
+- When several PPS episodes are equally close to a HIP episode, the longest
+  is kept, and rows still duplicated after the resolution rounds are kept.
+  This follows the N3C original and the reference's own comments; the
+  reference R code assigns a different column at that point and drops the
+  leftovers.
+- The term table includes a PREG row (30 to 301 days), so a PREG episode
+  with no timing evidence gets a start of end minus 301 days instead of NA.
+
+## Repository layout
+
+```
+R/
+  00_concepts/      concept and limits loading
+  00_connection/    connection from .env or explicit settings
+  01_extraction/    database queries and type enforcement
+  02_algorithms/    HIP, PPS, merge, ESD and quality metadata
+  03_results/       CSV, RDS and database output
+  03_utilities/     temp table helpers
+  main.R            run_pregnancy_identification()
+inst/
+  extdata/          concept lists and Matcho tables
+  scripts/          run script, connection setup and diagnostics
+  templates/        .env templates
+  sql/              a standalone person query
+ConceptSets/        ATLAS concept-set exports used by the downstream analyses
+validation_report.qmd                      comparison against a registry of known pregnancies
+EDA_pregnancy_updated_16Sept25_for_JHU.Rmd downstream epidemiological analysis (All of Us)
+```
+
+The two analysis documents and the `ConceptSets` folder are not part of the
+pipeline.
 
 ## Testing
 
-Test your connection and run a sample analysis:
+There is no automated test suite yet. `inst/scripts/test_connection.R`
+checks the database connection and `inst/scripts/test_full_pipeline.R` runs
+the pipeline end to end against the configured database.
+`validation_report.qmd` compares the output with a registry of known
+pregnancies.
 
-```r
-# Test database connection
-source("inst/scripts/test_connection.R")
+## References
 
-# Run full pipeline test
-source("inst/scripts/test_full_pipeline.R")
-```
+- Jones SE, Bradwell KR, Chan LE, et al. Who Is Pregnant? Defining
+  Real-World Data-Based Pregnancy Episodes in the National COVID Cohort
+  Collaborative (N3C). JAMIA Open. 2023;6(3):ooad067.
+  Code: https://github.com/jonessarae/n3c_pregnancy_cohort
+- Smith LH, Wang W, Keefe-Oates B. Pregnancy episodes in All of Us:
+  harnessing multi-source data for pregnancy-related research. JAMIA.
+  2024;31(12):2789-2799.
+  Code: https://github.com/louisahsmith/allofus-pregnancy
+- Matcho A, Ryan P, Fife D, Gifkins D, Knoll C, Friedman A. Inferring
+  pregnancy episodes and outcomes within a network of observational
+  databases. PLoS One. 2018;13(2):e0192033.
 
-## Performance
+## License
 
-- Extraction: Single database query (typically 10-60 seconds)
-- Processing: Pure R algorithms (typically 5-30 seconds)
-- Total runtime: Usually under 2 minutes for typical cohorts
-
-## Database Compatibility
-
-Tested with:
-- SQL Server
-- PostgreSQL
-- Spark/Databricks
-- BigQuery (via OHDSI adapters)
-
-## Support
-
-This is a complete rewrite addressing the issues found in V1:
-- SQL Server date parsing errors
-- Databricks performance degradation
-- Complex smart_compute logic
-- Platform-specific branching
-
-The new implementation prioritizes simplicity and reliability over optimization.
+Apache License 2.0
