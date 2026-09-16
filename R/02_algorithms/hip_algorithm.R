@@ -674,6 +674,9 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
   if (nrow(gest_records) == 0) {
     episodes$has_gestational_info <- FALSE
     episodes$gestational_weeks <- NA_real_
+    episodes$n_gest_records <- NA_integer_
+    episodes$max_gest_date <- as.Date(NA)
+    episodes$max_gest_start_date <- as.Date(NA)
     return(episodes)
   }
 
@@ -695,6 +698,9 @@ add_gestational_age_info <- function(episodes, all_records, matcho_limits = NULL
   if (nrow(gest_only) == 0) {
     episodes$has_gestational_info <- FALSE
     episodes$gestational_weeks <- NA_real_
+    episodes$n_gest_records <- NA_integer_
+    episodes$max_gest_date <- as.Date(NA)
+    episodes$max_gest_start_date <- as.Date(NA)
     return(episodes)
   }
 
@@ -878,11 +884,12 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
   # Join with term limits
   episodes_with_terms <- episodes %>%
     left_join(
-      matcho_limits %>% 
-        select(category, min_term, max_term),
+      matcho_limits %>%
+        select(category, min_term, max_term, any_of("retry")),
       by = c("outcome_category" = "category")
     )
-  
+  if (!"retry" %in% names(episodes_with_terms)) episodes_with_terms$retry <- NA_integer_
+
   # Calculate start dates
   result <- episodes_with_terms %>%
     mutate(
@@ -919,7 +926,8 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
       has_gestational_info,
       max_gest_date,
       min_term,
-      max_term
+      max_term,
+      retry
     )
 
   return(result)
@@ -943,104 +951,52 @@ calculate_hip_start_dates <- function(episodes, matcho_limits) {
 #' @noRd
 validate_hip_episodes <- function(episodes, buffer_days = 28L) {
 
-  # --- Basic temporal validity (remove truly invalid records) ---
+  if (nrow(episodes) == 0) {
+    return(episodes)
+  }
+  if (!"retry" %in% names(episodes)) episodes$retry <- NA_integer_
+
+  # --- Reclassification (reference clean_episodes) ---
+  # Applies only to episodes with BOTH an outcome and gestation data
+  # (reference !is.na(gest_id) & !is.na(visit_id)). Nothing is deleted.
+  #  1. gestational age at outcome over the category max term -> PREG
+  #  2. under the min term AND last GA record > buffer after outcome -> PREG
+  #  3. last GA record > buffer after outcome, regardless of term -> PREG
+  # (3 contains 2.) On reclassification the episode end moves to the last
+  # gestational-age record date, as in the reference (visit_date = max_gest_date).
   validated <- episodes %>%
-    filter(
-      episode_start_date <= Sys.Date(),
-      episode_end_date >= episode_start_date
-    )
-
-  # --- Category-specific term validation: reclassify to PREG, don't delete ---
-  # Matches original clean_episodes() which reclassifies episodes outside
-  # [min_term, max_term] range to "PREG" category.
-  #
-  # IMPORTANT: Original only reclassifies when BOTH gestation data and outcome
-  # data exist (!is.na(gest_id) & !is.na(visit_id)). We gate on has_gestational_info
-  # to match this behavior — outcome-only episodes are not reclassified based on
-  # date-arithmetic GA alone.
-  #
-  # For under-min check, original also requires days_diff < -buffer_days (default 28)
-  # providing tolerance for borderline cases.
-  validated <- validated %>%
     mutate(
-      removed_category = NA_character_,
-      removed_outcome = 0L,
-
-      # Over max term for category → reclassify to PREG
-      # Gate: only when has_gestational_info (both gest + outcome data)
-      # Original also sets visit_date = max_gest_date on reclassification
-      over_max_reclassify = has_gestational_info & !is.na(max_term) &
-        gestational_age_days > max_term,
-      removed_category = case_when(
-        over_max_reclassify ~ outcome_category,
-        TRUE ~ removed_category
-      ),
-      removed_outcome = case_when(
-        over_max_reclassify ~ 1L,
-        TRUE ~ removed_outcome
-      ),
-      outcome_category = case_when(
-        over_max_reclassify ~ "PREG",
-        TRUE ~ outcome_category
-      ),
-      # Original: visit_date = max_gest_date (episode end moves to last GA date)
-      episode_end_date = case_when(
-        over_max_reclassify & !is.na(max_gest_date) ~ as.Date(max_gest_date),
-        TRUE ~ as.Date(episode_end_date)
-      ),
-
-      # Under min term for category → reclassify to PREG
-      # Gate: only when has_gestational_info AND last GA record extends >buffer_days
-      # past the outcome date. Original: days_diff < -buffer_days where
-      # days_diff = visit_date - max_gest_date. This checks that the GA data
-      # significantly overshoots the outcome, indicating a pregnancy mismatch.
-      days_diff = as.numeric(episode_end_date - max_gest_date),
-      under_min_reclassify = has_gestational_info & !is.na(min_term) &
-        gestational_age_days < min_term &
-        !is.na(days_diff) & days_diff < -buffer_days &
-        outcome_category != "PREG",
-
-      removed_category = case_when(
-        under_min_reclassify ~ outcome_category,
-        TRUE ~ removed_category
-      ),
-      removed_outcome = case_when(
-        under_min_reclassify ~ 1L,
-        TRUE ~ removed_outcome
-      ),
-      outcome_category = case_when(
-        under_min_reclassify ~ "PREG",
-        TRUE ~ outcome_category
-      ),
-      # Original: visit_date = max_gest_date on under-min reclassification too
-      episode_end_date = case_when(
-        under_min_reclassify & !is.na(max_gest_date) ~ as.Date(max_gest_date),
-        TRUE ~ as.Date(episode_end_date)
-      )
+      matched = has_gestational_info & outcome_category != "PREG",
+      days_diff = as.numeric(as.Date(episode_end_date) - as.Date(max_gest_date)),
+      over_max = matched & !is.na(max_term) & gestational_age_days > max_term,
+      neg_days = matched & !is.na(days_diff) & days_diff < -buffer_days,
+      reclassify = coalesce(over_max, FALSE) | coalesce(neg_days, FALSE),
+      removed_category = if_else(reclassify, outcome_category, NA_character_),
+      removed_outcome = if_else(reclassify, 1L, 0L),
+      outcome_category = if_else(reclassify, "PREG", outcome_category),
+      episode_end_date = if_else(reclassify & !is.na(max_gest_date),
+                                 as.Date(max_gest_date), as.Date(episode_end_date))
     ) %>%
-    select(-days_diff, -under_min_reclassify, -over_max_reclassify)
+    select(-days_diff, -over_max, -neg_days, -reclassify)
 
-  # --- Overlap resolution (matches original remove_overlaps) ---
-
-  # Step 1: Remove overlapping PREG episodes (lower confidence)
-  # When a PREG episode overlaps with a subsequent outcome episode, remove the PREG
+  # --- Overlap resolution (reference remove_overlaps) ---
+  # Overlap = start strictly before the previous episode's end date.
   validated <- validated %>%
     group_by(person_id) %>%
-    arrange(episode_end_date) %>%
+    arrange(episode_end_date, .by_group = TRUE) %>%
     mutate(
       prev_end_date = lag(episode_end_date),
       prev_category = lag(outcome_category),
-      has_overlap = !is.na(prev_end_date) & episode_start_date <= prev_end_date
+      has_overlap = !is.na(prev_end_date) & episode_start_date < prev_end_date
     ) %>%
     ungroup()
 
-  # Identify PREG episodes to remove (previous episode is PREG and overlaps)
+  # Step 1: remove a PREG episode that a later episode overlaps
   preg_to_remove <- validated %>%
     filter(has_overlap & prev_category == "PREG") %>%
     mutate(remove_key = paste(person_id, prev_end_date, sep = "_"))
 
   if (nrow(preg_to_remove) > 0) {
-    # Get the PREG episodes that overlap with subsequent outcome episodes
     validated <- validated %>%
       mutate(
         my_key = paste(person_id, episode_end_date, sep = "_"),
@@ -1050,72 +1006,44 @@ validate_hip_episodes <- function(episodes, buffer_days = 28L) {
       select(-my_key, -is_removable_preg)
   }
 
-  # Step 2: Use category-specific retry periods for remaining overlaps
-  # Retry periods: LB/SB/DELIV = 28 days, ECT/AB/SA/PREG = 14 days
+  # Step 2: for remaining overlaps, start = previous end + previous retry.
+  # retry comes from the term table joined BEFORE reclassification, so a
+  # reclassified PREG keeps its original outcome's retry and a gestation-only
+  # PREG has none (no shift), exactly as in the reference.
   validated <- validated %>%
     group_by(person_id) %>%
-    arrange(episode_end_date) %>%
+    arrange(episode_end_date, .by_group = TRUE) %>%
     mutate(
       prev_end_date = lag(episode_end_date),
-      prev_category = lag(outcome_category),
-      overlap_days = as.numeric(pmax(0, prev_end_date - episode_start_date + 1)),
-      # Category-specific retry period (matching Matcho et al.)
-      prev_retry = case_when(
-        prev_category %in% c("LB", "SB", "DELIV") ~ 28L,
-        prev_category %in% c("ECT", "AB", "SA", "PREG") ~ 14L,
-        TRUE ~ 14L
-      ),
-      # Use retry period instead of simple prev_end + 1
-      adjusted_start = case_when(
-        !is.na(overlap_days) & overlap_days > 0 & !is.na(prev_retry) ~
-          as.Date(prev_end_date + prev_retry),
-        !is.na(overlap_days) & overlap_days > 0 ~ as.Date(prev_end_date + 1),
+      prev_retry = lag(retry),
+      has_overlap = !is.na(prev_end_date) & episode_start_date < prev_end_date,
+      episode_start_date = case_when(
+        has_overlap & !is.na(prev_retry) ~ as.Date(prev_end_date + prev_retry),
         TRUE ~ as.Date(episode_start_date)
       ),
-      gestational_age_days = as.numeric(episode_end_date - adjusted_start)
-    ) %>%
-    filter(
-      gestational_age_days > 0
+      gestational_age_days = as.numeric(episode_end_date - episode_start_date)
     ) %>%
     ungroup() %>%
-    mutate(
-      episode_start_date = adjusted_start
-    ) %>%
-    select(-prev_end_date, -prev_category, -overlap_days, -adjusted_start,
-           -prev_retry, -has_overlap)
+    select(-prev_end_date, -prev_category, -prev_retry, -has_overlap)
 
-  # Step 3: Post-adjustment validation (matching original remove_overlaps lines 929-941)
-  # After overlap resolution adjusts start dates, some episodes may now fall outside
-  # their category's term limits. Re-check and reclassify to PREG if needed.
+  # Step 3: after the shift, a matched outcome now under its min term -> PREG
   validated <- validated %>%
     mutate(
-      gestational_age_days = as.numeric(episode_end_date - episode_start_date),
-      # Reclassify if GA now under min_term after adjustment
-      post_adj_reclassify = has_gestational_info & !is.na(min_term) &
-        gestational_age_days < min_term &
-        outcome_category != "PREG",
-      removed_category = case_when(
-        post_adj_reclassify ~ outcome_category,
-        TRUE ~ removed_category
-      ),
-      removed_outcome = case_when(
-        post_adj_reclassify ~ 1L,
-        TRUE ~ removed_outcome
-      ),
-      outcome_category = case_when(
-        post_adj_reclassify ~ "PREG",
-        TRUE ~ outcome_category
-      ),
-      # Original: visit_date = max_gest_date on reclassification
-      episode_end_date = case_when(
-        post_adj_reclassify & !is.na(max_gest_date) ~ as.Date(max_gest_date),
-        TRUE ~ as.Date(episode_end_date)
-      )
+      post_adj_reclassify = matched & outcome_category != "PREG" & !is.na(min_term) &
+        gestational_age_days < min_term,
+      removed_category = if_else(post_adj_reclassify, outcome_category, removed_category),
+      removed_outcome = if_else(post_adj_reclassify, 1L, removed_outcome),
+      outcome_category = if_else(post_adj_reclassify, "PREG", outcome_category),
+      episode_end_date = if_else(post_adj_reclassify & !is.na(max_gest_date),
+                                 as.Date(max_gest_date), as.Date(episode_end_date)),
+      gestational_age_days = as.numeric(episode_end_date - episode_start_date)
     ) %>%
-    select(-has_gestational_info, -max_gest_date, -min_term, -max_term, -post_adj_reclassify)
+    select(-has_gestational_info, -max_gest_date, -min_term, -max_term, -retry,
+           -matched, -post_adj_reclassify)
 
   return(validated)
 }
+
 #' Add the date of the first gestational-age record within each episode
 #'
 #' Port of the reference final_episodes_with_length(): among gestational-age
@@ -1138,7 +1066,13 @@ add_first_gest_date <- function(episodes, all_records) {
     ) %>%
     mutate(gest_weeks = coalesce(gest_value, value_as_number)) %>%
     filter(!is.na(gest_weeks), gest_weeks > 0, gest_weeks <= 44) %>%
-    select(person_id, gest_date = event_date)
+    select(person_id, gest_date = event_date) %>%
+    filter(!is.na(gest_date))
+
+  if (nrow(gest_records) == 0) {
+    episodes$first_gest_date <- as.Date(NA)
+    return(episodes)
+  }
 
   first_dates <- episodes %>%
     select(person_id, episode_number, episode_start_date, episode_end_date) %>%

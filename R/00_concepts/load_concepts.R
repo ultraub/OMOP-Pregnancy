@@ -255,6 +255,9 @@ load_matcho_limits <- function(file_path = NULL) {
       category = as.character(category),
       min_term = as.integer(min_term),
       max_term = as.integer(max_term),
+      # Matcho retry period (days added to the previous outcome date when
+      # episodes overlap); NA for PREG as in the reference term table
+      retry = if ("retry" %in% names(.)) suppressWarnings(as.integer(retry)) else NA_integer_,
       hierarchy = if ("hierarchy" %in% names(.)) as.integer(hierarchy) else row_number()
     ) %>%
     arrange(hierarchy)
@@ -276,6 +279,7 @@ get_default_matcho_limits <- function() {
     category = c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"),
     min_term = c(161, 140, 140, 42, 42, 28, 30),      # Days (from Matcho et al.)
     max_term = c(301, 301, 301, 84, 168, 139, 301),   # Days (from Matcho et al.)
+    retry = c(28L, 28L, 28L, 14L, 14L, 14L, NA_integer_),
     hierarchy = c(1, 2, 6, 3, 4, 5, 7),
     stringsAsFactors = FALSE
   )
