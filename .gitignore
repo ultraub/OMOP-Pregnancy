@@ -41,3 +41,8 @@ Thumbs.db
 *~
 *.tmp
 *.bak
+# Evaluation report renders: keep validation_report.html and figures/ tracked,
+# ignore Quarto intermediates and per-render asset folders
+Evaluation/*_files/
+Evaluation/*.rmarkdown
+Evaluation/**/*.download

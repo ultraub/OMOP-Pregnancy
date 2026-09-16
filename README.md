@@ -180,21 +180,49 @@ inst/
   scripts/          run script, connection setup and diagnostics
   templates/        .env templates
   sql/              a standalone person query
-ConceptSets/        ATLAS concept-set exports used by the downstream analyses
-validation_report.qmd                      comparison against a registry of known pregnancies
+Evaluation/
+  validation_report.qmd   evaluation against the PMAP OB registry (see below)
+  validation_report.html  rendered report with results tables
+  figures/                figures from the evaluation
+ConceptSets/        ATLAS concept-set exports used by the downstream analysis
 EDA_pregnancy_updated_16Sept25_for_JHU.Rmd downstream epidemiological analysis (All of Us)
 ```
 
-The two analysis documents and the `ConceptSets` folder are not part of the
-pipeline.
+The EDA document and the `ConceptSets` folder are not part of the pipeline.
+
+## Evaluation
+
+`Evaluation/validation_report.qmd` compares the pipeline output with a
+registry of clinically recorded pregnancies (the PMAP OB registry on the
+same SQL Server instance as the CDM). It links registry patients to
+`person_id`, matches predicted episodes to registry episodes within a date
+window (primary analysis excludes registry pregnancies that predate the
+patient's observable record; sensitivity analyses vary the window and
+include everything), reports outcome classification agreement, compares
+gestational age with agreement and Bland-Altman plots, aggregates pregnancy
+counts per person, and compares detection of preeclampsia,
+pregnancy-induced hypertension, and gestational diabetes between the two
+sources.
+
+The registry and OMOP database names, the prediction file, the matching
+window, and the prediction filters are Quarto parameters at the top of the
+document. Render it from the `Evaluation` folder with a `.env` in the
+project root:
+
+```bash
+cd Evaluation
+quarto render validation_report.qmd -P prediction_file:../output/pregnancy_episodes_YYYY-MM-DD.csv
+```
+
+`validation_report.html` is the most recent render and `figures/` holds
+its figures.
 
 ## Testing
 
 There is no automated test suite yet. `inst/scripts/test_connection.R`
 checks the database connection and `inst/scripts/test_full_pipeline.R` runs
-the pipeline end to end against the configured database.
-`validation_report.qmd` compares the output with a registry of known
-pregnancies.
+the pipeline end to end against the configured database. The evaluation
+report above is the accuracy check.
 
 ## References
 
