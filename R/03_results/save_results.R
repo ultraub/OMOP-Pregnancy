@@ -155,7 +155,7 @@ create_episode_summary <- function(episodes) {
   # Temporal distribution
   temporal_summary <- episodes %>%
     mutate(
-      year = year(episode_end_date)
+      year = lubridate::year(episode_end_date)
     ) %>%
     group_by(year) %>%
     summarise(
