@@ -145,33 +145,37 @@ create_concept_temp_table <- function(connection, concepts, table_name) {
       select(any_of(c("concept_id", "concept_name", "domain_name", "category", 
                       "gest_value", "min_month", "max_month", "certainty")))
     
-    # Build VALUES clause for the view
-    # Format each row as (value1, value2, ...)
-    values_rows <- apply(concept_df, 1, function(row) {
-      # Convert each value to appropriate SQL format
-      formatted_values <- sapply(row, function(val) {
-        if (is.na(val)) {
-          "NULL"
-        } else if (is.numeric(val)) {
-          as.character(val)
-        } else {
-          # Escape single quotes and wrap in quotes
-          sprintf("'%s'", gsub("'", "''", as.character(val)))
-        }
-      })
-      sprintf("(%s)", paste(formatted_values, collapse = ","))
-    })
-    
-    # Get column names
+    # Build the VALUES clause column by column so numeric columns stay
+    # numeric (a row-wise apply() would turn every value into text and leave
+    # the joins on concept_id relying on Spark's implicit string casts).
+    format_sql_values <- function(x) {
+      if (is.numeric(x)) {
+        ifelse(is.na(x), "NULL", format(x, scientific = FALSE, trim = TRUE))
+      } else {
+        # Spark string literals treat backslash as an escape character
+        escaped <- gsub("\\\\", "\\\\\\\\", as.character(x))
+        escaped <- gsub("'", "''", escaped)
+        ifelse(is.na(x), "NULL", sprintf("'%s'", escaped))
+      }
+    }
+    formatted_cols <- lapply(concept_df, format_sql_values)
+    values_rows <- sprintf("(%s)", do.call(paste, c(formatted_cols, sep = ",")))
+
+    # Cast every column explicitly so its type does not depend on inference
+    # (an all-NULL column would otherwise be typed as void)
     col_names <- names(concept_df)
-    col_def <- paste(col_names, collapse = ",")
-    
+    select_cols <- mapply(function(col, name) {
+      sql_type <- if (name == "concept_id") "BIGINT" else if (is.numeric(col)) "DOUBLE" else "STRING"
+      sprintf("CAST(%s AS %s) AS %s", name, sql_type, name)
+    }, concept_df, col_names)
+
     # Create the view with VALUES clause
     sql <- sprintf(
-      "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM (VALUES %s) AS t(%s)",
+      "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT %s FROM (VALUES %s) AS t(%s)",
       view_name,
+      paste(select_cols, collapse = ", "),
       paste(values_rows, collapse = ","),
-      col_def
+      paste(col_names, collapse = ",")
     )
     
     DatabaseConnector::executeSql(connection, sql)
