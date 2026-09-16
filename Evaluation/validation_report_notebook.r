@@ -1,55 +1,49 @@
----
-title: "Pregnancy Algorithm Validation Report"
-subtitle: "Comparison of Algorithm Predictions vs Obstetric Registry Ground Truth"
-author: "OMOP Pregnancy Team"
-date: "`r Sys.Date()`"
-format:
-  html:
-    toc: true
-    toc-depth: 3
-    toc-location: left
-    code-fold: true
-    code-summary: "Show code"
-    theme: flatly
-    self-contained: true
-execute:
-  echo: true
-  warning: false
-  message: false
-params:
-  # How to reach the database: "jdbc" (DatabaseConnector via env_file) or
-  # "spark" (the Databricks notebook's Spark session; CDM = omop_database.omop_schema)
-  connection_type: "jdbc"
-  # Pipeline output to evaluate (path relative to this file), or "latest" for
-  # the newest pregnancy_episodes_*.csv in ../output
-  prediction_file: "../output/pregnancy_episodes_2026-03-08.csv"
-  # Episode matching window (days) around ground-truth end dates
-  date_window_days: 30
-  # Prediction filters: deliveries only (>= 20 weeks) and starts before this date
-  min_ga_days: 140
-  max_start_date: "2025-01-01"
-  # Ground-truth source: "pmap_sqlserver" (PMAP OB registry tables on the SQL
-  # Server instance) or "edw_databricks" (EDW pregnancy/birth fact tables on
-  # Databricks). Both produce the same episode frame for the analyses below.
-  gt_source: "pmap_sqlserver"
-  # pmap_sqlserver: registry and linkage databases
-  gt_scratch_database: "Obstetrics_Minhas_IRB00501137_Scratch"
-  gt_projection_database: "Obstetrics_Minhas_IRB00501137_Projection"
-  # edw_databricks: catalog holding the EDW fact tables and the registry id map
-  edw_catalog: "obstetrics_irb00501137"
-  edw_phi_schema: "phi"
-  edw_idmap_schema: "omop"
-  # OMOP CDM used by the complication section: database (or Databricks catalog)
-  # and schema of the CDM tables, e.g. "Obstetrics_Minhas_IRB00501137_OMOP"/"dbo"
-  # on SQL Server or "omop"/"data" on Databricks
-  omop_database: "Obstetrics_Minhas_IRB00501137_OMOP"
-  omop_schema: "dbo"
-  # .env with the database connection (project root by default)
-  env_file: "../.env"
----
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Pregnancy Algorithm Validation Report
+# MAGIC
+# MAGIC Generated from validation_report.qmd by Databricks/qmd_to_notebook.R; edit the .qmd, not this file.
 
-```{r setup}
-#| include: false
+# COMMAND ----------
+
+# Parameters (from the .qmd YAML, with Databricks overrides applied)
+params <- list(
+  connection_type = "spark",
+  prediction_file = "latest",
+  date_window_days = 30,
+  min_ga_days = 140,
+  max_start_date = "2025-01-01",
+  gt_source = "edw_databricks",
+  gt_scratch_database = "Obstetrics_Minhas_IRB00501137_Scratch",
+  gt_projection_database = "Obstetrics_Minhas_IRB00501137_Projection",
+  edw_catalog = "obstetrics_irb00501137",
+  edw_phi_schema = "phi",
+  edw_idmap_schema = "omop",
+  omop_database = "obstetrics_irb00501137",
+  omop_schema = "omop",
+  env_file = ""
+)
+
+# COMMAND ----------
+
+# DBTITLE 1,Databricks setup
+# Packages the report needs (installed once per cluster)
+needed <- c("sparklyr", "DBI", "dplyr", "tidyr", "purrr", "lubridate", "ggplot2",
+            "scales", "knitr", "kableExtra", "janitor", "tibble")
+missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0) install.packages(missing)
+
+# The report's paths are relative to the Evaluation folder of the checked-out repo
+repo_path <- "/Workspace/Users/rbarre16@jh.edu/OMOP-Pregnancy"
+setwd(file.path(repo_path, "Evaluation"))
+
+# In a notebook, show tables as data frames instead of kableExtra HTML
+kable <- function(x, ...) x
+kable_styling <- function(x, ...) x
+
+# COMMAND ----------
+
+# DBTITLE 1,setup
 
 # Load required packages
 library(dplyr)
@@ -88,18 +82,22 @@ cat("Ground-truth source:", gt_source, "\n")
 
 # Set ggplot theme
 theme_set(theme_minimal(base_size = 12))
-```
 
-# Executive Summary
+# COMMAND ----------
 
-This report validates the pregnancy identification algorithm by comparing its predictions against ground truth data from the PMAP OB registry. The validation covers:
+# MAGIC %md
+# MAGIC # Executive Summary
+# MAGIC 
+# MAGIC This report validates the pregnancy identification algorithm by comparing its predictions against ground truth data from the PMAP OB registry. The validation covers:
+# MAGIC 
+# MAGIC - **Episode-level matching**: Matching predicted episodes to ground truth using a ±`r params$date_window_days` day window
+# MAGIC - **Outcome classification**: Accuracy of outcome category predictions (LB, SB, ECT, AB, SA, DELIV, PREG)
+# MAGIC - **Gestational age estimation**: Comparison of predicted vs ground truth gestational age
+# MAGIC - **Person-level aggregation**: Total pregnancy counts per person
 
-- **Episode-level matching**: Matching predicted episodes to ground truth using a ±`r params$date_window_days` day window
-- **Outcome classification**: Accuracy of outcome category predictions (LB, SB, ECT, AB, SA, DELIV, PREG)
-- **Gestational age estimation**: Comparison of predicted vs ground truth gestational age
-- **Person-level aggregation**: Total pregnancy counts per person
+# COMMAND ----------
 
-```{r load-predictions}
+# DBTITLE 1,load-predictions
 
 # Load algorithm predictions
 load_algorithm_predictions <- function(file_path) {
@@ -183,9 +181,10 @@ cat(
   "Loaded", nrow(algo_predictions), "algorithm predictions for",
   dplyr::n_distinct(algo_predictions$person_id), "unique persons\n"
 )
-```
 
-```{r db-connect1}
+# COMMAND ----------
+
+# DBTITLE 1,db-connect1
 # Connect to database using project connection function
 con <- open_report_connection()
 if (is.null(con)) stop("Connection returned NULL.")
@@ -193,387 +192,398 @@ if (!db_is_valid(con)) stop("Database connection is not valid.")
 
 cat("Database connection established\n")
 
-```
+# COMMAND ----------
 
-```{r query-ground-truth}
-#| eval: !expr gt_source == "pmap_sqlserver"
-
-# Query ground truth tables
-
-# 1. Pregnancy episodes
-pregnancies_sql <- paste0("
-SELECT
-  EMRN,
-  PregnancyEstimatedStartDate,
-  PregnancyEstimatedEndDate,
-  PregnancyGravidaCount,
-  PregnancyParaCount,
-  PregnancyAbortionCount,
-  PregnancyTherapeuticAbortionCount,
-  PregnancySpontaneousAbortionCount,
-  PregnancyEctopicCount
-FROM ", gt_scratch_db, ".phi.PMAP_OB_PREGNANCIES
-WHERE IsHistorical = 0 AND PregnancyEstimatedStartDate < '", params$max_start_date, "';
-")
-
-gt_pregnancies <- db_query(con, pregnancies_sql) %>%
-  clean_names() %>%
-  mutate(
-    pregnancy_estimated_start_date = as.Date(pregnancy_estimated_start_date),
-    pregnancy_estimated_end_date = as.Date(pregnancy_estimated_end_date)
-  )
-
-cat("Loaded", nrow(gt_pregnancies), "ground truth pregnancy episodes\n")
-cat("Sample EMRNs from pregnancies:", head(gt_pregnancies$emrn, 5), "\n")
-
-# 2. Delivery outcomes
-deliveries_sql <- paste0("
-SELECT
-  mom_emrn AS emrn,
-  GestationalAgeDays,
-  LivingStatus,
-  BornAlive,
-  NeonatalDemise
-FROM ", gt_scratch_db, ".phi.PMAP_OB_DEL
-")
-
-gt_deliveries <- db_query(con, deliveries_sql) %>%
-  clean_names()
-
-cat("Loaded", nrow(gt_deliveries), "ground truth delivery records\n")
-
-# 3. EMRN to cohort_id linkage
-emrn_cohort_sql <- paste0("
-SELECT emrn, cohort_id
-FROM ", gt_projection_db, ".phi.derived_epic_patient
-")
-
-emrn_to_cohort <- db_query(con, emrn_cohort_sql) %>%
-  clean_names()
-
-cat("Loaded", nrow(emrn_to_cohort), "EMRN to cohort_id mappings\n")
-cat("Sample EMRNs from linkage:", head(emrn_to_cohort$emrn, 5), "\n")
-
-# Check EMRN overlap between pregnancies and linkage
-preg_emrns <- unique(gt_pregnancies$emrn)
-link_emrns <- unique(emrn_to_cohort$emrn)
-emrn_overlap <- length(intersect(preg_emrns, link_emrns))
-cat("EMRN overlap (pregnancies ∩ linkage):", emrn_overlap, "/", length(preg_emrns), "\n")
-
-# 4. cohort_id (pmap_id) to person_id linkage
-cohort_person_sql <- paste0("
-SELECT pmap_id AS cohort_id, person_id
-FROM ", omop_db, ".", omop_schema_name, ".registry_idmap
-")
-
-cohort_to_person <- db_query(con, cohort_person_sql) %>%
-  clean_names()
-
-cat("Loaded", nrow(cohort_to_person), "cohort_id to person_id mappings\n")
-```
-
-```{r id-linkage}
-#| eval: !expr gt_source == "pmap_sqlserver"
-
-# Build complete ID linkage: EMRN -> cohort_id -> person_id
-build_id_linkage <- function(emrn_cohort, cohort_person) {
-  linkage <- emrn_cohort %>%
-    inner_join(cohort_person, by = "cohort_id") %>%
-    select(emrn, person_id) %>%
-    distinct()
-
-  return(linkage)
-}
-
-# Debug: Check cohort_id overlap before building linkage
-cohort_ids_from_emrn <- unique(emrn_to_cohort$cohort_id)
-cohort_ids_from_person <- unique(cohort_to_person$cohort_id)
-cohort_overlap <- length(intersect(cohort_ids_from_emrn, cohort_ids_from_person))
-cat("Cohort_id overlap (emrn_table ∩ person_table):", cohort_overlap, "\n")
-cat("Sample cohort_ids from emrn table:", head(cohort_ids_from_emrn, 5), "\n")
-cat("Sample cohort_ids from person table:", head(cohort_ids_from_person, 5), "\n")
-
-id_linkage <- build_id_linkage(emrn_to_cohort, cohort_to_person)
-
-cat("\nCreated ID linkage table with", nrow(id_linkage), "unique EMRN-person_id pairs\n")
-cat("Columns in id_linkage:", names(id_linkage), "\n")
-
-# Debug: Show sample of linkage
-cat("Sample person_ids in linkage:", head(id_linkage$person_id, 10), "\n")
-cat("Sample emrns in linkage:", head(id_linkage$emrn, 5), "\n")
-
-# Check linkage coverage
-algo_persons <- n_distinct(algo_predictions$person_id)
-algo_person_ids <- unique(algo_predictions$person_id)
-linked_persons <- sum(algo_person_ids %in% id_linkage$person_id)
-cat("Algorithm persons with ID linkage:", linked_persons, "/", algo_persons,
-    "(", round(100 * linked_persons / algo_persons, 1), "%)\n")
-
-# Debug: Show sample algorithm person_ids
-cat("Sample algorithm person_ids:", head(algo_person_ids, 10), "\n")
-
-# Check for any overlap
-overlap_count <- length(intersect(algo_person_ids, id_linkage$person_id))
-cat("Overlapping person_ids between algorithm and linkage:", overlap_count, "\n")
-```
-
-```{r derive-outcomes}
-#| eval: !expr gt_source == "pmap_sqlserver"
-
-# Derive outcome category from ground truth cumulative counts
-derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkage) {
-
-  # Ensure count columns are numeric (may come as character from SQL)
-  pregnancies_df <- pregnancies_df %>%
-    mutate(
-      pregnancy_gravida_count = as.numeric(pregnancy_gravida_count),
-      pregnancy_para_count = as.numeric(pregnancy_para_count),
-      pregnancy_abortion_count = as.numeric(pregnancy_abortion_count),
-      pregnancy_therapeutic_abortion_count = as.numeric(pregnancy_therapeutic_abortion_count),
-      pregnancy_spontaneous_abortion_count = as.numeric(pregnancy_spontaneous_abortion_count),
-      pregnancy_ectopic_count = as.numeric(pregnancy_ectopic_count)
-    )
-
-  # Join pregnancies with ID linkage to get person_id
-  pregnancies_linked <- pregnancies_df %>%
-    inner_join(id_linkage, by = "emrn")
-
-  # Ensure delivery columns are proper types
-  deliveries_df <- deliveries_df %>%
-    mutate(
-      gestational_age_days = as.numeric(gestational_age_days),
-      born_alive = as.numeric(born_alive)
-    )
-
-  # Join with deliveries (if available) for BornAlive info
-  # Deliveries may have multiple records per EMRN, take the one closest to pregnancy end
-  deliveries_by_emrn <- deliveries_df %>%
-    group_by(emrn) %>%
-    summarise(
-      gestational_age_days = first(na.omit(gestational_age_days)),
-      born_alive = first(na.omit(born_alive)),
-      living_status = first(na.omit(living_status)),
-      .groups = "drop"
-    )
-
-  # Combine and derive outcomes
-  derived <- pregnancies_linked %>%
-    left_join(deliveries_by_emrn, by = "emrn") %>%
-    group_by(person_id) %>%
-    arrange(pregnancy_gravida_count) %>%
-    mutate(
-      # Calculate deltas from previous episode
-      prev_para = lag(pregnancy_para_count, default = 0),
-      prev_ab = lag(pregnancy_abortion_count, default = 0),
-      prev_therapeutic = lag(pregnancy_therapeutic_abortion_count, default = 0),
-      prev_spontaneous = lag(pregnancy_spontaneous_abortion_count, default = 0),
-      prev_ectopic = lag(pregnancy_ectopic_count, default = 0),
-
-      delta_para = pregnancy_para_count - prev_para,
-      delta_ab = pregnancy_abortion_count - prev_ab,
-      delta_therapeutic = pregnancy_therapeutic_abortion_count - prev_therapeutic,
-      delta_spontaneous = pregnancy_spontaneous_abortion_count - prev_spontaneous,
-      delta_ectopic = pregnancy_ectopic_count - prev_ectopic,
-
-      # Derive outcome category following Matcho hierarchy
-      gt_outcome_category = case_when(
-        # Live birth: para increased and born alive
-        delta_para > 0 & !is.na(born_alive) & born_alive == 1 ~ "LB",
-        # Stillbirth: para increased and not born alive (or living_status indicates)
-        delta_para > 0 & (!is.na(born_alive) & born_alive == 0) ~ "SB",
-        delta_para > 0 & (!is.na(living_status) & tolower(living_status) %in% c("stillborn", "fetal demise")) ~ "SB",
-        # Ectopic pregnancy
-        delta_ectopic > 0 ~ "ECT",
-        # Therapeutic/Induced abortion
-        delta_therapeutic > 0 ~ "AB",
-        # Spontaneous abortion
-        delta_spontaneous > 0 ~ "SA",
-        # Generic abortion (when not specified as therapeutic or spontaneous)
-        delta_ab > 0 & delta_therapeutic == 0 & delta_spontaneous == 0 ~ "AB",
-        # Delivery without specific birth info
-        delta_para > 0 ~ "DELIV",
-        # Pregnancy without recorded outcome
-        TRUE ~ "PREG"
-      )
-    ) %>%
-    ungroup() %>%
-    select(
-      person_id,
-      emrn,
-      gt_episode_num = pregnancy_gravida_count,
-      gt_start = pregnancy_estimated_start_date,
-      gt_end = pregnancy_estimated_end_date,
-      gt_outcome_category,
-      gt_ga_days = gestational_age_days,
-      born_alive,
-      living_status
-    )
-
-  return(derived)
-}
-
-gt_episodes <- derive_ground_truth_outcome(gt_pregnancies, gt_deliveries, id_linkage)
-
-cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
-cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
-
-# Debug: Check overlap between algorithm and ground truth persons
-algo_persons_set <- unique(algo_predictions$person_id)
-gt_persons_set <- unique(gt_episodes$person_id)
-person_overlap <- length(intersect(algo_persons_set, gt_persons_set))
-cat("Person overlap (algo ∩ GT):", person_overlap, "\n")
-
-# Debug: Sample dates
-cat("\nSample algorithm end dates:", head(algo_predictions$episode_end_date, 5), "\n")
-cat("Sample GT end dates:", head(gt_episodes$gt_end, 5), "\n")
-
-cat("\nGround truth outcome distribution:\n")
-gt_episodes %>%
-  count(gt_outcome_category) %>%
-  arrange(desc(n)) %>%
-  kable() %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-
-```
-
-# Episode-level matching
-```{r edw-ground-truth}
-#| eval: !expr gt_source == "edw_databricks"
-
-# =========================================================
-# Ground truth from the EDW obstetric fact tables (Databricks)
-#   <catalog>.<phi schema>.edw_pregnancyfact   one row per pregnancy
-#   <catalog>.<phi schema>.edw_birthfact       one row per baby (PregnancyKey)
-#   <catalog>.<idmap schema>.registry_idmap    PMAP_id -> OMOP person_id
-# Produces gt_episodes with the same columns as the PMAP adapter:
-#   person_id, gt_episode_num, gt_start, gt_end, gt_outcome_category, gt_ga_days
-# =========================================================
-
-edw_table <- function(schema, table) paste0(edw_catalog, ".", schema, ".", table)
-
-edw_sql <- paste0("
-WITH births AS (
+# DBTITLE 1,query-ground-truth
+if (gt_source == "pmap_sqlserver") {
+  
+  # Query ground truth tables
+  
+  # 1. Pregnancy episodes
+  pregnancies_sql <- paste0("
   SELECT
-    PregnancyKey,
-    COUNT(*)                                                     AS n_births,
-    SUM(CASE WHEN BornAlive = 1 THEN 1 ELSE 0 END)               AS n_born_alive,
-    SUM(CASE WHEN LivingStatus = 'Fetal Demise' THEN 1 ELSE 0 END) AS n_fetal_demise,
-    MAX(GestationalAgeDays)                                      AS ga_days_birth
-  FROM ", edw_table(edw_phi_schema, "edw_birthfact"), "
-  GROUP BY PregnancyKey
-)
-SELECT
-  r.person_id                     AS person_id,
-  p.cohort_id                     AS cohort_id,
-  p.PregnancyKey                  AS pregnancy_key,
-  p.PregnancyOutcome              AS pregnancy_outcome,
-  p.HasDelivery                   AS has_delivery,
-  p.HadFetalDemise                AS had_fetal_demise,
-  p.HadNeonatalDemise             AS had_neonatal_demise,
-  p.PregnancyEstimatedStartDate   AS pregnancy_estimated_start_date,
-  p.EpisodeStartDate              AS episode_start_date,
-  p.PregnancyEstimatedEndDate     AS pregnancy_estimated_end_date,
-  p.EpisodeEndDate                AS episode_end_date,
-  p.LastDeliveryDate              AS last_delivery_date,
-  p.LastDeliveryGestationalAge    AS last_delivery_gestational_age,
-  b.n_births                      AS n_births,
-  b.n_born_alive                  AS n_born_alive,
-  b.n_fetal_demise                AS n_fetal_demise,
-  b.ga_days_birth                 AS ga_days_birth
-FROM ", edw_table(edw_phi_schema, "edw_pregnancyfact"), " p
-INNER JOIN ", edw_table(edw_idmap_schema, "registry_idmap"), " r
-  ON p.cohort_id = r.PMAP_id
-LEFT JOIN births b
-  ON p.PregnancyKey = b.PregnancyKey
-WHERE p.PregnancyOutcome IS NULL OR p.PregnancyOutcome <> '*Deleted'
-")
-
-# Columns are aliased to snake_case in the SQL; clean_names() only normalizes case
-edw_raw <- db_query(con, edw_sql) %>%
-  clean_names()
-
-cat("Loaded", nrow(edw_raw), "EDW pregnancy episodes for",
-    n_distinct(edw_raw$person_id), "linked persons\n")
-
-to_date_any <- function(x) {
-  if (inherits(x, "Date")) return(x)
-  if (inherits(x, "POSIXt")) return(as.Date(x))
-  suppressWarnings(as.Date(as.character(x)))
+    EMRN,
+    PregnancyEstimatedStartDate,
+    PregnancyEstimatedEndDate,
+    PregnancyGravidaCount,
+    PregnancyParaCount,
+    PregnancyAbortionCount,
+    PregnancyTherapeuticAbortionCount,
+    PregnancySpontaneousAbortionCount,
+    PregnancyEctopicCount
+  FROM ", gt_scratch_db, ".phi.PMAP_OB_PREGNANCIES
+  WHERE IsHistorical = 0 AND PregnancyEstimatedStartDate < '", params$max_start_date, "';
+  ")
+  
+  gt_pregnancies <- db_query(con, pregnancies_sql) %>%
+    clean_names() %>%
+    mutate(
+      pregnancy_estimated_start_date = as.Date(pregnancy_estimated_start_date),
+      pregnancy_estimated_end_date = as.Date(pregnancy_estimated_end_date)
+    )
+  
+  cat("Loaded", nrow(gt_pregnancies), "ground truth pregnancy episodes\n")
+  cat("Sample EMRNs from pregnancies:", head(gt_pregnancies$emrn, 5), "\n")
+  
+  # 2. Delivery outcomes
+  deliveries_sql <- paste0("
+  SELECT
+    mom_emrn AS emrn,
+    GestationalAgeDays,
+    LivingStatus,
+    BornAlive,
+    NeonatalDemise
+  FROM ", gt_scratch_db, ".phi.PMAP_OB_DEL
+  ")
+  
+  gt_deliveries <- db_query(con, deliveries_sql) %>%
+    clean_names()
+  
+  cat("Loaded", nrow(gt_deliveries), "ground truth delivery records\n")
+  
+  # 3. EMRN to cohort_id linkage
+  emrn_cohort_sql <- paste0("
+  SELECT emrn, cohort_id
+  FROM ", gt_projection_db, ".phi.derived_epic_patient
+  ")
+  
+  emrn_to_cohort <- db_query(con, emrn_cohort_sql) %>%
+    clean_names()
+  
+  cat("Loaded", nrow(emrn_to_cohort), "EMRN to cohort_id mappings\n")
+  cat("Sample EMRNs from linkage:", head(emrn_to_cohort$emrn, 5), "\n")
+  
+  # Check EMRN overlap between pregnancies and linkage
+  preg_emrns <- unique(gt_pregnancies$emrn)
+  link_emrns <- unique(emrn_to_cohort$emrn)
+  emrn_overlap <- length(intersect(preg_emrns, link_emrns))
+  cat("EMRN overlap (pregnancies ∩ linkage):", emrn_overlap, "/", length(preg_emrns), "\n")
+  
+  # 4. cohort_id (pmap_id) to person_id linkage
+  cohort_person_sql <- paste0("
+  SELECT pmap_id AS cohort_id, person_id
+  FROM ", omop_db, ".", omop_schema_name, ".registry_idmap
+  ")
+  
+  cohort_to_person <- db_query(con, cohort_person_sql) %>%
+    clean_names()
+  
+  cat("Loaded", nrow(cohort_to_person), "cohort_id to person_id mappings\n")
 }
 
-# Outcome mapping to the algorithm's categories (Matcho hierarchy):
-#   Term / Preterm with any liveborn (or no birth rows and no fetal demise) -> LB
-#   Term / Preterm where every birth was a fetal demise (or HadFetalDemise
-#     with no birth rows)                                                   -> SB
-#   Spontaneous Abortion -> SA; Induced Abortion and unspecified Abortion -> AB
-#   Ectopic -> ECT
-#   Molar -> AB (the HIP concept list has no molar codes, so the algorithm
-#     cannot produce a molar category; pooled with AB and flagged)
-#   Gravida / Para / *Unspecified -> PREG (recorded pregnancy, outcome not
-#     resolved; matches the PMAP adapter's treatment of no-outcome rows)
-edw_episodes <- edw_raw %>%
-  mutate(
-    pregnancy_outcome = as.character(pregnancy_outcome),
-    has_delivery = suppressWarnings(as.numeric(has_delivery)),
-    had_fetal_demise = suppressWarnings(as.numeric(had_fetal_demise)),
-    n_births = coalesce(suppressWarnings(as.numeric(n_births)), 0),
-    n_born_alive = coalesce(suppressWarnings(as.numeric(n_born_alive)), 0),
-    n_fetal_demise = coalesce(suppressWarnings(as.numeric(n_fetal_demise)), 0),
-    gt_start = coalesce(to_date_any(pregnancy_estimated_start_date),
-                        to_date_any(episode_start_date)),
-    gt_end = case_when(
-      !is.na(has_delivery) & has_delivery == 1 & !is.na(to_date_any(last_delivery_date)) ~
-        to_date_any(last_delivery_date),
-      TRUE ~ coalesce(to_date_any(pregnancy_estimated_end_date),
-                      to_date_any(episode_end_date))
-    ),
-    gt_ga_days = coalesce(suppressWarnings(as.numeric(last_delivery_gestational_age)),
-                          suppressWarnings(as.numeric(ga_days_birth))),
-    is_delivery_outcome = pregnancy_outcome %in% c("Term", "Preterm"),
-    all_fetal_demise = (n_births > 0 & n_fetal_demise == n_births & n_born_alive == 0) |
-      (n_births == 0 & coalesce(had_fetal_demise, 0) == 1),
-    gt_outcome_category = case_when(
-      is_delivery_outcome & all_fetal_demise ~ "SB",
-      is_delivery_outcome ~ "LB",
-      pregnancy_outcome == "Spontaneous Abortion" ~ "SA",
-      pregnancy_outcome %in% c("Induced Abortion", "Abortion") ~ "AB",
-      pregnancy_outcome == "Ectopic" ~ "ECT",
-      pregnancy_outcome == "Molar" ~ "AB",
-      TRUE ~ "PREG"
-    ),
-    gt_molar = pregnancy_outcome == "Molar",
-    gt_unresolved = pregnancy_outcome %in% c("Gravida", "Para", "*Unspecified")
-  ) %>%
-  filter(!is.na(person_id), !is.na(gt_start) | !is.na(gt_end)) %>%
-  filter(is.na(gt_start) | gt_start < as.Date(params$max_start_date))
+# COMMAND ----------
 
-gt_episodes <- edw_episodes %>%
-  group_by(person_id) %>%
-  arrange(coalesce(gt_end, gt_start), .by_group = TRUE) %>%
-  mutate(gt_episode_num = row_number()) %>%
-  ungroup() %>%
-  select(person_id, cohort_id, pregnancy_key, gt_episode_num, gt_start, gt_end,
-         gt_outcome_category, gt_ga_days, pregnancy_outcome, gt_molar, gt_unresolved)
+# DBTITLE 1,id-linkage
+if (gt_source == "pmap_sqlserver") {
+  
+  # Build complete ID linkage: EMRN -> cohort_id -> person_id
+  build_id_linkage <- function(emrn_cohort, cohort_person) {
+    linkage <- emrn_cohort %>%
+      inner_join(cohort_person, by = "cohort_id") %>%
+      select(emrn, person_id) %>%
+      distinct()
+  
+    return(linkage)
+  }
+  
+  # Debug: Check cohort_id overlap before building linkage
+  cohort_ids_from_emrn <- unique(emrn_to_cohort$cohort_id)
+  cohort_ids_from_person <- unique(cohort_to_person$cohort_id)
+  cohort_overlap <- length(intersect(cohort_ids_from_emrn, cohort_ids_from_person))
+  cat("Cohort_id overlap (emrn_table ∩ person_table):", cohort_overlap, "\n")
+  cat("Sample cohort_ids from emrn table:", head(cohort_ids_from_emrn, 5), "\n")
+  cat("Sample cohort_ids from person table:", head(cohort_ids_from_person, 5), "\n")
+  
+  id_linkage <- build_id_linkage(emrn_to_cohort, cohort_to_person)
+  
+  cat("\nCreated ID linkage table with", nrow(id_linkage), "unique EMRN-person_id pairs\n")
+  cat("Columns in id_linkage:", names(id_linkage), "\n")
+  
+  # Debug: Show sample of linkage
+  cat("Sample person_ids in linkage:", head(id_linkage$person_id, 10), "\n")
+  cat("Sample emrns in linkage:", head(id_linkage$emrn, 5), "\n")
+  
+  # Check linkage coverage
+  algo_persons <- n_distinct(algo_predictions$person_id)
+  algo_person_ids <- unique(algo_predictions$person_id)
+  linked_persons <- sum(algo_person_ids %in% id_linkage$person_id)
+  cat("Algorithm persons with ID linkage:", linked_persons, "/", algo_persons,
+      "(", round(100 * linked_persons / algo_persons, 1), "%)\n")
+  
+  # Debug: Show sample algorithm person_ids
+  cat("Sample algorithm person_ids:", head(algo_person_ids, 10), "\n")
+  
+  # Check for any overlap
+  overlap_count <- length(intersect(algo_person_ids, id_linkage$person_id))
+  cat("Overlapping person_ids between algorithm and linkage:", overlap_count, "\n")
+}
 
-cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
-cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
-cat("Unresolved (Gravida/Para/Unspecified) episodes mapped to PREG:",
-    sum(gt_episodes$gt_unresolved), "\n")
-cat("Molar pregnancies pooled with AB:", sum(gt_episodes$gt_molar), "\n")
+# COMMAND ----------
 
-algo_persons_set <- unique(algo_predictions$person_id)
-gt_persons_set <- unique(gt_episodes$person_id)
-cat("Person overlap (algo ∩ GT):", length(intersect(algo_persons_set, gt_persons_set)), "\n")
+# DBTITLE 1,derive-outcomes
+if (gt_source == "pmap_sqlserver") {
+  
+  # Derive outcome category from ground truth cumulative counts
+  derive_ground_truth_outcome <- function(pregnancies_df, deliveries_df, id_linkage) {
+  
+    # Ensure count columns are numeric (may come as character from SQL)
+    pregnancies_df <- pregnancies_df %>%
+      mutate(
+        pregnancy_gravida_count = as.numeric(pregnancy_gravida_count),
+        pregnancy_para_count = as.numeric(pregnancy_para_count),
+        pregnancy_abortion_count = as.numeric(pregnancy_abortion_count),
+        pregnancy_therapeutic_abortion_count = as.numeric(pregnancy_therapeutic_abortion_count),
+        pregnancy_spontaneous_abortion_count = as.numeric(pregnancy_spontaneous_abortion_count),
+        pregnancy_ectopic_count = as.numeric(pregnancy_ectopic_count)
+      )
+  
+    # Join pregnancies with ID linkage to get person_id
+    pregnancies_linked <- pregnancies_df %>%
+      inner_join(id_linkage, by = "emrn")
+  
+    # Ensure delivery columns are proper types
+    deliveries_df <- deliveries_df %>%
+      mutate(
+        gestational_age_days = as.numeric(gestational_age_days),
+        born_alive = as.numeric(born_alive)
+      )
+  
+    # Join with deliveries (if available) for BornAlive info
+    # Deliveries may have multiple records per EMRN, take the one closest to pregnancy end
+    deliveries_by_emrn <- deliveries_df %>%
+      group_by(emrn) %>%
+      summarise(
+        gestational_age_days = first(na.omit(gestational_age_days)),
+        born_alive = first(na.omit(born_alive)),
+        living_status = first(na.omit(living_status)),
+        .groups = "drop"
+      )
+  
+    # Combine and derive outcomes
+    derived <- pregnancies_linked %>%
+      left_join(deliveries_by_emrn, by = "emrn") %>%
+      group_by(person_id) %>%
+      arrange(pregnancy_gravida_count) %>%
+      mutate(
+        # Calculate deltas from previous episode
+        prev_para = lag(pregnancy_para_count, default = 0),
+        prev_ab = lag(pregnancy_abortion_count, default = 0),
+        prev_therapeutic = lag(pregnancy_therapeutic_abortion_count, default = 0),
+        prev_spontaneous = lag(pregnancy_spontaneous_abortion_count, default = 0),
+        prev_ectopic = lag(pregnancy_ectopic_count, default = 0),
+  
+        delta_para = pregnancy_para_count - prev_para,
+        delta_ab = pregnancy_abortion_count - prev_ab,
+        delta_therapeutic = pregnancy_therapeutic_abortion_count - prev_therapeutic,
+        delta_spontaneous = pregnancy_spontaneous_abortion_count - prev_spontaneous,
+        delta_ectopic = pregnancy_ectopic_count - prev_ectopic,
+  
+        # Derive outcome category following Matcho hierarchy
+        gt_outcome_category = case_when(
+          # Live birth: para increased and born alive
+          delta_para > 0 & !is.na(born_alive) & born_alive == 1 ~ "LB",
+          # Stillbirth: para increased and not born alive (or living_status indicates)
+          delta_para > 0 & (!is.na(born_alive) & born_alive == 0) ~ "SB",
+          delta_para > 0 & (!is.na(living_status) & tolower(living_status) %in% c("stillborn", "fetal demise")) ~ "SB",
+          # Ectopic pregnancy
+          delta_ectopic > 0 ~ "ECT",
+          # Therapeutic/Induced abortion
+          delta_therapeutic > 0 ~ "AB",
+          # Spontaneous abortion
+          delta_spontaneous > 0 ~ "SA",
+          # Generic abortion (when not specified as therapeutic or spontaneous)
+          delta_ab > 0 & delta_therapeutic == 0 & delta_spontaneous == 0 ~ "AB",
+          # Delivery without specific birth info
+          delta_para > 0 ~ "DELIV",
+          # Pregnancy without recorded outcome
+          TRUE ~ "PREG"
+        )
+      ) %>%
+      ungroup() %>%
+      select(
+        person_id,
+        emrn,
+        gt_episode_num = pregnancy_gravida_count,
+        gt_start = pregnancy_estimated_start_date,
+        gt_end = pregnancy_estimated_end_date,
+        gt_outcome_category,
+        gt_ga_days = gestational_age_days,
+        born_alive,
+        living_status
+      )
+  
+    return(derived)
+  }
+  
+  gt_episodes <- derive_ground_truth_outcome(gt_pregnancies, gt_deliveries, id_linkage)
+  
+  cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
+  cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
+  
+  # Debug: Check overlap between algorithm and ground truth persons
+  algo_persons_set <- unique(algo_predictions$person_id)
+  gt_persons_set <- unique(gt_episodes$person_id)
+  person_overlap <- length(intersect(algo_persons_set, gt_persons_set))
+  cat("Person overlap (algo ∩ GT):", person_overlap, "\n")
+  
+  # Debug: Sample dates
+  cat("\nSample algorithm end dates:", head(algo_predictions$episode_end_date, 5), "\n")
+  cat("Sample GT end dates:", head(gt_episodes$gt_end, 5), "\n")
+  
+  cat("\nGround truth outcome distribution:\n")
+  gt_episodes %>%
+    count(gt_outcome_category) %>%
+    arrange(desc(n)) %>%
+    kable() %>%
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
 
-cat("\nGround truth outcome distribution (EDW PregnancyOutcome -> category):\n")
-gt_episodes %>%
-  count(pregnancy_outcome, gt_outcome_category) %>%
-  arrange(desc(n)) %>%
-  kable() %>%
-  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-```
+# COMMAND ----------
 
-```{r episode-level-matching}
+# MAGIC %md
+# MAGIC # Episode-level matching
+
+# COMMAND ----------
+
+# DBTITLE 1,edw-ground-truth
+if (gt_source == "edw_databricks") {
+  
+  # =========================================================
+  # Ground truth from the EDW obstetric fact tables (Databricks)
+  #   <catalog>.<phi schema>.edw_pregnancyfact   one row per pregnancy
+  #   <catalog>.<phi schema>.edw_birthfact       one row per baby (PregnancyKey)
+  #   <catalog>.<idmap schema>.registry_idmap    PMAP_id -> OMOP person_id
+  # Produces gt_episodes with the same columns as the PMAP adapter:
+  #   person_id, gt_episode_num, gt_start, gt_end, gt_outcome_category, gt_ga_days
+  # =========================================================
+  
+  edw_table <- function(schema, table) paste0(edw_catalog, ".", schema, ".", table)
+  
+  edw_sql <- paste0("
+  WITH births AS (
+    SELECT
+      PregnancyKey,
+      COUNT(*)                                                     AS n_births,
+      SUM(CASE WHEN BornAlive = 1 THEN 1 ELSE 0 END)               AS n_born_alive,
+      SUM(CASE WHEN LivingStatus = 'Fetal Demise' THEN 1 ELSE 0 END) AS n_fetal_demise,
+      MAX(GestationalAgeDays)                                      AS ga_days_birth
+    FROM ", edw_table(edw_phi_schema, "edw_birthfact"), "
+    GROUP BY PregnancyKey
+  )
+  SELECT
+    r.person_id                     AS person_id,
+    p.cohort_id                     AS cohort_id,
+    p.PregnancyKey                  AS pregnancy_key,
+    p.PregnancyOutcome              AS pregnancy_outcome,
+    p.HasDelivery                   AS has_delivery,
+    p.HadFetalDemise                AS had_fetal_demise,
+    p.HadNeonatalDemise             AS had_neonatal_demise,
+    p.PregnancyEstimatedStartDate   AS pregnancy_estimated_start_date,
+    p.EpisodeStartDate              AS episode_start_date,
+    p.PregnancyEstimatedEndDate     AS pregnancy_estimated_end_date,
+    p.EpisodeEndDate                AS episode_end_date,
+    p.LastDeliveryDate              AS last_delivery_date,
+    p.LastDeliveryGestationalAge    AS last_delivery_gestational_age,
+    b.n_births                      AS n_births,
+    b.n_born_alive                  AS n_born_alive,
+    b.n_fetal_demise                AS n_fetal_demise,
+    b.ga_days_birth                 AS ga_days_birth
+  FROM ", edw_table(edw_phi_schema, "edw_pregnancyfact"), " p
+  INNER JOIN ", edw_table(edw_idmap_schema, "registry_idmap"), " r
+    ON p.cohort_id = r.PMAP_id
+  LEFT JOIN births b
+    ON p.PregnancyKey = b.PregnancyKey
+  WHERE p.PregnancyOutcome IS NULL OR p.PregnancyOutcome <> '*Deleted'
+  ")
+  
+  # Columns are aliased to snake_case in the SQL; clean_names() only normalizes case
+  edw_raw <- db_query(con, edw_sql) %>%
+    clean_names()
+  
+  cat("Loaded", nrow(edw_raw), "EDW pregnancy episodes for",
+      n_distinct(edw_raw$person_id), "linked persons\n")
+  
+  to_date_any <- function(x) {
+    if (inherits(x, "Date")) return(x)
+    if (inherits(x, "POSIXt")) return(as.Date(x))
+    suppressWarnings(as.Date(as.character(x)))
+  }
+  
+  # Outcome mapping to the algorithm's categories (Matcho hierarchy):
+  #   Term / Preterm with any liveborn (or no birth rows and no fetal demise) -> LB
+  #   Term / Preterm where every birth was a fetal demise (or HadFetalDemise
+  #     with no birth rows)                                                   -> SB
+  #   Spontaneous Abortion -> SA; Induced Abortion and unspecified Abortion -> AB
+  #   Ectopic -> ECT
+  #   Molar -> AB (the HIP concept list has no molar codes, so the algorithm
+  #     cannot produce a molar category; pooled with AB and flagged)
+  #   Gravida / Para / *Unspecified -> PREG (recorded pregnancy, outcome not
+  #     resolved; matches the PMAP adapter's treatment of no-outcome rows)
+  edw_episodes <- edw_raw %>%
+    mutate(
+      pregnancy_outcome = as.character(pregnancy_outcome),
+      has_delivery = suppressWarnings(as.numeric(has_delivery)),
+      had_fetal_demise = suppressWarnings(as.numeric(had_fetal_demise)),
+      n_births = coalesce(suppressWarnings(as.numeric(n_births)), 0),
+      n_born_alive = coalesce(suppressWarnings(as.numeric(n_born_alive)), 0),
+      n_fetal_demise = coalesce(suppressWarnings(as.numeric(n_fetal_demise)), 0),
+      gt_start = coalesce(to_date_any(pregnancy_estimated_start_date),
+                          to_date_any(episode_start_date)),
+      gt_end = case_when(
+        !is.na(has_delivery) & has_delivery == 1 & !is.na(to_date_any(last_delivery_date)) ~
+          to_date_any(last_delivery_date),
+        TRUE ~ coalesce(to_date_any(pregnancy_estimated_end_date),
+                        to_date_any(episode_end_date))
+      ),
+      gt_ga_days = coalesce(suppressWarnings(as.numeric(last_delivery_gestational_age)),
+                            suppressWarnings(as.numeric(ga_days_birth))),
+      is_delivery_outcome = pregnancy_outcome %in% c("Term", "Preterm"),
+      all_fetal_demise = (n_births > 0 & n_fetal_demise == n_births & n_born_alive == 0) |
+        (n_births == 0 & coalesce(had_fetal_demise, 0) == 1),
+      gt_outcome_category = case_when(
+        is_delivery_outcome & all_fetal_demise ~ "SB",
+        is_delivery_outcome ~ "LB",
+        pregnancy_outcome == "Spontaneous Abortion" ~ "SA",
+        pregnancy_outcome %in% c("Induced Abortion", "Abortion") ~ "AB",
+        pregnancy_outcome == "Ectopic" ~ "ECT",
+        pregnancy_outcome == "Molar" ~ "AB",
+        TRUE ~ "PREG"
+      ),
+      gt_molar = pregnancy_outcome == "Molar",
+      gt_unresolved = pregnancy_outcome %in% c("Gravida", "Para", "*Unspecified")
+    ) %>%
+    filter(!is.na(person_id), !is.na(gt_start) | !is.na(gt_end)) %>%
+    filter(is.na(gt_start) | gt_start < as.Date(params$max_start_date))
+  
+  gt_episodes <- edw_episodes %>%
+    group_by(person_id) %>%
+    arrange(coalesce(gt_end, gt_start), .by_group = TRUE) %>%
+    mutate(gt_episode_num = row_number()) %>%
+    ungroup() %>%
+    select(person_id, cohort_id, pregnancy_key, gt_episode_num, gt_start, gt_end,
+           gt_outcome_category, gt_ga_days, pregnancy_outcome, gt_molar, gt_unresolved)
+  
+  cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
+  cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
+  cat("Unresolved (Gravida/Para/Unspecified) episodes mapped to PREG:",
+      sum(gt_episodes$gt_unresolved), "\n")
+  cat("Molar pregnancies pooled with AB:", sum(gt_episodes$gt_molar), "\n")
+  
+  algo_persons_set <- unique(algo_predictions$person_id)
+  gt_persons_set <- unique(gt_episodes$person_id)
+  cat("Person overlap (algo ∩ GT):", length(intersect(algo_persons_set, gt_persons_set)), "\n")
+  
+  cat("\nGround truth outcome distribution (EDW PregnancyOutcome -> category):\n")
+  gt_episodes %>%
+    count(pregnancy_outcome, gt_outcome_category) %>%
+    arrange(desc(n)) %>%
+    kable() %>%
+    kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+}
+
+# COMMAND ----------
+
+# DBTITLE 1,episode-level-matching
 # =========================================================
 # Episode-level matching
 # Primary analysis:
@@ -974,10 +984,15 @@ cat("- Algorithm match rate:",
     round(100 * match_results$all_gt_overlap$stats$match_rate_algo, 1), "%\n")
 cat("- All-GT match rate:",
     round(100 * match_results$all_gt_overlap$stats$match_rate_gt, 1), "%\n")
-```
 
-## Matching summary table
-```{r historical-gt-summary-table}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Matching summary table
+
+# COMMAND ----------
+
+# DBTITLE 1,historical-gt-summary-table
 match_results$summary_table %>%
   dplyr::mutate(
     algorithm_match_rate = round(100 * algorithm_match_rate, 1),
@@ -996,12 +1011,15 @@ match_results$summary_table %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
+# COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Outcome classification analysis
 
-# Outcome classification analysis
-```{r outcome-classification-exploratory}
+# COMMAND ----------
+
+# DBTITLE 1,outcome-classification-exploratory
 # =========================================================
 # Exploratory outcome classification analysis
 # Labels are not yet finalized, so this is reported as
@@ -1098,10 +1116,15 @@ cat("- This analysis is exploratory only and excludes unresolved categories.\n")
 cat("- Overall accuracy:",
     round(100 * class_metrics$overall_accuracy, 1), "%\n")
 cat("(", class_metrics$total_correct, "/", class_metrics$total_matched, "episodes with finalized labels)\n\n")
-```
 
-## Confusion Matrix
-```{r confusion-matrix}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Confusion Matrix
+
+# COMMAND ----------
+
+# DBTITLE 1,confusion-matrix
 
 if (nrow(conf_matrix) > 0) {
   conf_matrix %>%
@@ -1111,11 +1134,15 @@ if (nrow(conf_matrix) > 0) {
       full_width = FALSE
     )
 }
-```
 
+# COMMAND ----------
 
-## Classification metrics by category
-```{r classifcation-metrics}
+# MAGIC %md
+# MAGIC ## Classification metrics by category
+
+# COMMAND ----------
+
+# DBTITLE 1,classifcation-metrics
 if (nrow(class_metrics$by_category) > 0) {
   class_metrics$by_category %>%
     dplyr::mutate(
@@ -1131,11 +1158,15 @@ if (nrow(class_metrics$by_category) > 0) {
       full_width = FALSE
     )
 }
-```
 
-# Gestational age comparison
+# COMMAND ----------
 
-```{r gestational-age}
+# MAGIC %md
+# MAGIC # Gestational age comparison
+
+# COMMAND ----------
+
+# DBTITLE 1,gestational-age
 # =========================================================
 # Gestational age comparison
 # Primary analysis: overlap-matched episodes using eligible GT only
@@ -1208,10 +1239,15 @@ if (nrow(ga_metrics$summary) > 0) {
   cat("- Within ±14 days:", round(100 * ga_metrics$summary$within_14_days, 1), "%\n")
   cat("- Within ±21 days:", round(100 * ga_metrics$summary$within_21_days, 1), "%\n")
 }
-```
 
-## GA summary table
-```{r GA-summary}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## GA summary table
+
+# COMMAND ----------
+
+# DBTITLE 1,GA-summary
 if (nrow(ga_metrics$summary) > 0) {
   ga_metrics$summary %>%
     dplyr::mutate(dplyr::across(where(is.numeric), ~ round(., 2))) %>%
@@ -1226,11 +1262,15 @@ if (nrow(ga_metrics$summary) > 0) {
       full_width = FALSE
     )
 }
-```
 
+# COMMAND ----------
 
-## GA by outcome category
-```{r GA-outcome-category}
+# MAGIC %md
+# MAGIC ## GA by outcome category
+
+# COMMAND ----------
+
+# DBTITLE 1,GA-outcome-category
 if (nrow(ga_metrics$by_outcome) > 0) {
   ga_metrics$by_outcome %>%
     dplyr::mutate(
@@ -1245,11 +1285,15 @@ if (nrow(ga_metrics$by_outcome) > 0) {
       full_width = FALSE
     )
 }
-```
 
+# COMMAND ----------
 
-## GA agreement plots
-```{r GA-agreement}
+# MAGIC %md
+# MAGIC ## GA agreement plots
+
+# COMMAND ----------
+
+# DBTITLE 1,GA-agreement
 if (nrow(ga_metrics$data) > 0) {
   ggplot2::ggplot(
     ga_metrics$data,
@@ -1264,11 +1308,15 @@ if (nrow(ga_metrics$data) > 0) {
     ) +
     ggplot2::theme_minimal()
 }
-```
 
+# COMMAND ----------
 
-## GA metrics plot
-```{r GA-bland-altman-plot}
+# MAGIC %md
+# MAGIC ## GA metrics plot
+
+# COMMAND ----------
+
+# DBTITLE 1,GA-bland-altman-plot
 if (nrow(ga_metrics$data) > 0) {
 
   ba_data <- ga_metrics$data %>%
@@ -1350,8 +1398,10 @@ if (nrow(ga_metrics$data) > 0) {
     cat("Not enough non-missing observations to generate a Bland-Altman plot.\n")
   }
 }
-```
-```{r plot-tests}
+
+# COMMAND ----------
+
+# DBTITLE 1,plot-tests
 ggplot2::ggplot(
   ga_metrics$data,
   ggplot2::aes(x = gt_ga_days, y = algo_ga_days)
@@ -1411,9 +1461,10 @@ ggplot2::ggplot(
     y = "Algorithm GA (days)"
   ) +
   ggplot2::theme_minimal()
-```
 
-```{r plots-test2}
+# COMMAND ----------
+
+# DBTITLE 1,plots-test2
 ggplot2::ggplot(
   ga_metrics$data,
   ggplot2::aes(x = gt_ga_days, y = algo_ga_days)
@@ -1482,10 +1533,9 @@ ga_metrics$data %>%
   ) +
   ggplot2::theme_minimal()
 
+# COMMAND ----------
 
-```
-
-```{r bland-altman-new}
+# DBTITLE 1,bland-altman-new
 if (nrow(ga_metrics$data) > 0) {
 
   ba_data <- ga_metrics$data %>%
@@ -1621,12 +1671,17 @@ if (nrow(ga_metrics$data) > 0) {
     cat("Not enough non-missing observations to generate a Bland-Altman plot.\n")
   }
 }
-```
 
-# Bland-Altman Check
+# COMMAND ----------
 
-## 1. Extract the suspicious region (manual inspection)
-```{r ba-check1}
+# MAGIC %md
+# MAGIC # Bland-Altman Check
+# MAGIC 
+# MAGIC ## 1. Extract the suspicious region (manual inspection)
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check1
 suspicious_cases <- ba_data %>%
   dplyr::filter(
     mean_ga < 180,
@@ -1648,21 +1703,30 @@ suspicious_cases %>%
     diff_ga
   ) %>%
   head(50)
-```
 
+# COMMAND ----------
 
-## 2. whether the pattern is caused by GT truncation
-```{r ba-check2}
+# MAGIC %md
+# MAGIC ## 2. whether the pattern is caused by GT truncation
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check2
 summary(ba_data$gt_ga_days)
 summary(ba_data$algo_ga_days)
 hist(ba_data$gt_ga_days, breaks = 50)
 hist(ba_data$algo_ga_days, breaks = 50)
-```
 
-## 3. N/A
+# COMMAND ----------
 
-## 4. Check if the pattern is driven by episode type
-```{r ba-check4}
+# MAGIC %md
+# MAGIC ## 3. N/A
+# MAGIC 
+# MAGIC ## 4. Check if the pattern is driven by episode type
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check4
 ba_data %>%
   dplyr::mutate(
     abs_diff = abs(diff_ga)
@@ -1673,10 +1737,15 @@ ba_data %>%
     mean_diff = mean(diff_ga, na.rm = TRUE),
     large_error = mean(abs_diff > 100)
   )
-```
 
-## 5. Check whether historical pregnancies cause it
-```{r ba-check5}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Check whether historical pregnancies cause it
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check5
 
 suspicious_cases <- ba_data %>%
   dplyr::filter(
@@ -1688,10 +1757,14 @@ nrow(suspicious_cases)
 
 head(suspicious_cases, 20)
 
-```
+# COMMAND ----------
 
-## 6. Visual diagnostic: highlight the suspicious region
-```{r ba-check6}
+# MAGIC %md
+# MAGIC ## 6. Visual diagnostic: highlight the suspicious region
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check6
 
 ggplot2::ggplot(
   ba_data,
@@ -1706,21 +1779,30 @@ ggplot2::ggplot(
   ggplot2::labs(
     title = "Highlighted Suspicious Region"
   )
-```
 
+# COMMAND ----------
 
-## 7. Check if GA calculation is inconsistent
-```{r ba-check7}
+# MAGIC %md
+# MAGIC ## 7. Check if GA calculation is inconsistent
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check7
 
 cor(
   ba_data$algo_ga_days,
   ba_data$gt_ga_days,
   use = "complete.obs"
 )
-```
 
-## 8. Plot GA difference vs GT GA
-```{r ba-check8}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 8. Plot GA difference vs GT GA
+
+# COMMAND ----------
+
+# DBTITLE 1,ba-check8
 ggplot2::ggplot(
   ba_data,
   ggplot2::aes(
@@ -1730,12 +1812,15 @@ ggplot2::ggplot(
 ) +
   ggplot2::geom_point(alpha = 0.2) +
   ggplot2::geom_smooth()
-```
 
+# COMMAND ----------
 
+# MAGIC %md
+# MAGIC # Personal-level aggregation
 
-# Personal-level aggregation
-```{r person-level-aggregation}
+# COMMAND ----------
+
+# DBTITLE 1,person-level-aggregation
 # =========================================================
 # Person-level aggregation
 # Report both:
@@ -1813,11 +1898,15 @@ cat("- Mean absolute count difference:",
     round(person_metrics_all_gt$summary$mean_abs_diff, 2), "\n")
 cat("- Median absolute count difference:",
     round(person_metrics_all_gt$summary$median_abs_diff, 2), "\n")
-```
 
+# COMMAND ----------
 
-## Person-level summary table
-```{r person-level-summary}
+# MAGIC %md
+# MAGIC ## Person-level summary table
+
+# COMMAND ----------
+
+# DBTITLE 1,person-level-summary
 person_summary_table <- tibble::tibble(
   analysis = c("Primary: eligible GT only", "Sensitivity: all GT episodes"),
   exact_match_rate = c(
@@ -1859,11 +1948,15 @@ person_summary_table %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
+# COMMAND ----------
 
-## Distribution of count differences
-```{r dist-cnt-diff}
+# MAGIC %md
+# MAGIC ## Distribution of count differences
+
+# COMMAND ----------
+
+# DBTITLE 1,dist-cnt-diff
 if (nrow(person_metrics_primary$person_data) > 0) {
   ggplot2::ggplot(
     person_metrics_primary$person_data,
@@ -1881,10 +1974,15 @@ if (nrow(person_metrics_primary$person_data) > 0) {
     ) +
     ggplot2::theme_minimal()
 }
-```
 
-# Summary and key findings
-```{r summary-key-findings}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC # Summary and key findings
+
+# COMMAND ----------
+
+# DBTITLE 1,summary-key-findings
 # =========================================================
 # Summary and key findings
 # Includes a podium-oriented subset
@@ -1931,12 +2029,15 @@ summary_df %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
+# COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## Podium abstract subset:
 
-## Podium abstract subset:
-```{r podium-abstract}
+# COMMAND ----------
+
+# DBTITLE 1,podium-abstract
 # Podium-oriented subset:
 # emphasize episode identification and gestational-age agreement
 podium_df <- tibble::tibble(
@@ -1968,11 +2069,15 @@ podium_df %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
+# COMMAND ----------
 
-## Key findings
-```{r key-findings}
+# MAGIC %md
+# MAGIC ## Key findings
+
+# COMMAND ----------
+
+# DBTITLE 1,key-findings
 cat("Key Findings:\n")
 cat(
   "1. After excluding likely historical ground-truth episodes from the primary analysis,",
@@ -2013,22 +2118,27 @@ cat(
 cat(
   "6. The difference between the primary and all-GT analyses quantifies the impact of likely historical registry episodes that may not be observable in the Hopkins healthcare system data used by the algorithm.\n"
 )
-```
-```{r cleanup1}
-#| include: false
+
+# COMMAND ----------
+
+# DBTITLE 1,cleanup1
 
 # Disconnect from database
 if (exists("con")) {
   db_disconnect(con)
   cat("Database connection closed\n")
 }
-```
 
+# COMMAND ----------
 
-# Pregnancy complication
+# MAGIC %md
+# MAGIC # Pregnancy complication
+# MAGIC 
+# MAGIC ## setup
 
-## setup
-```{r pregnancy-complications-setup}
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-setup
 # =========================================================
 # Pregnancy complications detected by either approach
 # New section:
@@ -2054,9 +2164,10 @@ complication_concepts <- tibble::tibble(
     "gdm"
   )
 )
-```
 
-```{r db-connect2}
+# COMMAND ----------
+
+# DBTITLE 1,db-connect2
 # Connect to database using project connection function
 con <- open_report_connection()
 if (is.null(con)) stop("Connection returned NULL.")
@@ -2064,10 +2175,9 @@ if (!db_is_valid(con)) stop("Database connection is not valid.")
 
 cat("Database connection established\n")
 
-```
+# COMMAND ----------
 
-
-```{r pregnancy-complications-descendants}
+# DBTITLE 1,pregnancy-complications-descendants
 # =========================================================
 # Step 1A: get all descendant concept IDs from OMOP
 # =========================================================
@@ -2127,11 +2237,9 @@ cat("- Total descendant concept rows:", nrow(complication_descendants), "\n")
 cat("- Unique descendant concept IDs:",
     dplyr::n_distinct(complication_descendants$descendant_concept_id), "\n")
 
-```
+# COMMAND ----------
 
-
-
-```{r pregnancy-complications-query}
+# DBTITLE 1,pregnancy-complications-query
 # =========================================================
 # Step 1B: query condition_occurrence using descendant IDs
 # =========================================================
@@ -2219,12 +2327,10 @@ cat("- Unique persons with at least one target complication code:",
     dplyr::n_distinct(complication_conditions$person_id), "\n")
 cat("- Unique complication concept IDs returned:",
     dplyr::n_distinct(complication_conditions$condition_concept_id), "\n")
-```
 
+# COMMAND ----------
 
-
-
-```{r pregnancy-complications-derive-episode-flags}
+# DBTITLE 1,pregnancy-complications-derive-episode-flags
 # =========================================================
 # Derive episode-level complication flags
 # A complication is considered detected if the condition date
@@ -2348,12 +2454,15 @@ cat("Episode-Level Complication Flags Created:\n")
 cat("- Algorithm episodes with flags:", nrow(algo_complication_flags), "\n")
 cat("- Eligible GT episodes with flags:", nrow(gt_primary_complication_flags), "\n")
 cat("- All GT episodes with flags:", nrow(gt_all_complication_flags), "\n")
-```
 
+# COMMAND ----------
 
-## Summary
+# MAGIC %md
+# MAGIC ## Summary
 
-```{r pregnancy-complications-overall-summary}
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-overall-summary
 # =========================================================
 # Overall complication prevalence by approach
 # =========================================================
@@ -2404,12 +2513,15 @@ complication_prevalence_summary %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
+# COMMAND ----------
 
-## matched episodes
+# MAGIC %md
+# MAGIC ## matched episodes
 
-```{r pregnancy-complications-matched-episodes}
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-matched-episodes
 # =========================================================
 # Compare complication detection between approaches
 # among primary matched episodes
@@ -2449,11 +2561,15 @@ matched_complications <- matched_episodes %>%
 cat("Matched Episode Complication Comparison:\n")
 cat("- Primary matched episodes available for complication comparison:",
     nrow(matched_complications), "\n")
-```
 
+# COMMAND ----------
 
-## Agreement summary
-```{r pregnancy-complications-agreement-summary}
+# MAGIC %md
+# MAGIC ## Agreement summary
+
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-agreement-summary
 # =========================================================
 # Agreement metrics for complication detection
 # GT episode window used as reference
@@ -2565,11 +2681,15 @@ complication_agreement_summary %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
-## Detection Rate
+# COMMAND ----------
 
-```{r pregnancy-complications-detection-rates}
+# MAGIC %md
+# MAGIC ## Detection Rate
+
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-detection-rates
 # =========================================================
 # Detection rates by approach among matched episodes
 # =========================================================
@@ -2612,11 +2732,15 @@ matched_complication_rates %>%
     bootstrap_options = c("striped", "hover"),
     full_width = FALSE
   )
-```
 
+# COMMAND ----------
 
-## Plot
-```{r pregnancy-complications-plot}
+# MAGIC %md
+# MAGIC ## Plot
+
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-plot
 if (nrow(matched_complication_rates) > 0) {
 
   complication_rates_long <- matched_complication_rates %>%
@@ -2650,10 +2774,15 @@ if (nrow(matched_complication_rates) > 0) {
       axis.text.x = ggplot2::element_text(angle = 20, hjust = 1)
     )
 }
-```
 
-## Key findings
-```{r pregnancy-complications-key-findings}
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Key findings
+
+# COMMAND ----------
+
+# DBTITLE 1,pregnancy-complications-key-findings
 cat("Pregnancy Complication Findings:\n")
 cat(
   "1. Episode-level complication flags were derived for preeclampsia, pregnancy-induced hypertension, and gestational diabetes using direct condition concept IDs within each episode window.\n"
@@ -2674,16 +2803,13 @@ cat(
 cat(
   "4. This section complements the primary outcome-agnostic episode matching analysis by evaluating whether clinically important pregnancy complications are detected within the episodes identified by either approach.\n"
 )
-```
 
-```{r cleanup2}
-#| include: false
+# COMMAND ----------
+
+# DBTITLE 1,cleanup2
 
 # Disconnect from database
 if (exists("con")) {
   db_disconnect(con)
   cat("Database connection closed\n")
 }
-```
-
-
