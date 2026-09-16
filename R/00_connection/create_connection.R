@@ -95,6 +95,7 @@ create_omop_connection <- function(
     if (is.null(server)) {
       server <- Sys.getenv("SQL_SERVER")
       if (server == "") server <- Sys.getenv("DB_SERVER")
+      if (server == "") server <- Sys.getenv("DATABRICKS_SERVER")
     }
     
     if (is.null(database)) {
@@ -111,22 +112,27 @@ create_omop_connection <- function(
     if (is.null(user) && !use_windows_auth) {
       user <- Sys.getenv("SQL_USER")
       if (user == "") user <- Sys.getenv("DB_USER")
+      # Databricks personal access token: user is the literal "token"
+      if (user == "" && Sys.getenv("DATABRICKS_TOKEN") != "") user <- "token"
     }
-    
+
     if (is.null(password) && !use_windows_auth) {
       password <- Sys.getenv("SQL_PASSWORD")
       if (password == "") password <- Sys.getenv("DB_PASSWORD")
+      if (password == "") password <- Sys.getenv("DATABRICKS_TOKEN")
     }
     
     if (is.null(pathToDriver)) {
       pathToDriver <- Sys.getenv("SQL_JDBC_PATH")
       if (pathToDriver == "") pathToDriver <- Sys.getenv("JDBC_DRIVER_PATH")
+      if (pathToDriver == "") pathToDriver <- Sys.getenv("DATABRICKS_JDBC_PATH")
       if (pathToDriver == "") pathToDriver <- "jdbc_drivers"
     }
     
     if (is.null(cdm_schema)) {
       cdm_schema <- Sys.getenv("SQL_CDM_SCHEMA")
       if (cdm_schema == "") cdm_schema <- Sys.getenv("CDM_SCHEMA")
+      if (cdm_schema == "") cdm_schema <- Sys.getenv("DATABRICKS_CDM_SCHEMA")
       if (cdm_schema == "") cdm_schema <- "dbo"
     }
     
@@ -138,11 +144,16 @@ create_omop_connection <- function(
     if (is.null(results_schema)) {
       results_schema <- Sys.getenv("SQL_RESULTS_SCHEMA")
       if (results_schema == "") results_schema <- Sys.getenv("RESULTS_SCHEMA")
+      if (results_schema == "") results_schema <- Sys.getenv("DATABRICKS_RESULTS_SCHEMA")
     }
     
     # Get extra settings for Databricks
     if (is.null(extraSettings)) {
       extraSettings <- Sys.getenv("DB_EXTRA_SETTINGS")
+      # DATABRICKS_HTTP_PATH is the SQL warehouse path; it becomes httpPath=...
+      if (extraSettings == "" && Sys.getenv("DATABRICKS_HTTP_PATH") != "") {
+        extraSettings <- paste0("httpPath=", Sys.getenv("DATABRICKS_HTTP_PATH"))
+      }
       if (extraSettings == "") extraSettings <- NULL
     }
     
