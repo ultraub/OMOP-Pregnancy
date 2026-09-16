@@ -115,6 +115,9 @@ cleanup_temp_tables <- function(connection) {
 #' @return Logical indicating if emulation is required
 #' @export
 requires_temp_emulation <- function(connection) {
+  if (inherits(connection, "omop_spark_connection")) {
+    return(FALSE)
+  }
   tryCatch({
     DatabaseConnector::requiresTempEmulation(connection)
   }, error = function(e) {

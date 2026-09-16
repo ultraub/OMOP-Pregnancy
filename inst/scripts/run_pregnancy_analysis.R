@@ -28,6 +28,8 @@ if (file.exists(".env")) {
     }
   }
   message("✓ Loaded environment variables from .env file")
+} else if (any(nzchar(Sys.getenv(c("DB_TYPE", "SQL_DBMS", "OMOP_ENV"))))) {
+  message("No .env file; using connection settings from the environment")
 } else {
   # Check for template files
   templates <- list.files("inst/templates", pattern = "^\\.env", full.names = TRUE)
@@ -306,7 +308,7 @@ tryCatch({
   # Always disconnect from database
   if (exists("connection")) {
     tryCatch({
-      DatabaseConnector::disconnect(connection)
+      db_disconnect(connection)
       message("\n✓ Database connection closed")
     }, error = function(e) {
       warning("Failed to close database connection properly")

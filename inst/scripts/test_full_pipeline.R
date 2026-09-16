@@ -377,7 +377,7 @@ tryCatch({
   traceback()
 }, finally = {
   if (exists("connection")) {
-    DatabaseConnector::disconnect(connection)
+    db_disconnect(connection)
     message("\n✓ Database connection closed")
   }
 })

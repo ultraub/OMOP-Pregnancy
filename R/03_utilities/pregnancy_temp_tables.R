@@ -45,7 +45,7 @@ create_person_temp_table <- function(connection, person_ids, table_name = "#pers
         view_name,
         paste0("(", person_ids, ")", collapse = ",")
       )
-      DatabaseConnector::executeSql(connection, sql)
+      db_execute(connection, sql)
     } else {
       # For very large lists, create a temp table instead
       # But do it efficiently with CREATE TABLE AS SELECT
@@ -59,7 +59,7 @@ create_person_temp_table <- function(connection, person_ids, table_name = "#pers
         full_table_name,
         paste0("(", first_batch, ")", collapse = ",")
       )
-      DatabaseConnector::executeSql(connection, sql)
+      db_execute(connection, sql)
       
       # Insert remaining in larger batches using INSERT INTO
       for (i in seq(max_ids_per_query + 1, length(person_ids), by = max_ids_per_query)) {
@@ -71,7 +71,7 @@ create_person_temp_table <- function(connection, person_ids, table_name = "#pers
           full_table_name,
           paste0("(", batch, ")", collapse = ",")
         )
-        DatabaseConnector::executeSql(connection, sql)
+        db_execute(connection, sql)
       }
       view_name <- full_table_name
     }
@@ -178,7 +178,7 @@ create_concept_temp_table <- function(connection, concepts, table_name) {
       paste(col_names, collapse = ",")
     )
     
-    DatabaseConnector::executeSql(connection, sql)
+    db_execute(connection, sql)
     message(sprintf("  Created temp view %s", view_name))
     return(view_name)
     
@@ -282,7 +282,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
           
           tryCatch(
             {
-              DatabaseConnector::executeSql(connection, drop_view_sql)
+              db_execute(connection, drop_view_sql)
               dropped <- dropped + 1
             },
             error = function(e) {
@@ -306,7 +306,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
           
           tryCatch(
             {
-              DatabaseConnector::executeSql(connection, drop_view_sql)
+              db_execute(connection, drop_view_sql)
               dropped <- dropped + 1
             },
             error = function(e) {
@@ -322,7 +322,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
           
           tryCatch(
             {
-              DatabaseConnector::executeSql(connection, drop_table_sql)
+              db_execute(connection, drop_table_sql)
               dropped <- dropped + 1
             },
             error = function(e) {
@@ -343,7 +343,7 @@ cleanup_pregnancy_temp_tables <- function(connection, table_names = NULL) {
       # Execute for non-Spark platforms
       if (!dbms %in% c("spark", "databricks")) {
         drop_sql <- SqlRender::translate(drop_sql, targetDialect = dbms)
-        DatabaseConnector::executeSql(connection, drop_sql)
+        db_execute(connection, drop_sql)
         dropped <- dropped + 1
       }
     }, error = function(e) {

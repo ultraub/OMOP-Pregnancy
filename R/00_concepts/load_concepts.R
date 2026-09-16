@@ -488,7 +488,7 @@ enrich_concepts_with_domains <- function(concepts, connection, vocabulary_schema
     targetDialect = attr(connection, "dbms")
   )
   
-  domain_mapping <- DatabaseConnector::querySql(connection, sql)
+  domain_mapping <- db_query(connection, sql)
   names(domain_mapping) <- tolower(names(domain_mapping))
   
   # Merge domains back to concepts

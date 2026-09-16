@@ -57,15 +57,12 @@ save_to_database_tables <- function(episodes, connection, results_schema) {
 
   # Create the table from the data so the schema always matches the output
   # (recorded/inferred dates, algorithm flags, precision and quality flags).
-  DatabaseConnector::insertTable(
+  db_insert_table(
     connection = connection,
-    databaseSchema = results_schema,
-    tableName = "pregnancy_episodes",
+    database_schema = results_schema,
+    table_name = "pregnancy_episodes",
     data = as.data.frame(episodes),
-    dropTableIfExists = TRUE,
-    createTable = TRUE,
-    tempTable = FALSE,
-    progressBar = TRUE
+    overwrite = TRUE
   )
   
   message(sprintf("Saved %d episodes to database", nrow(episodes)))

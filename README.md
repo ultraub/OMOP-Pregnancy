@@ -60,6 +60,7 @@ frames.
 - Java 8 or later and a JDBC driver for the database
   (`inst/scripts/setup_jdbc_drivers.R` downloads drivers)
 - R packages: DatabaseConnector, SqlRender, dplyr, lubridate, readr, DBI
+  (inside Databricks, sparklyr replaces DatabaseConnector; see below)
 
 ## Configuration
 
@@ -109,6 +110,33 @@ Each step is also exported on its own (`extract_pregnancy_cohort`,
 `run_hip_algorithm`, `run_pps_algorithm`, `merge_pregnancy_episodes`,
 `calculate_estimated_start_dates`, `add_episode_quality_metadata`) for
 running the pipeline in pieces.
+
+### Inside Databricks
+
+The pipeline can run directly on a Databricks cluster's Spark session, with
+no JDBC driver or token. Database access goes through a small backend
+(`R/00_connection/db_backend.R`) that dispatches on the connection object,
+so the same extraction code runs over DatabaseConnector or over sparklyr.
+
+Check the repository out as a Databricks Repo, install `sparklyr`, `DBI`,
+`SqlRender`, `dplyr`, `lubridate` and `readr` on the cluster, and in an R
+notebook:
+
+```r
+Sys.setenv(
+  OMOP_REPO_PATH    = "/Workspace/Repos/<user>/OMOP-Pregnancy",
+  CDM_SCHEMA        = "omop.data",
+  VOCABULARY_SCHEMA = "omop.vocabulary",
+  RESULTS_SCHEMA    = "my_project.results",   # optional
+  OUTPUT_FOLDER     = "/Volumes/my_catalog/my_schema/my_volume/pregnancy"  # optional
+)
+source(file.path(Sys.getenv("OMOP_REPO_PATH"), "inst/scripts/run_in_databricks.R"))
+```
+
+Or build the connection yourself with `create_spark_connection()` and call
+`run_pregnancy_identification()`. Temporary views live in the notebook's
+session and the results table is written with `CREATE TABLE AS SELECT`.
+SqlRender needs rJava; the Databricks Runtime provides Java.
 
 ## Output
 
@@ -169,7 +197,7 @@ the relevant place:
 ```
 R/
   00_concepts/      concept and limits loading
-  00_connection/    connection from .env or explicit settings
+  00_connection/    connection from .env or explicit settings; Spark backend
   01_extraction/    database queries and type enforcement
   02_algorithms/    HIP, PPS, merge, ESD and quality metadata
   03_results/       CSV, RDS and database output
@@ -177,7 +205,7 @@ R/
   main.R            run_pregnancy_identification()
 inst/
   extdata/          concept lists and Matcho tables
-  scripts/          run script, connection setup and diagnostics
+  scripts/          run script, Databricks entry script, connection setup and diagnostics
   templates/        .env templates
   sql/              a standalone person query
 Evaluation/

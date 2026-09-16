@@ -72,7 +72,7 @@ extract_pregnancy_cohort <- function(
       )
       
       sql <- SqlRender::translate(sql, targetDialect = target_dialect)
-      DatabaseConnector::executeSql(connection, sql)
+      db_execute(connection, sql)
       
       person_temp <- "person_cohort"
       temp_tables_created <- c(temp_tables_created, "person_cohort")
@@ -356,7 +356,7 @@ extract_domain_with_temp_table <- function(
   
   sql <- SqlRender::translate(sql, targetDialect = target_dialect)
   
-  result <- DatabaseConnector::querySql(connection, sql)
+  result <- db_query(connection, sql)
   
   # Convert column names to lowercase for consistency
   if (nrow(result) > 0) {
@@ -479,7 +479,7 @@ extract_gestational_timing_with_temp_table <- function(
   
   sql <- SqlRender::translate(sql, targetDialect = target_dialect)
   
-  result <- DatabaseConnector::querySql(connection, sql)
+  result <- db_query(connection, sql)
   
   # Convert column names to lowercase for consistency
   if (nrow(result) > 0) {
@@ -524,7 +524,7 @@ extract_persons <- function(
   
   sql <- SqlRender::translate(sql, targetDialect = target_dialect)
   
-  result <- DatabaseConnector::querySql(connection, sql)
+  result <- db_query(connection, sql)
   
   # Convert column names to lowercase
   if (nrow(result) > 0) {
@@ -600,7 +600,7 @@ extract_domain_table <- function(
     
     sql <- SqlRender::translate(sql, targetDialect = target_dialect)
     
-    batch_result <- DatabaseConnector::querySql(connection, sql)
+    batch_result <- db_query(connection, sql)
     
     if (nrow(batch_result) > 0) {
       names(batch_result) <- tolower(names(batch_result))
@@ -735,7 +735,7 @@ extract_gestational_timing <- function(
     
     sql <- SqlRender::translate(sql, targetDialect = target_dialect)
     
-    batch_result <- DatabaseConnector::querySql(connection, sql)
+    batch_result <- db_query(connection, sql)
     
     if (nrow(batch_result) > 0) {
       names(batch_result) <- tolower(names(batch_result))
@@ -824,7 +824,7 @@ extract_esd_timing_records <- function(
     concept_ids = fixed_ids
   )
   concept_sql <- SqlRender::translate(concept_sql, targetDialect = target_dialect)
-  esd_concepts <- DatabaseConnector::querySql(connection, concept_sql)
+  esd_concepts <- db_query(connection, concept_sql)
   if (nrow(esd_concepts) == 0) {
     message("    No ESD timing concepts found in vocabulary")
     return(empty)
@@ -867,7 +867,7 @@ extract_esd_timing_records <- function(
       concept_temp_table = concept_temp
     )
     sql <- SqlRender::translate(sql, targetDialect = target_dialect)
-    result <- DatabaseConnector::querySql(connection, sql)
+    result <- db_query(connection, sql)
     if (nrow(result) > 0) names(result) <- tolower(names(result))
     result <- result %>% left_join(esd_concepts, by = "concept_id")
     return(list(records = result, temp_table = concept_temp))
@@ -891,7 +891,7 @@ extract_esd_timing_records <- function(
       concept_ids = esd_concepts$concept_id
     )
     sql <- SqlRender::translate(sql, targetDialect = target_dialect)
-    batch_result <- DatabaseConnector::querySql(connection, sql)
+    batch_result <- db_query(connection, sql)
     if (nrow(batch_result) > 0) {
       names(batch_result) <- tolower(names(batch_result))
       all_results[[length(all_results) + 1]] <- batch_result

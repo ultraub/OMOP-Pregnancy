@@ -152,13 +152,13 @@ run_pregnancy_identification <- function(
 #' Validate database connection
 #' @noRd
 validate_connection <- function(connection) {
-  if (!DBI::dbIsValid(connection)) {
+  if (!db_is_valid(connection)) {
     stop("Invalid database connection")
   }
-  
+
   # Test connection with simple query
   tryCatch({
-    DatabaseConnector::querySql(connection, "SELECT 1 AS test")
+    db_query(connection, "SELECT 1 AS test")
   }, error = function(e) {
     stop("Cannot connect to database: ", e$message)
   })
