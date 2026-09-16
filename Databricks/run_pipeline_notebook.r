@@ -149,18 +149,6 @@ merged_episodes %>% count(algorithm_used, sort = TRUE)
 
 # COMMAND ----------
 
-# DBTITLE 1,Diagnostic: check esd_timing columns and coalesce
-# Diagnostic: check what columns exist and coalesce resolution
-cat("esd_timing columns:\n")
-cat(paste(colnames(cohort_data$esd_timing), collapse=", "), "\n\n")
-cat("has value_as_string:", "value_as_string" %in% colnames(cohort_data$esd_timing), "\n")
-cat("class of value_as_string:", class(cohort_data$esd_timing$value_as_string), "\n")
-cat("head value_as_string:", head(cohort_data$esd_timing$value_as_string, 5), "\n\n")
-cat("coalesce resolves to:", environmentName(environment(coalesce)), "\n")
-cat("dplyr version:", as.character(packageVersion("dplyr")), "\n")
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## 10. Estimated start dates and quality flags
 
