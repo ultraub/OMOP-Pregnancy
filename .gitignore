@@ -23,6 +23,7 @@ test_data/
 .env
 .env.*
 !.env.*.template
+!.env.template
 
 # JDBC drivers
 jdbc_drivers/

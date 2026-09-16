@@ -41,8 +41,6 @@ extract_pregnancy_cohort <- function(
     vocabulary_schema <- cdm_schema
   }
   
-  # Source helper functions
-  source("R/03_utilities/pregnancy_temp_tables.R")
   
   # Get database type for SqlRender
   target_dialect <- attr(connection, "dbms")

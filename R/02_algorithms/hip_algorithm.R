@@ -39,8 +39,6 @@ run_hip_algorithm <- function(cohort_data, matcho_limits, matcho_outcome_limits)
     return(data.frame())
   }
   
-  # Source database utilities for compute operations
-  source("R/03_utilities/database_utils.R")
   
   # Step 2: Process outcomes hierarchically following Matcho et al. methodology
   # HIERARCHY STEP 1: Live Births (LB) - Highest Priority

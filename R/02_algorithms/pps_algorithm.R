@@ -76,8 +76,6 @@ assign_pps_episodes <- function(timing_data) {
   
   # Check if we need to collect data first (if it's still a lazy tbl)
   if ("tbl_lazy" %in% class(timing_data) || "tbl_sql" %in% class(timing_data)) {
-    # Source database utilities for paginated collection
-    source("R/03_utilities/database_utils.R")
     
     # Compute intermediate result to temp table (like All of Us aou_compute)
     message("  Computing timing data to temp table...")
