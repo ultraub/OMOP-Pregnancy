@@ -869,7 +869,8 @@ extract_esd_timing_records <- function(
     sql <- SqlRender::translate(sql, targetDialect = target_dialect)
     result <- db_query(connection, sql)
     if (nrow(result) > 0) names(result) <- tolower(names(result))
-    result <- result %>% left_join(esd_concepts, by = "concept_id")
+    result <- result[, setdiff(names(result), "concept_name"), drop = FALSE] %>%
+      left_join(esd_concepts, by = "concept_id")
     return(list(records = result, temp_table = concept_temp))
   }
 
@@ -898,6 +899,8 @@ extract_esd_timing_records <- function(
     }
   }
   if (length(all_results) == 0) return(empty)
-  result <- bind_rows(all_results) %>% left_join(esd_concepts, by = "concept_id")
+  result <- bind_rows(all_results)
+  result <- result[, setdiff(names(result), "concept_name"), drop = FALSE] %>%
+    left_join(esd_concepts, by = "concept_id")
   list(records = result, temp_table = NULL)
 }
