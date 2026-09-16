@@ -140,6 +140,12 @@ Or build the connection yourself with `create_spark_connection()` and call
 session and the results table is written with `CREATE TABLE AS SELECT`.
 SqlRender needs rJava; the Databricks Runtime provides Java.
 
+A step-by-step walkthrough, from package installation to saved output with
+the counts at each stage, is in `Databricks/run_pipeline.qmd`. The same
+cells in Databricks notebook format are in
+`Databricks/run_pipeline_notebook.r`, which the Repo opens directly as a
+notebook.
+
 ## Output
 
 One row per pregnancy episode.
@@ -210,6 +216,9 @@ inst/
   scripts/          run script, Databricks entry script, connection setup and diagnostics
   templates/        .env templates
   sql/              a standalone person query
+Databricks/
+  run_pipeline.qmd        step-by-step run on a Databricks cluster
+  run_pipeline_notebook.r the same cells as a Databricks notebook
 Evaluation/
   validation_report.qmd   evaluation against the PMAP OB registry (see below)
   validation_report.html  rendered report with results tables

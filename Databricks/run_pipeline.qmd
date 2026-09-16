@@ -1,0 +1,219 @@
+---
+title: "OMOP Pregnancy pipeline on Databricks"
+format:
+  html:
+    toc: true
+    code-fold: false
+execute:
+  echo: true
+  warning: false
+  message: true
+params:
+  # Path of the checked-out repository (Databricks Repo / Git folder)
+  repo_path: "/Workspace/Repos/<your user>/OMOP-Pregnancy"
+  # catalog.schema of the CDM tables and of the vocabulary (concept table)
+  cdm_schema: "omop.data"
+  vocabulary_schema: "omop.vocabulary"
+  # catalog.schema for the pregnancy_episodes table; "" skips the table
+  results_schema: ""
+  # folder for CSV/RDS output; "" uses <repo>/output (git-ignored)
+  output_folder: ""
+  min_age: 15
+  max_age: 56
+---
+
+This document runs the pregnancy episode pipeline on a Databricks cluster's
+Spark session: no JDBC driver, no token. Attach the notebook to an
+all-purpose cluster running a Databricks Runtime (not a SQL warehouse); the
+runtime provides R, sparklyr and Java. The same steps are in
+`inst/scripts/run_in_databricks.R` as a single script, and in
+`Databricks/run_pipeline_notebook.r`, which the Repo opens as a notebook.
+
+Fill in the parameters above, then run the chunks in order.
+
+## 1. Packages
+
+Installs anything missing. `SqlRender` needs `rJava`, which builds against
+the runtime's Java; if that step fails, install `rJava` on its own first.
+`DatabaseConnector` is not needed on this path.
+
+```{r packages}
+needed <- c("sparklyr", "DBI", "SqlRender", "dplyr", "lubridate", "readr")
+missing <- needed[!vapply(needed, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing) > 0) {
+  message("Installing: ", paste(missing, collapse = ", "))
+  install.packages(missing)
+}
+invisible(lapply(needed, requireNamespace, quietly = TRUE))
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(lubridate)
+  library(readr)
+})
+cat("R", R.version.string, "\n")
+cat("sparklyr", as.character(packageVersion("sparklyr")), "\n")
+cat("SqlRender", as.character(packageVersion("SqlRender")), "\n")
+```
+
+## 2. Configuration
+
+```{r configuration}
+repo_path         <- params$repo_path
+cdm_schema        <- params$cdm_schema
+vocabulary_schema <- if (nzchar(params$vocabulary_schema)) params$vocabulary_schema else cdm_schema
+results_schema    <- if (nzchar(params$results_schema)) params$results_schema else NULL
+output_folder     <- if (nzchar(params$output_folder)) params$output_folder else file.path(repo_path, "output")
+min_age           <- params$min_age
+max_age           <- params$max_age
+
+stopifnot(dir.exists(repo_path))
+setwd(repo_path)
+if (!dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)
+
+cat("Repository:        ", repo_path, "\n")
+cat("CDM schema:        ", cdm_schema, "\n")
+cat("Vocabulary schema: ", vocabulary_schema, "\n")
+cat("Results schema:    ", if (is.null(results_schema)) "(none)" else results_schema, "\n")
+cat("Output folder:     ", output_folder, "\n")
+```
+
+## 3. Load the pipeline code
+
+The package is used from source; nothing is installed into the R library.
+
+```{r load-code}
+for (dir in c("R/00_connection", "R/00_concepts", "R/01_extraction",
+              "R/02_algorithms", "R/03_results", "R/03_utilities")) {
+  for (f in list.files(dir, pattern = "\\.R$", full.names = TRUE)) source(f)
+}
+source("R/main.R")
+cat("Loaded pipeline code from", repo_path, "\n")
+```
+
+## 4. Connect to the Spark session
+
+```{r connect}
+connection <- create_spark_connection(
+  cdm_schema = cdm_schema,
+  vocabulary_schema = vocabulary_schema,
+  results_schema = results_schema
+)
+print(connection)
+
+# Quick check that the CDM is reachable
+n_persons <- db_query(connection, paste0("SELECT COUNT(*) AS n FROM ", cdm_schema, ".person"))
+cat("Persons in CDM:", format(n_persons$n[1], big.mark = ","), "\n")
+```
+
+If `create_spark_connection()` cannot attach to the session on your runtime,
+open it yourself and pass it in:
+
+```{r connect-manual, eval=FALSE}
+sc <- sparklyr::spark_connect(method = "databricks")
+connection <- create_spark_connection(cdm_schema, vocabulary_schema, results_schema, sc = sc)
+```
+
+## 5. Concept sets
+
+```{r concepts}
+concepts <- load_concept_sets()
+cat("HIP concepts:", nrow(concepts$hip_concepts), "\n")
+cat("PPS concepts:", nrow(concepts$pps_concepts), "\n")
+cat("Outcome categories:", nrow(concepts$matcho_limits), "\n")
+```
+
+## 6. Extract records
+
+The only step that touches the database. Person cohort, HIP and PPS
+concept lists and the ESD concept list become temporary views in the
+session; every record they match is brought into R.
+
+```{r extract}
+start_time <- Sys.time()
+
+cohort_data <- extract_pregnancy_cohort(
+  connection = connection,
+  cdm_schema = cdm_schema,
+  vocabulary_schema = vocabulary_schema,
+  hip_concepts = concepts$hip_concepts,
+  pps_concepts = concepts$pps_concepts,
+  min_age = min_age,
+  max_age = max_age
+)
+
+cat(sprintf("Extraction took %.1f minutes\n",
+            as.numeric(difftime(Sys.time(), start_time, units = "mins"))))
+cat("Persons:            ", n_distinct(cohort_data$persons$person_id), "\n")
+cat("Condition records:  ", nrow(cohort_data$conditions), "\n")
+cat("Procedure records:  ", nrow(cohort_data$procedures), "\n")
+cat("Observation records:", nrow(cohort_data$observations), "\n")
+cat("Measurement records:", nrow(cohort_data$measurements), "\n")
+cat("PPS timing records: ", nrow(cohort_data$gestational_timing), "\n")
+cat("ESD timing records: ", nrow(cohort_data$esd_timing), "\n")
+```
+
+## 7. HIP: outcome-based episodes
+
+```{r hip}
+hip_episodes <- run_hip_algorithm(cohort_data, concepts$matcho_limits, concepts$matcho_outcome_limits)
+cat("HIP episodes:", nrow(hip_episodes), "\n")
+hip_episodes %>% count(outcome_category, sort = TRUE)
+```
+
+## 8. PPS: timing-based episodes
+
+```{r pps}
+pps_episodes <- run_pps_algorithm(cohort_data, concepts$pps_concepts)
+cat("PPS episodes:", nrow(pps_episodes), "\n")
+pps_episodes %>% count(outcome_category, sort = TRUE)
+```
+
+## 9. Merge
+
+```{r merge}
+merged_episodes <- merge_pregnancy_episodes(hip_episodes, pps_episodes)
+cat("Merged episodes:", nrow(merged_episodes), "\n")
+merged_episodes %>% count(algorithm_used, sort = TRUE)
+```
+
+## 10. Estimated start dates and quality flags
+
+```{r esd}
+final_episodes <- calculate_estimated_start_dates(merged_episodes, cohort_data, concepts$pps_concepts)
+final_episodes <- add_episode_quality_metadata(final_episodes, concepts$matcho_limits)
+
+cat("Episodes:", nrow(final_episodes), "for", n_distinct(final_episodes$person_id), "persons\n")
+final_episodes %>% count(outcome_category, sort = TRUE)
+final_episodes %>% count(precision_category, sort = TRUE)
+final_episodes %>% count(term_duration_flag, outcome_concordance_score)
+```
+
+## 11. Save
+
+CSV, RDS and a summary go to the output folder. When a results schema is
+set, the `pregnancy_episodes` table there is replaced.
+
+```{r save}
+save_results(
+  episodes = final_episodes,
+  output_folder = output_folder,
+  connection = connection,
+  results_schema = results_schema,
+  start_time = start_time
+)
+list.files(output_folder)
+cat(sprintf("Total runtime %.1f minutes\n",
+            as.numeric(difftime(Sys.time(), start_time, units = "mins"))))
+```
+
+## 12. A look at the output
+
+```{r inspect}
+final_episodes %>%
+  select(person_id, episode_number, outcome_category, episode_start_date, episode_end_date,
+         gestational_age_days, precision_category, algorithm_used) %>%
+  head(20)
+```
+
+The evaluation against the obstetric registry is a separate document,
+`Evaluation/validation_report.qmd`, run with `gt_source: edw_databricks`.
