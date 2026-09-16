@@ -123,9 +123,19 @@ create_merged_episode_set <- function(hip_episodes, pps_episodes) {
 
 #' Resolve duplicates iteratively (All of Us aligned)
 #'
-#' Implements exact All of Us final_merged_episodes_no_duplicates() logic:
+#' Implements the All of Us final_merged_episodes_no_duplicates() logic:
 #' - Iteratively select best match for duplicated episodes
-#' - Priority: closest end dates -> valid episode length -> has outcome
+#' - Priority: closest end dates -> has outcome and plausible length
+#'   -> longest PPS episode among remaining ties
+#'
+#' Two deliberate differences from the reference R code, both matching the
+#' Jones et al. (N3C) original and the reference's own comments:
+#' - Ties on date_diff are broken by the PPS episode LENGTH (N3C
+#'   longest_algo2). The reference R code assigns date_diff to
+#'   new_date_diff instead, a transcription slip that makes its tie-break a
+#'   no-op.
+#' - Rows still duplicated after the rounds are kept, as N3C keeps them;
+#'   the reference R code drops whatever remains after its fifth round.
 #' @noRd
 resolve_duplicates_iteratively <- function(all_episodes) {
 
