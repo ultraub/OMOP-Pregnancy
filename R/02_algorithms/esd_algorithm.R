@@ -261,7 +261,7 @@ get_timing_concepts <- function(episodes, cohort_data, pps_concepts) {
         ifelse(!is.na(value_as_string) & grepl("[0-9]", value_as_string),
                sub(".*?([0-9]+(\\.[0-9]+)?).*", "\\1", value_as_string), NA)
       )),
-      domain_value = coalesce(value_from_name, as.numeric(value_as_number), value_from_string),
+      domain_value = dplyr::coalesce(value_from_name, as.numeric(value_as_number), value_from_string),
       domain_value = as.integer(domain_value),
       # Jones et al. (N3C) rule: a "Gestation period, N weeks" name, or a
       # numeric value on the gestational age concepts within (0, 44). The
