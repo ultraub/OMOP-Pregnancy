@@ -700,6 +700,34 @@ extract_gestational_timing <- function(
         FROM @cdm_schema.observation o
         WHERE o.person_id IN (@person_ids)
           AND o.observation_concept_id IN (@concept_ids)
+
+        UNION ALL
+
+        -- Measurements (25 of the 76 PPS concepts are LOINC labs)
+        SELECT
+          m.person_id,
+          m.measurement_concept_id AS concept_id,
+          m.measurement_date AS event_date,
+          'Measurement' AS domain_name,
+          m.value_as_number,
+          NULL AS value_as_string
+        FROM @cdm_schema.measurement m
+        WHERE m.person_id IN (@person_ids)
+          AND m.measurement_concept_id IN (@concept_ids)
+
+        UNION ALL
+
+        -- Visit occurrence (reference reads five tables)
+        SELECT
+          vo.person_id,
+          vo.visit_concept_id AS concept_id,
+          vo.visit_start_date AS event_date,
+          'Visit' AS domain_name,
+          NULL AS value_as_number,
+          NULL AS value_as_string
+        FROM @cdm_schema.visit_occurrence vo
+        WHERE vo.person_id IN (@person_ids)
+          AND vo.visit_concept_id IN (@concept_ids)
       ) all_gestational
       ",
       cdm_schema = cdm_schema,
