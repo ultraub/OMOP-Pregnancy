@@ -7,10 +7,12 @@
 #     OMOP_REPO_PATH    = "/Workspace/Repos/<user>/OMOP-Pregnancy",
 #     CDM_SCHEMA        = "omop.data",
 #     VOCABULARY_SCHEMA = "omop.vocabulary",
-#     RESULTS_SCHEMA    = "my_project.results",        # optional
-#     OUTPUT_FOLDER     = "/Volumes/my_catalog/my_schema/my_volume/pregnancy"  # optional
+#     RESULTS_SCHEMA    = "my_project.results"         # optional
 #   )
 #   source(file.path(Sys.getenv("OMOP_REPO_PATH"), "inst/scripts/run_in_databricks.R"))
+#
+# Output files go to <repo>/output by default (the folder is git-ignored);
+# set OUTPUT_FOLDER to write somewhere else, e.g. a Unity Catalog volume.
 #
 # Packages needed on the cluster: sparklyr, DBI, SqlRender (needs rJava; the
 # Databricks Runtime provides Java), dplyr, lubridate, readr.
@@ -34,13 +36,14 @@ source("R/main.R")
 cdm_schema        <- Sys.getenv("CDM_SCHEMA")
 vocabulary_schema <- Sys.getenv("VOCABULARY_SCHEMA", unset = cdm_schema)
 results_schema    <- Sys.getenv("RESULTS_SCHEMA", unset = "")
-output_folder     <- Sys.getenv("OUTPUT_FOLDER", unset = "")
+output_folder     <- Sys.getenv("OUTPUT_FOLDER", unset = file.path(repo_path, "output"))
 min_age           <- as.numeric(Sys.getenv("MIN_AGE", unset = "15"))
 max_age           <- as.numeric(Sys.getenv("MAX_AGE", unset = "56"))
 
 if (cdm_schema == "") stop("Set CDM_SCHEMA to the catalog.schema of the CDM tables, e.g. omop.data")
 if (results_schema == "") results_schema <- NULL
 if (output_folder == "") output_folder <- NULL
+if (!is.null(output_folder) && !dir.exists(output_folder)) dir.create(output_folder, recursive = TRUE)
 
 connection <- create_spark_connection(
   cdm_schema = cdm_schema,

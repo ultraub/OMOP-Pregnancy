@@ -127,11 +127,13 @@ Sys.setenv(
   OMOP_REPO_PATH    = "/Workspace/Repos/<user>/OMOP-Pregnancy",
   CDM_SCHEMA        = "omop.data",
   VOCABULARY_SCHEMA = "omop.vocabulary",
-  RESULTS_SCHEMA    = "my_project.results",   # optional
-  OUTPUT_FOLDER     = "/Volumes/my_catalog/my_schema/my_volume/pregnancy"  # optional
+  RESULTS_SCHEMA    = "my_project.results"    # optional
 )
 source(file.path(Sys.getenv("OMOP_REPO_PATH"), "inst/scripts/run_in_databricks.R"))
 ```
+
+Output files are written to `output/` inside the repository folder (which is
+git-ignored); set `OUTPUT_FOLDER` to write elsewhere.
 
 Or build the connection yourself with `create_spark_connection()` and call
 `run_pregnancy_identification()`. Temporary views live in the notebook's
