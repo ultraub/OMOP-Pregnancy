@@ -199,15 +199,3 @@ validate_data_structure <- function(data, required_columns) {
   
   return(TRUE)
 }
-
-#' Coalesce helper function
-#'
-#' Returns first non-NA value, with a default
-#'
-#' @param x Vector
-#' @param default Default value if all NA
-#' @return Vector with NAs replaced by default
-#' @noRd
-coalesce <- function(x, default) {
-  ifelse(is.na(x), default, x)
-}

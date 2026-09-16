@@ -138,7 +138,11 @@ git-ignored); set `OUTPUT_FOLDER` to write elsewhere.
 Or build the connection yourself with `create_spark_connection()` and call
 `run_pregnancy_identification()`. Temporary views live in the notebook's
 session and the results table is written with `CREATE TABLE AS SELECT`.
-SqlRender needs rJava; the Databricks Runtime provides Java.
+
+SqlRender needs rJava. On some Databricks Runtimes rJava does not build
+until R's Java configuration is refreshed and `libtirpc-dev` is present;
+`init_rjava.sh` at the repository root does both and can be attached to the
+cluster as an init script.
 
 A step-by-step walkthrough, from package installation to saved output with
 the counts at each stage, is in `Databricks/run_pipeline.qmd`. The same
