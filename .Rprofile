@@ -1,41 +1,29 @@
 # OMOP Pregnancy Project R Profile
 # This file is loaded automatically when R starts in this project directory
 
-# JVM Configuration for Databricks Arrow Support
-# These settings must be configured before any Java-using packages are loaded
-# Only uncomment if you need Arrow optimization AND have proper Databricks JDBC drivers
-options(java.parameters = c(
-  "-Xmx8g",                                          # Increased heap for 466K+ rows
-  "-XX:MaxDirectMemorySize=4g",                      # More direct memory for Arrow
-  "--add-opens=java.base/java.nio=ALL-UNNAMED",      # Critical: Allow Arrow nio access
-  "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",    # Java 17 module access
-  "-Dio.netty.tryReflectionSetAccessible=true",      # Netty reflection for Arrow
-  "-Dio.netty.allocator.type=unpooled"              # Avoid pooled memory issues
-))
+# JVM configuration (must be set before any Java-using package loads)
+#
+# Default: a 4 GB heap, no Arrow. This is enough for standard JDBC use on
+# every supported platform and matches ENABLE_ARROW=FALSE in .env.
+options(java.parameters = c("-Xmx4g"))
 
-# Default JVM settings (without Arrow)
-# Uncomment this block for standard Databricks connection without Arrow
-#options(java.parameters = c(
-#  "-Xmx4g"  # 4GB heap is usually sufficient without Arrow
-#))
+# Optional: Databricks Arrow transfer. Requires the full Databricks JDBC
+# driver with its Arrow dependencies, ENABLE_ARROW=TRUE in .env, and enough
+# memory. To use it, comment out the line above and uncomment this block.
+# options(java.parameters = c(
+#   "-Xmx8g",
+#   "-XX:MaxDirectMemorySize=4g",
+#   "--add-opens=java.base/java.nio=ALL-UNNAMED",
+#   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+#   "-Dio.netty.tryReflectionSetAccessible=true",
+#   "-Dio.netty.allocator.type=unpooled"
+# ))
 
-# Package load messages
 message("========================================")
 message("OMOP Pregnancy Project")
 message("========================================")
-# Check which JVM config is active
-if (!exists(".jvm_heap_size")) {
-  # Check if Arrow config is uncommented (line 7 not commented)
-  .jvm_heap_size <- "8GB (Arrow-optimized)"
-  # This is a simplification - in practice the active config is on lines 7-14
-}
-message("JVM heap size: 8GB (Arrow-optimized)")
-message("Arrow optimization: Configured in JVM settings")
-message("To disable Arrow: ")
-message("  1. Comment out lines 7-14 (Arrow JVM settings)")
-message("  2. Uncomment lines 18-20 (Standard JVM settings)")
-message("  3. Set ENABLE_ARROW=FALSE in .env")
-message("  4. Restart R session")
+message("JVM options: ", paste(getOption("java.parameters"), collapse = " "))
+message("(edit .Rprofile to switch between the standard and Arrow JVM settings)")
 message("========================================\n")
 
 # Load .env file automatically if it exists

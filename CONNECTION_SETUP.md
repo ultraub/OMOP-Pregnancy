@@ -14,12 +14,12 @@ This guide explains how to configure database connections for the OMOP Pregnancy
    # Copy the unified template to your project root
    cp inst/templates/.env.template .env
    
-   # Note: Specialized templates are also available for reference:
+   # The unified template covers every platform. Platform-specific templates
+   # with more commentary are alongside it:
    # - .env.sqlserver.template
    # - .env.sqlserver_windows.template
    # - .env.sqlserver_crossdb.template
    # - .env.databricks.template
-   # The unified .env.template includes all options from these specialized templates
    ```
 
 3. **Edit .env file with your settings**

@@ -44,7 +44,8 @@ run_pregnancy_identification <- function(
   results_database_schema = NULL,
   output_folder = NULL,
   min_age = 15,
-  max_age = 56
+  max_age = 56,
+  vocabulary_database_schema = NULL
 ) {
   
   # Start timer
@@ -75,7 +76,8 @@ run_pregnancy_identification <- function(
     hip_concepts = concepts$hip_concepts,
     pps_concepts = concepts$pps_concepts,
     min_age = min_age,
-    max_age = max_age
+    max_age = max_age,
+    vocabulary_schema = vocabulary_database_schema
   )
   
   message(sprintf("  - Extracted data for %d persons", 
@@ -112,13 +114,18 @@ run_pregnancy_identification <- function(
   )
   message(sprintf("  - Final episode count: %d", nrow(final_episodes)))
   
-  # Step 6: Add estimated start dates
-  message("\nStep 6: Calculating estimated start dates...")
-  final_episodes <- calculate_episode_dates(
+  # Step 6: Estimated start dates (ESD) and quality metadata
+  message("\nStep 6: Calculating estimated start dates (ESD)...")
+  final_episodes <- calculate_estimated_start_dates(
     episodes = final_episodes,
-    gestational_data = cohort_data$gestational_timing
+    cohort_data = cohort_data,
+    pps_concepts = concepts$pps_concepts
   )
-  
+  final_episodes <- add_episode_quality_metadata(
+    episodes = final_episodes,
+    matcho_limits = concepts$matcho_limits
+  )
+
   # Print summary statistics
   print_summary_statistics(final_episodes)
   
@@ -129,7 +136,8 @@ run_pregnancy_identification <- function(
       episodes = final_episodes,
       output_folder = output_folder,
       connection = connection,
-      results_schema = results_database_schema
+      results_schema = results_database_schema,
+      start_time = start_time
     )
   }
   

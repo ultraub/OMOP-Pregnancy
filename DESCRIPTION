@@ -4,7 +4,7 @@ Title: Database-Agnostic Pregnancy Episode Identification in OMOP CDM
 Version: 2.0.0
 Date: 2025-08-18
 Authors@R: c(
-    person("Robert", "Barrett", email = "maintainer@example.com", role = c("aut", "cre")),
+    person("Robert", "Barrett", email = "r.barrett1501@gmail.com", role = c("aut", "cre")),
     person("Louisa H", "Smith", role = "ctb", comment = "All of Us implementation"),
     person("Sara E", "Jones", role = "ctb", comment = "Original HIPPS algorithm")
     )

@@ -15,20 +15,27 @@ save_pregnancy_results <- function(
   connection = NULL,
   results_schema = NULL,
   output_folder = NULL,
-  save_to_database = FALSE
+  save_to_database = FALSE,
+  start_time = NULL
 ) {
-  
+
   if (is.null(episodes) || nrow(episodes) == 0) {
     warning("No episodes to save")
     return(FALSE)
   }
-  
+
+  runtime_seconds <- if (!is.null(start_time)) {
+    as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+  } else {
+    NA_real_
+  }
+
   # Add metadata
   episodes_with_meta <- episodes %>%
     mutate(
       analysis_date = Sys.Date(),
       analysis_version = "2.0.0",
-      runtime_seconds = as.numeric(Sys.time() - get("start_time", envir = .GlobalEnv))
+      runtime_seconds = runtime_seconds
     )
   
   if (save_to_database && !is.null(connection) && !is.null(results_schema)) {
@@ -47,36 +54,16 @@ save_pregnancy_results <- function(
 save_to_database_tables <- function(episodes, connection, results_schema) {
   
   message("Saving results to database...")
-  
-  # Create results table if it doesn't exist
-  create_sql <- SqlRender::render("
-    IF NOT EXISTS (
-      SELECT * FROM INFORMATION_SCHEMA.TABLES 
-      WHERE TABLE_SCHEMA = '@results_schema' 
-      AND TABLE_NAME = 'pregnancy_episodes'
-    )
-    CREATE TABLE @results_schema.pregnancy_episodes (
-      person_id BIGINT,
-      episode_number INT,
-      episode_start_date DATE,
-      episode_end_date DATE,
-      outcome_category VARCHAR(20),
-      gestational_age_days INT,
-      algorithm_used VARCHAR(20),
-      analysis_date DATE,
-      analysis_version VARCHAR(20)
-    );
-  ", results_schema = results_schema)
-  
-  DatabaseConnector::executeSql(connection, create_sql)
-  
-  # Insert episodes
+
+  # Create the table from the data so the schema always matches the output
+  # (recorded/inferred dates, algorithm flags, precision and quality flags).
   DatabaseConnector::insertTable(
     connection = connection,
-    tableName = paste(results_schema, "pregnancy_episodes", sep = "."),
-    data = episodes,
-    dropTableIfExists = FALSE,
-    createTable = FALSE,
+    databaseSchema = results_schema,
+    tableName = "pregnancy_episodes",
+    data = as.data.frame(episodes),
+    dropTableIfExists = TRUE,
+    createTable = TRUE,
     tempTable = FALSE,
     progressBar = TRUE
   )
@@ -168,7 +155,7 @@ create_episode_summary <- function(episodes) {
   # Temporal distribution
   temporal_summary <- episodes %>%
     mutate(
-      year = year(episode_end_date)
+      year = lubridate::year(episode_end_date)
     ) %>%
     group_by(year) %>%
     summarise(
