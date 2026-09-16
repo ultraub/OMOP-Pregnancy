@@ -395,7 +395,7 @@ calculate_episode_esd <- function(episode_data) {
                        "range_start", "range_end", "event_date", "concept_id",
                        "concept_name", "category", "gest_value",
                        "value_as_number", "value_as_string",
-                       "min_month", "max_month",
+                       "min_month", "max_month", "GT_type", "domain_name",
                        "person_id", "episode_number"))) %>%  # Remove grouping columns since .keep = TRUE
       mutate(
         inferred_episode_start = as.Date(NA),
@@ -446,7 +446,7 @@ calculate_episode_esd <- function(episode_data) {
                      "range_start", "range_end", "event_date", "concept_id",
                      "concept_name", "category", "gest_value",
                      "value_as_number", "value_as_string",
-                     "min_month", "max_month",
+                     "min_month", "max_month", "GT_type", "domain_name",
                      "person_id", "episode_number"))) %>%  # Remove grouping columns since .keep = TRUE
     mutate(
       episode_start_date = as.Date(episode_start_date),
