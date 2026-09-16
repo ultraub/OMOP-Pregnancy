@@ -11,18 +11,21 @@ DAYS_PER_MONTH <- 30
 #' @param output_folder Folder for saving CSV files
 #' @param connection Database connection (optional)
 #' @param results_schema Schema for database results (optional)
+#' @param start_time POSIXct start of the run, for the runtime column (optional)
 #'
 #' @return NULL (saves files as side effect)
 #' @export
-save_results <- function(episodes, output_folder, connection = NULL, results_schema = NULL) {
-  
+save_results <- function(episodes, output_folder, connection = NULL, results_schema = NULL,
+                         start_time = NULL) {
+
   # Use the comprehensive save function
   save_pregnancy_results(
     episodes = episodes,
     connection = connection,
     results_schema = results_schema,
     output_folder = output_folder,
-    save_to_database = !is.null(connection) && !is.null(results_schema)
+    save_to_database = !is.null(connection) && !is.null(results_schema),
+    start_time = start_time
   )
   
   # Also create analysis exports

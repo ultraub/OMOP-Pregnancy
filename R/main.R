@@ -136,7 +136,8 @@ run_pregnancy_identification <- function(
       episodes = final_episodes,
       output_folder = output_folder,
       connection = connection,
-      results_schema = results_database_schema
+      results_schema = results_database_schema,
+      start_time = start_time
     )
   }
   

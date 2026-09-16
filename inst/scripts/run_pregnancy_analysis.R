@@ -2,8 +2,7 @@
 
 #' Run OMOP Pregnancy Analysis V2
 #'
-#' Main execution script that uses environment variables for configuration
-#' and includes date correction for SQL Server epoch issues.
+#' Main execution script that uses environment variables for configuration.
 
 # Load required libraries
 library(DatabaseConnector)
@@ -96,62 +95,10 @@ output_folder <- Sys.getenv("OUTPUT_FOLDER", "output")
 # Check if using Windows authentication
 use_windows_auth <- tolower(Sys.getenv("USE_WINDOWS_AUTH", "false")) %in% c("true", "1", "yes")
 
-# Function to correct epoch conversion issues in dates
-correct_epoch_dates <- function(episodes) {
-  if (nrow(episodes) == 0) return(episodes)
-  
-  # Ensure date columns are Date objects
-  episodes <- episodes %>%
-    mutate(
-      episode_start_date = as.Date(episode_start_date),
-      episode_end_date = as.Date(episode_end_date)
-    )
-  
-  # Check for epoch conversion issue
-  episodes <- episodes %>%
-    mutate(
-      calc_gest_days = as.numeric(episode_end_date - episode_start_date),
-      has_epoch_issue = (
-        # Classic pattern: start after 1970, end before 1960
-        (year(episode_start_date) > 1970 & year(episode_end_date) < 1960) |
-        # Or: negative gestational age (end before start)
-        (calc_gest_days < 0) |
-        # Or: gestational age way off (>1000 days difference)
-        (abs(calc_gest_days - gestational_age_days) > 1000)
-      )
-    )
-  
-  epoch_issue_count <- sum(episodes$has_epoch_issue, na.rm = TRUE)
-  
-  if (epoch_issue_count > 0) {
-    message(sprintf("  Detected epoch conversion issue in %d episodes, applying correction...", 
-                    epoch_issue_count))
-    
-    # Correct the episode_end_date by adding the epoch difference (70 years)
-    episodes <- episodes %>%
-      mutate(
-        episode_end_date = if_else(
-          has_epoch_issue,
-          episode_end_date + 25569,  # Add 70 years (difference between 1900 and 1970 epochs)
-          episode_end_date
-        )
-      )
-    
-    message("  Date correction applied")
-  }
-  
-  # Clean up temporary columns
-  episodes <- episodes %>%
-    select(-calc_gest_days, -has_epoch_issue)
-  
-  return(episodes)
-}
-
 # Main execution
 tryCatch({
   # Record start time
   start_time <- Sys.time()
-  assign("start_time", start_time, envir = .GlobalEnv)
   
   message("\n========================================")
   message("OMOP Pregnancy Identification V2")
@@ -292,9 +239,6 @@ tryCatch({
   
   # Step 7: Correct date issues and save results
   message("\nStep 7: Validating and saving results...")
-  
-  # Apply date correction for SQL Server epoch issues
-  final_episodes <- correct_epoch_dates(final_episodes)
   
   # Validate dates
   date_check <- final_episodes %>%
