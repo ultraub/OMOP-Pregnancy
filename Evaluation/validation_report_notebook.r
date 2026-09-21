@@ -12,7 +12,7 @@ params <- list(
   prediction_file = "latest",
   date_window_days = 30,
   min_ga_days = 140,
-  max_start_date = "2025-01-01",
+  max_start_date = "2026-01-01",
   gt_source = "edw_databricks",
   gt_scratch_database = "Obstetrics_Minhas_IRB00501137_Scratch",
   gt_projection_database = "Obstetrics_Minhas_IRB00501137_Projection",
@@ -87,9 +87,9 @@ theme_set(theme_minimal(base_size = 12))
 
 # MAGIC %md
 # MAGIC # Executive Summary
-# MAGIC 
+# MAGIC
 # MAGIC This report validates the pregnancy identification algorithm by comparing its predictions against ground truth data from the PMAP OB registry. The validation covers:
-# MAGIC 
+# MAGIC
 # MAGIC - **Episode-level matching**: Matching predicted episodes to ground truth using a ±`r params$date_window_days` day window
 # MAGIC - **Outcome classification**: Accuracy of outcome category predictions (LB, SB, ECT, AB, SA, DELIV, PREG)
 # MAGIC - **Gestational age estimation**: Comparison of predicted vs ground truth gestational age
@@ -169,8 +169,8 @@ load_algorithm_predictions <- function(file_path) {
 # Load predictions ("latest" = newest pregnancy_episodes_*.csv in ../output)
 prediction_file <- params$prediction_file
 if (identical(prediction_file, "latest")) {
-  candidates <- list.files("../output", pattern = "^pregnancy_episodes_.*\\.csv$", full.names = TRUE)
-  if (length(candidates) == 0) stop("No pregnancy_episodes_*.csv found in ../output")
+  candidates <- list.files("../output", pattern = "^pregnancy_analysis_.*\\.csv$", full.names = TRUE)
+  if (length(candidates) == 0) stop("No pregnancy_analysis_*.csv found in ../output")
   prediction_file <- candidates[which.max(file.info(candidates)$mtime)]
 }
 cat("Prediction file:", prediction_file, "\n")
@@ -1676,7 +1676,7 @@ if (nrow(ga_metrics$data) > 0) {
 
 # MAGIC %md
 # MAGIC # Bland-Altman Check
-# MAGIC 
+# MAGIC
 # MAGIC ## 1. Extract the suspicious region (manual inspection)
 
 # COMMAND ----------
@@ -1721,7 +1721,7 @@ hist(ba_data$algo_ga_days, breaks = 50)
 
 # MAGIC %md
 # MAGIC ## 3. N/A
-# MAGIC 
+# MAGIC
 # MAGIC ## 4. Check if the pattern is driven by episode type
 
 # COMMAND ----------
@@ -2133,7 +2133,7 @@ if (exists("con")) {
 
 # MAGIC %md
 # MAGIC # Pregnancy complication
-# MAGIC 
+# MAGIC
 # MAGIC ## setup
 
 # COMMAND ----------
