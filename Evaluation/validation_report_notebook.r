@@ -575,6 +575,7 @@ if (gt_source == "edw_databricks") {
   edw_episodes %>%
     count(pregnancy_outcome, gt_start_source, gt_end_source, gt_dates_inconsistent) %>%
     arrange(pregnancy_outcome, desc(n)) %>%
+    tibble::as_tibble() %>%
     print(n = 60)
   cat("\nEpisode duration (days) by outcome, from the dates as used:\n")
   edw_episodes %>%
@@ -584,6 +585,7 @@ if (gt_source == "edw_databricks") {
               median_dur = median(dur, na.rm = TRUE), pct_zero = round(100 * mean(dur == 0, na.rm = TRUE), 1),
               .groups = "drop") %>%
     arrange(desc(n)) %>%
+    tibble::as_tibble() %>%
     print(n = 20)
   
   gt_episodes <- edw_episodes %>%
