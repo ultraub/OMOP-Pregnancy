@@ -215,5 +215,63 @@ final_episodes %>%
   head(20)
 ```
 
+## 13. Diagnostic: where do pregnancy-loss outcomes go?
+The registry holds tens of thousands of SA/AB/ECT pregnancies and the CDM has the codes, but the
+final output has very few. This cell re-runs the HIP stages one at a time and counts SA, AB and ECT
+at each step so the stage that drops them is visible. Uses `cohort_data` and `hip_episodes` from above.
+
+```{r loss-trace}
+loss_cats <- c("SA", "AB", "ECT", "SB", "LB", "DELIV")
+count_by_cat <- function(df, col = "outcome_category", label) {
+  if (is.null(df) || nrow(df) == 0) { cat(sprintf("%-42s (empty)\n", label)); return(invisible(NULL)) }
+  tab <- table(factor(df[[col]], levels = loss_cats))
+  cat(sprintf("%-42s %s\n", label, paste(sprintf("%s=%d", names(tab), as.integer(tab)), collapse = "  ")))
+}
+
+all_records <- bind_rows(cohort_data$conditions, cohort_data$procedures,
+                         cohort_data$observations, cohort_data$measurements) %>%
+  filter(!is.na(event_date)) %>% arrange(person_id, event_date)
+initial_cohort <- all_records %>% filter(category %in% c("LB", "SB", "DELIV", "ECT", "AB", "SA", "PREG"))
+
+cat("Raw HIP concept records by category:\n")
+count_by_cat(initial_cohort, "category", "  records")
+cat(sprintf("%-42s %s\n", "  distinct person-days",
+            paste(sprintf("%s=%d", loss_cats, sapply(loss_cats, function(k)
+              nrow(distinct(filter(initial_cohort, category == k), person_id, event_date)))), collapse = "  ")))
+
+lim <- concepts$matcho_outcome_limits
+lb  <- process_outcome_category(initial_cohort, "LB", lim);  count_by_cat(lb,  label = "1 per-category: LB")
+sb  <- process_outcome_category(initial_cohort, "SB", lim);  count_by_cat(sb,  label = "1 per-category: SB")
+ect <- process_outcome_category(initial_cohort, "ECT", lim); count_by_cat(ect, label = "1 per-category: ECT")
+ab  <- process_outcome_category(initial_cohort, c("AB", "SA"), lim); count_by_cat(ab, label = "1 per-category: AB+SA")
+dl  <- process_outcome_category(initial_cohort, "DELIV", lim); count_by_cat(dl, label = "1 per-category: DELIV")
+
+s2 <- add_stillbirth_episodes(lb, sb, lim);   count_by_cat(s2, label = "2 after add_stillbirth")
+s3 <- add_ectopic_episodes(s2, ect, lim);     count_by_cat(s3, label = "3 after add_ectopic")
+s4 <- add_abortion_episodes(s3, ab, lim);     count_by_cat(s4, label = "4 after add_abortion")
+s5 <- add_delivery_episodes(s4, dl, lim);     count_by_cat(s5, label = "5 after add_delivery")
+
+s5 <- s5 %>% arrange(person_id, outcome_date, outcome_category) %>% group_by(person_id) %>%
+  mutate(episode_number = row_number()) %>% ungroup()
+s6 <- add_gestational_age_info(s5, all_records, concepts$matcho_limits); count_by_cat(s6, label = "6 after gestation matching")
+s7 <- calculate_hip_start_dates(s6, concepts$matcho_limits)
+s8 <- validate_hip_episodes(s7);              count_by_cat(s8, label = "7 after validation (final outcome)")
+cat("   reclassified to PREG, by original category:\n")
+print(s8 %>% filter(removed_outcome == 1) %>% count(removed_category, sort = TRUE))
+
+count_by_cat(hip_episodes, label = "HIP output (run_hip_algorithm)")
+count_by_cat(pps_episodes, label = "PPS output")
+count_by_cat(merged_episodes, "HIP_outcome_category", "merge: HIP_outcome_category")
+count_by_cat(merged_episodes, "PPS_outcome_category", "merge: PPS_outcome_category")
+count_by_cat(merged_episodes, label = "merge: final outcome_category")
+count_by_cat(final_episodes, label = "final (after ESD + metadata)")
+
+cat("\nLoss episodes in HIP output whose merged outcome changed:\n")
+merged_episodes %>%
+  filter(HIP_outcome_category %in% c("SA", "AB", "ECT"), outcome_category != HIP_outcome_category) %>%
+  count(HIP_outcome_category, PPS_outcome_category, outcome_category, algorithm_used, sort = TRUE) %>%
+  print(n = 30)
+```
+
 The evaluation against the obstetric registry is a separate document,
 `Evaluation/validation_report.qmd`, run with `gt_source: edw_databricks`.

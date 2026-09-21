@@ -550,10 +550,41 @@ if (gt_source == "edw_databricks") {
         TRUE ~ "PREG"
       ),
       gt_molar = pregnancy_outcome == "Molar",
-      gt_unresolved = pregnancy_outcome %in% c("Gravida", "Para", "*Unspecified")
+      gt_unresolved = pregnancy_outcome %in% c("Gravida", "Para", "*Unspecified"),
+      # Date quality: which fields were present, and whether the pair is usable.
+      # An end before the start makes an interval that can never overlap an
+      # algorithm episode, so keep only the end (a single-day window) and flag it.
+      gt_start_source = case_when(
+        !is.na(to_date_any(pregnancy_estimated_start_date)) ~ "estimated_start",
+        !is.na(to_date_any(episode_start_date)) ~ "episode_start",
+        TRUE ~ "none"
+      ),
+      gt_end_source = case_when(
+        !is.na(has_delivery) & has_delivery == 1 & !is.na(to_date_any(last_delivery_date)) ~ "last_delivery",
+        !is.na(to_date_any(pregnancy_estimated_end_date)) ~ "estimated_end",
+        !is.na(to_date_any(episode_end_date)) ~ "episode_end",
+        TRUE ~ "none"
+      ),
+      gt_dates_inconsistent = !is.na(gt_start) & !is.na(gt_end) & gt_end < gt_start,
+      gt_start = if_else(gt_dates_inconsistent, as.Date(NA), gt_start)
     ) %>%
     filter(!is.na(person_id), !is.na(gt_start) | !is.na(gt_end)) %>%
     filter(is.na(gt_start) | gt_start < as.Date(params$max_start_date))
+  
+  cat("\nEDW date quality by outcome (start source x end source, inconsistent = end before start):\n")
+  edw_episodes %>%
+    count(pregnancy_outcome, gt_start_source, gt_end_source, gt_dates_inconsistent) %>%
+    arrange(pregnancy_outcome, desc(n)) %>%
+    print(n = 60)
+  cat("\nEpisode duration (days) by outcome, from the dates as used:\n")
+  edw_episodes %>%
+    mutate(dur = as.numeric(gt_end - gt_start)) %>%
+    group_by(pregnancy_outcome) %>%
+    summarise(n = n(), start_missing = sum(is.na(gt_start)), inconsistent = sum(gt_dates_inconsistent),
+              median_dur = median(dur, na.rm = TRUE), pct_zero = round(100 * mean(dur == 0, na.rm = TRUE), 1),
+              .groups = "drop") %>%
+    arrange(desc(n)) %>%
+    print(n = 20)
   
   gt_episodes <- edw_episodes %>%
     group_by(person_id) %>%
@@ -561,7 +592,8 @@ if (gt_source == "edw_databricks") {
     mutate(gt_episode_num = row_number()) %>%
     ungroup() %>%
     select(person_id, cohort_id, pregnancy_key, gt_episode_num, gt_start, gt_end,
-           gt_outcome_category, gt_ga_days, pregnancy_outcome, gt_molar, gt_unresolved)
+           gt_outcome_category, gt_ga_days, pregnancy_outcome, gt_molar, gt_unresolved,
+           gt_start_source, gt_end_source, gt_dates_inconsistent)
   
   cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
   cat("Unique persons in ground truth:", n_distinct(gt_episodes$person_id), "\n")
