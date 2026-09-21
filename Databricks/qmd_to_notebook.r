@@ -11,7 +11,7 @@
 #     values replaced by `overrides`; `preamble` cells are inserted after it
 #
 # Usage (from the repository root):
-#   source("Databricks/qmd_to_notebook.R")
+#   source("Databricks/qmd_to_notebook.r")
 #   qmd_to_notebook("Evaluation/validation_report.qmd",
 #                   "Evaluation/validation_report_notebook.r",
 #                   overrides = list(connection_type = "spark"),
@@ -61,7 +61,7 @@ qmd_to_notebook <- function(qmd_path, out_path, overrides = list(), preamble = c
     txt <- sub("^\\s+$", "", txt)
     while (length(txt) && txt[1] == "") txt <- txt[-1]
     while (length(txt) && txt[length(txt)] == "") txt <- txt[-length(txt)]
-    if (length(txt)) cells[[length(cells) + 1]] <<- c("# MAGIC %md", paste("# MAGIC", txt))
+    if (length(txt)) cells[[length(cells) + 1]] <<- c("# MAGIC %md", ifelse(txt == "", "# MAGIC", paste("# MAGIC", txt)))
   }
   add_code <- function(label, code, eval_cond = NULL, disabled = FALSE) {
     while (length(code) && code[length(code)] == "") code <- code[-length(code)]
@@ -105,7 +105,7 @@ qmd_to_notebook <- function(qmd_path, out_path, overrides = list(), preamble = c
   # ---- assemble -----------------------------------------------------------
   out <- c("# Databricks notebook source",
            "# MAGIC %md", paste("# MAGIC #", title),
-           "# MAGIC", paste("# MAGIC Generated from", basename(qmd_path), "by Databricks/qmd_to_notebook.R; edit the .qmd, not this file."))
+           "# MAGIC", paste("# MAGIC Generated from", basename(qmd_path), "by Databricks/qmd_to_notebook.r; edit the .qmd, not this file."))
   sep <- c("", "# COMMAND ----------", "")
   out <- c(out, sep, params_cell)
   if (length(preamble)) out <- c(out, sep, c("# DBTITLE 1,Databricks setup", preamble))

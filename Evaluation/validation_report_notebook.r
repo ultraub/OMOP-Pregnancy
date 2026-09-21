@@ -2,7 +2,7 @@
 # MAGIC %md
 # MAGIC # Pregnancy Algorithm Validation Report
 # MAGIC
-# MAGIC Generated from validation_report.qmd by Databricks/qmd_to_notebook.R; edit the .qmd, not this file.
+# MAGIC Generated from validation_report.qmd by Databricks/qmd_to_notebook.r; edit the .qmd, not this file.
 
 # COMMAND ----------
 
@@ -169,8 +169,8 @@ load_algorithm_predictions <- function(file_path) {
 # Load predictions ("latest" = newest pregnancy_episodes_*.csv in ../output)
 prediction_file <- params$prediction_file
 if (identical(prediction_file, "latest")) {
-  candidates <- list.files("../output", pattern = "^pregnancy_analysis_.*\\.csv$", full.names = TRUE)
-  if (length(candidates) == 0) stop("No pregnancy_analysis_*.csv found in ../output")
+  candidates <- list.files("../output", pattern = "^pregnancy_(episodes|analysis)_.*\\.csv$", full.names = TRUE)
+  if (length(candidates) == 0) stop("No pregnancy_episodes_*.csv or pregnancy_analysis_*.csv found in ../output")
   prediction_file <- candidates[which.max(file.info(candidates)$mtime)]
 }
 cat("Prediction file:", prediction_file, "\n")

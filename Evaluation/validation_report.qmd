@@ -21,7 +21,7 @@ params:
   # "spark" (the Databricks notebook's Spark session; CDM = omop_database.omop_schema)
   connection_type: "jdbc"
   # Pipeline output to evaluate (path relative to this file), or "latest" for
-  # the newest pregnancy_episodes_*.csv in ../output
+  # the newest pregnancy_episodes_*.csv / pregnancy_analysis_*.csv in ../output
   prediction_file: "../output/pregnancy_episodes_2026-03-08.csv"
   # Episode matching window (days) around ground-truth end dates
   date_window_days: 30
@@ -171,8 +171,8 @@ load_algorithm_predictions <- function(file_path) {
 # Load predictions ("latest" = newest pregnancy_episodes_*.csv in ../output)
 prediction_file <- params$prediction_file
 if (identical(prediction_file, "latest")) {
-  candidates <- list.files("../output", pattern = "^pregnancy_episodes_.*\\.csv$", full.names = TRUE)
-  if (length(candidates) == 0) stop("No pregnancy_episodes_*.csv found in ../output")
+  candidates <- list.files("../output", pattern = "^pregnancy_(episodes|analysis)_.*\\.csv$", full.names = TRUE)
+  if (length(candidates) == 0) stop("No pregnancy_episodes_*.csv or pregnancy_analysis_*.csv found in ../output")
   prediction_file <- candidates[which.max(file.info(candidates)$mtime)]
 }
 cat("Prediction file:", prediction_file, "\n")

@@ -1,6 +1,6 @@
 # Regenerate Evaluation/validation_report_notebook.r from the .qmd
 # Run from the repository root:  Rscript Databricks/build_evaluation_notebook.R
-source("Databricks/qmd_to_notebook.R")
+source("Databricks/qmd_to_notebook.r")
 
 repo_path <- "/Workspace/Users/rbarre16@jh.edu/OMOP-Pregnancy"
 
@@ -9,6 +9,7 @@ qmd_to_notebook(
   out_path = "Evaluation/validation_report_notebook.r",
   overrides = list(
     connection_type = "spark",
+    max_start_date  = "2026-01-01",
     gt_source       = "edw_databricks",
     prediction_file = "latest",
     edw_catalog     = "obstetrics_irb00501137",
