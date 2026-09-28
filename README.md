@@ -218,6 +218,7 @@ R/
 inst/
   extdata/          concept lists and Matcho tables
   scripts/          run script, Databricks entry script, connection setup and diagnostics
+tests/              offline regression tests (Rscript tests/run_all.R)
   templates/        .env templates
   sql/              a standalone person query
 Databricks/
@@ -283,8 +284,11 @@ plain data frames there instead of formatted HTML.
 
 ## Testing
 
-There is no automated test suite yet. `inst/scripts/test_connection.R`
-checks the database connection and `inst/scripts/test_full_pipeline.R` runs
+`Rscript tests/run_all.R` runs an offline regression suite (no database
+needed) covering the HIP hierarchy and gestation matching, PPS and the
+merge including duplicate resolution, the ESD evidence and start-date
+rules, and the Spark backend's generated SQL. `inst/scripts/test_connection.R`
+checks a database connection and `inst/scripts/test_full_pipeline.R` runs
 the pipeline end to end against the configured database. The evaluation
 report above is the accuracy check.
 
