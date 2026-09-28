@@ -566,6 +566,10 @@ if (gt_source == "edw_databricks") {
       ),
       gt_dates_inconsistent = gt_end_source == "inconsistent" & !is.na(gt_end),
       gt_start = if_else(gt_dates_inconsistent, as.Date(NA), gt_start),
+      gt_start_source = if_else(gt_dates_inconsistent, "none", gt_start_source),
+      # The start as the registry gives it (NA when it has none); kept for the
+      # strict sensitivity analysis where such episodes are one-day windows
+      gt_start_strict = gt_start,
       gt_zero_length = !is.na(gt_start) & !is.na(gt_end) & gt_end == gt_start,
       source_name = as.character(source_name),
       # --- Gestational age: pregnancy-level value, else the birth-level maximum
@@ -590,6 +594,32 @@ if (gt_source == "edw_databricks") {
     filter(!is.na(person_id), !is.na(gt_start) | !is.na(gt_end)) %>%
     filter(is.na(gt_start) | gt_start < as.Date(params$max_start_date))
   
+  # --- Impute a start where the registry has none (evaluation-side only) ---
+  # For 40-55% of registry losses the Epic episode was opened after the
+  # pregnancy ended, so the only reliable date is the end. Give those
+  # episodes a start of end minus the typical duration for that outcome,
+  # measured from the registry's own fully-dated rows (fallback: the
+  # category's Matcho maximum term). The source is recorded and match rates
+  # are reported by start source, with the strict one-day-window result as a
+  # sensitivity analysis. This does not touch the algorithm or its output.
+  typical_duration <- edw_episodes %>%
+    filter(gt_start_source %in% c("estimated_start", "edd_minus_280"), !is.na(gt_start), !is.na(gt_end)) %>%
+    mutate(dur = as.numeric(gt_end - gt_start)) %>%
+    filter(dur > 0) %>%
+    group_by(pregnancy_outcome) %>%
+    summarise(typical_days = median(dur), n_dated = n(), .groups = "drop")
+  matcho_fallback <- c(LB = 301, SB = 301, DELIV = 301, ECT = 84, AB = 168, SA = 139, PREG = 301)
+  edw_episodes <- edw_episodes %>%
+    left_join(typical_duration, by = "pregnancy_outcome") %>%
+    mutate(
+      typical_days = coalesce(typical_days, unname(matcho_fallback[gt_outcome_category])),
+      gt_start_source = if_else(is.na(gt_start) & !is.na(gt_end), "imputed_from_end", gt_start_source),
+      gt_start = if_else(is.na(gt_start) & !is.na(gt_end), gt_end - typical_days, gt_start)
+    ) %>%
+    select(-typical_days, -n_dated)
+  cat("\nTypical registry duration used for imputed starts (median of fully dated rows):\n")
+  print(tibble::as_tibble(typical_duration), n = 20)
+  
   cat("\nEDW date quality by outcome (start source x end source, inconsistent = end before start):\n")
   edw_episodes %>%
     count(pregnancy_outcome, source_name, gt_start_source, gt_end_source, gt_dates_inconsistent, gt_zero_length) %>%
@@ -600,8 +630,9 @@ if (gt_source == "edw_databricks") {
   edw_episodes %>%
     mutate(dur = as.numeric(gt_end - gt_start)) %>%
     group_by(pregnancy_outcome) %>%
-    summarise(n = n(), start_missing = sum(is.na(gt_start)), inconsistent = sum(gt_dates_inconsistent),
-              zero_length = sum(gt_zero_length),
+    summarise(n = n(), start_estimated = sum(gt_start_source %in% c("estimated_start", "edd_minus_280")),
+              start_episode = sum(gt_start_source == "episode_start"), start_imputed = sum(gt_start_source == "imputed_from_end"),
+              inconsistent = sum(gt_dates_inconsistent), zero_length = sum(gt_zero_length),
               median_dur = median(dur, na.rm = TRUE), pct_zero = round(100 * mean(dur == 0, na.rm = TRUE), 1),
               .groups = "drop") %>%
     arrange(desc(n)) %>%
@@ -615,7 +646,7 @@ if (gt_source == "edw_databricks") {
     ungroup() %>%
     select(person_id, cohort_id, pregnancy_key, gt_episode_num, gt_start, gt_end,
            gt_outcome_category, gt_ga_days, pregnancy_outcome, gt_molar, gt_unresolved,
-           gt_start_source, gt_end_source, gt_dates_inconsistent, gt_zero_length,
+           gt_start_source, gt_start_strict, gt_end_source, gt_dates_inconsistent, gt_zero_length,
            source_name, number_of_fetuses, pregnancy_start_age)
   
   cat("Derived outcomes for", nrow(gt_episodes), "ground truth episodes\n")
@@ -687,11 +718,13 @@ prepare_validation_inputs <- function(algo_episodes,
       gt_start,
       gt_end,
       gt_outcome_category,
-      gt_ga_days
+      gt_ga_days,
+      dplyr::any_of("gt_start_source")
     ) %>%
     dplyr::rename(
       gt_outcome = gt_outcome_category
     ) %>%
+    dplyr::mutate(gt_start_source = if ("gt_start_source" %in% names(.)) gt_start_source else "registry") %>%
     dplyr::mutate(
       gt_start = as.Date(gt_start),
       gt_end   = as.Date(gt_end),
@@ -1043,12 +1076,58 @@ cat("- All-GT match rate:",
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Matching by registry start source
+# MAGIC
+# MAGIC The registry does not record a start for many pregnancies, mostly losses.
+# MAGIC Those episodes were given an imputed start (see the ground-truth cell).
+# MAGIC Match rates are shown by how the registry start was obtained, and the
+# MAGIC strict alternative, where such episodes are one-day windows at their end
+# MAGIC date, is reported as a sensitivity analysis.
+
+# COMMAND ----------
+
+# DBTITLE 1,matching-by-start-source
+gt_prim <- match_results$gt_primary %>%
+  dplyr::mutate(gt_key = paste(person_id, gt_episode_num, sep = "::"),
+                matched = gt_key %in% paste(matched_episodes$person_id, matched_episodes$gt_episode_num, sep = "::"))
+
+cat("GT match rate by start source (primary overlap, eligible GT):\n")
+gt_prim %>%
+  dplyr::count(gt_start_source, matched) %>%
+  tidyr::pivot_wider(names_from = matched, values_from = n, values_fill = 0, names_prefix = "matched_") %>%
+  dplyr::mutate(total = matched_TRUE + matched_FALSE, match_rate_pct = round(100 * matched_TRUE / total, 1)) %>%
+  dplyr::select(gt_start_source, total, matched = matched_TRUE, match_rate_pct) %>%
+  knitr::kable() %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+cat("\nGT match rate by outcome and start source:\n")
+gt_prim %>%
+  dplyr::group_by(gt_outcome, gt_start_source) %>%
+  dplyr::summarise(total = dplyr::n(), matched = sum(matched), match_rate_pct = round(100 * mean(matched), 1), .groups = "drop") %>%
+  dplyr::arrange(gt_outcome, dplyr::desc(total)) %>%
+  knitr::kable() %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+# Strict sensitivity: registry episodes without a start are one-day windows
+strict_row <- NULL
+if ("gt_start_strict" %in% names(gt_episodes)) {
+  gt_strict <- gt_episodes %>% dplyr::mutate(gt_start = gt_start_strict)
+  strict_results <- run_matching_analyses(algo_episodes = algo_predictions, gt_episodes = gt_strict, historical_buffer_days = 30)
+  st <- strict_results$primary_overlap$stats
+  strict_row <- tibble::tibble(
+    matching_rule = "Sensitivity: any episode overlap, registry starts not imputed (one-day windows)",
+    matched_episodes = st$matched, algorithm_match_rate = st$match_rate_algo, ground_truth_match_rate = st$match_rate_gt)
+  cat(sprintf("\nStrict (no imputed starts): matched %d, algorithm %.1f%%, GT %.1f%%\n",
+              st$matched, 100 * st$match_rate_algo, 100 * st$match_rate_gt))
+}
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Matching summary table
 
 # COMMAND ----------
 
 # DBTITLE 1,historical-gt-summary-table
-match_results$summary_table %>%
+dplyr::bind_rows(match_results$summary_table, strict_row) %>%
   dplyr::mutate(
     algorithm_match_rate = round(100 * algorithm_match_rate, 1),
     ground_truth_match_rate = round(100 * ground_truth_match_rate, 1)
