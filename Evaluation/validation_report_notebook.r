@@ -1106,6 +1106,22 @@ gt_prim %>%
   dplyr::arrange(gt_outcome, dplyr::desc(total)) %>%
   knitr::kable() %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 
+cat("\nAlgorithm match rate by algorithm outcome (primary overlap):\n")
+algo_prim <- match_results$algo %>%
+  dplyr::mutate(algo_key = paste(person_id, algo_episode_num, sep = "::"),
+                matched = algo_key %in% paste(matched_episodes$person_id, matched_episodes$algo_episode_num, sep = "::"))
+algo_prim %>%
+  dplyr::group_by(algo_outcome) %>%
+  dplyr::summarise(total = dplyr::n(), matched = sum(matched), match_rate_pct = round(100 * mean(matched), 1), .groups = "drop") %>%
+  dplyr::arrange(dplyr::desc(total)) %>%
+  knitr::kable() %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
+cat("\nMatched pairs: registry outcome (rows) x algorithm outcome (columns):\n")
+matched_episodes %>%
+  dplyr::count(gt_outcome, algo_outcome) %>%
+  tidyr::pivot_wider(names_from = algo_outcome, values_from = n, values_fill = 0) %>%
+  knitr::kable() %>% kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+
 # Strict sensitivity: registry episodes without a start are one-day windows
 strict_row <- NULL
 if ("gt_start_strict" %in% names(gt_episodes)) {
