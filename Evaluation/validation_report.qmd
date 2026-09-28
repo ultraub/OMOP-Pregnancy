@@ -25,8 +25,10 @@ params:
   prediction_file: "../output/pregnancy_episodes_2026-03-08.csv"
   # Episode matching window (days) around ground-truth end dates
   date_window_days: 30
-  # Prediction filters: deliveries only (>= 20 weeks) and starts before this date
-  min_ga_days: 140
+  # Prediction filters. min_ga_days = 0 keeps every algorithm episode; setting it
+  # to 140 restricts the evaluation to deliveries (>= 20 weeks) and removes
+  # nearly all losses from the algorithm side, so registry SA/AB/ECT cannot match.
+  min_ga_days: 0
   max_start_date: "2025-01-01"
   # Ground-truth source: "pmap_sqlserver" (PMAP OB registry tables on the SQL
   # Server instance) or "edw_databricks" (EDW pregnancy/birth fact tables on

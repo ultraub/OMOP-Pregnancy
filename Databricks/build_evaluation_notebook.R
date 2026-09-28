@@ -10,6 +10,7 @@ qmd_to_notebook(
   overrides = list(
     connection_type = "spark",
     max_start_date  = "2026-01-01",
+    min_ga_days     = 0,
     gt_source       = "edw_databricks",
     prediction_file = "latest",
     edw_catalog     = "obstetrics_irb00501137",

@@ -11,7 +11,7 @@ params <- list(
   connection_type = "spark",
   prediction_file = "latest",
   date_window_days = 30,
-  min_ga_days = 140,
+  min_ga_days = 0,
   max_start_date = "2026-01-01",
   gt_source = "edw_databricks",
   gt_scratch_database = "Obstetrics_Minhas_IRB00501137_Scratch",

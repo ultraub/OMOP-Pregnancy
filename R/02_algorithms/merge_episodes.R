@@ -136,23 +136,39 @@ create_merged_episode_set <- function(hip_episodes, pps_episodes) {
 #'   no-op.
 #' - Rows still duplicated after the rounds are kept, as N3C keeps them;
 #'   the reference R code drops whatever remains after its fifth round.
+#' - An episode that loses a resolution survives as a single-algorithm row
+#'   (N3C blanks the other side); the reference R code drops the row, which
+#'   silently removed HIP loss episodes whose PPS partner preferred another
+#'   HIP episode.
 #' @noRd
 resolve_duplicates_iteratively <- function(all_episodes) {
 
+  algo1_cols <- c("algo1_id", "pregnancy_start", "pregnancy_end", "first_gest_date", "category")
+  algo2_cols <- c("algo2_id", "episode_min_date", "episode_max_date",
+                  "episode_max_date_plus_two_months", "algo2_category", "algo2_outcome_date")
+  blank_cols <- function(df, cols) {
+    for (col in intersect(cols, names(df))) df[[col]] <- df[[col]][NA_integer_]
+    df
+  }
+  flag_dups <- function(df) {
+    df %>%
+      group_by(algo1_id) %>%
+      mutate(algo1_dup = if_else(is.na(algo1_id)[1], NA_integer_, as.integer(n() > 1))) %>%
+      ungroup() %>%
+      group_by(algo2_id) %>%
+      mutate(algo2_dup = if_else(is.na(algo2_id)[1], NA_integer_, as.integer(n() > 1))) %>%
+      ungroup()
+  }
+  is_dup_row <- function(df) {
+    (coalesce(df$algo1_dup, 0L) == 1L & !is.na(df$algo2_id)) |
+      (coalesce(df$algo2_dup, 0L) == 1L & !is.na(df$algo1_id))
+  }
+
   # Separate non-duplicated episodes
-  no_dup_df <- all_episodes %>%
-    filter(
-      (algo1_dup == 0 & algo2_dup == 0) |
-      (algo1_dup == 0 & is.na(algo2_dup)) |
-      (is.na(algo1_dup) & algo2_dup == 0)
-    )
+  no_dup_df <- all_episodes[!is_dup_row(all_episodes), , drop = FALSE]
 
   # Get episodes needing deduplication
-  dup_df <- all_episodes %>%
-    filter(
-      (algo1_dup == 1 & !is.na(algo2_id)) |
-      (algo2_dup == 1 & !is.na(algo1_id))
-    )
+  dup_df <- all_episodes[is_dup_row(all_episodes), , drop = FALSE]
 
   if (nrow(dup_df) == 0) {
     return(no_dup_df)
@@ -165,17 +181,16 @@ resolve_duplicates_iteratively <- function(all_episodes) {
   for (round in 1:5) {
     if (nrow(current_df) == 0) break
 
-    # Process HIP duplicates with PPS overlap
-    best_algo1 <- current_df %>%
-      filter(algo1_dup == 1 & !is.na(algo2_id)) %>%
+    # HIP episodes overlapping several PPS episodes: keep the pair with the
+    # closest end dates (then the longest PPS episode). As in the N3C
+    # original, the losing rows are not dropped: their HIP side is blanked
+    # so the PPS episode survives on its own.
+    a1_rows <- current_df %>% filter(algo1_dup == 1 & !is.na(algo2_id))
+    best_algo1 <- a1_rows %>%
       mutate(
-        # Calculate date difference (All of Us logic)
         date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
-        # Deprioritize episodes without outcomes
         date_diff = ifelse(is.na(algo2_category), 10000, date_diff),
-        # Calculate episode length for tie-breaking
         new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
-        # Deprioritize invalid length or no outcome
         new_date_diff = ifelse(is.na(algo2_category) | new_date_diff > 310, -1, new_date_diff)
       ) %>%
       group_by(algo1_id) %>%
@@ -183,10 +198,14 @@ resolve_duplicates_iteratively <- function(all_episodes) {
       slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
       ungroup() %>%
       select(-date_diff, -new_date_diff)
+    losers_algo1 <- a1_rows %>%
+      anti_join(best_algo1 %>% select(algo1_id, algo2_id), by = c("algo1_id", "algo2_id")) %>%
+      blank_cols(algo1_cols)
 
-    # Process PPS duplicates with HIP overlap
-    best_algo2 <- current_df %>%
-      filter(algo2_dup == 1 & !is.na(algo1_id)) %>%
+    # PPS episodes overlapping several HIP episodes: keep the closest pair;
+    # the losing rows keep their HIP side and lose the PPS side.
+    a2_rows <- current_df %>% filter(algo2_dup == 1 & !is.na(algo1_id))
+    best_algo2 <- a2_rows %>%
       mutate(
         date_diff = abs(as.numeric(difftime(pregnancy_end, episode_max_date, units = "days"))),
         new_date_diff = abs(as.numeric(difftime(episode_max_date, episode_min_date, units = "days"))),
@@ -197,53 +216,41 @@ resolve_duplicates_iteratively <- function(all_episodes) {
       slice_max(new_date_diff, n = 1, with_ties = FALSE) %>%
       ungroup() %>%
       select(-date_diff, -new_date_diff)
+    losers_algo2 <- a2_rows %>%
+      anti_join(best_algo2 %>% select(algo1_id, algo2_id), by = c("algo1_id", "algo2_id")) %>%
+      blank_cols(algo2_cols)
 
-    # Combine results from this round
-    best_both <- bind_rows(best_algo1, best_algo2) %>%
+    # Combine results from this round and recompute duplicate flags
+    best_both <- bind_rows(best_algo1, best_algo2, losers_algo1, losers_algo2) %>%
       select(-any_of(c("algo1_dup", "algo2_dup"))) %>%
-      distinct()
+      distinct() %>%
+      flag_dups()
 
-    # Recalculate duplicate flags
-    best_both <- best_both %>%
-      group_by(algo1_id) %>%
-      mutate(algo1_dup = if_else(is.na(algo1_id)[1], NA_integer_, as.integer(n() > 1))) %>%
-      ungroup() %>%
-      group_by(algo2_id) %>%
-      mutate(algo2_dup = if_else(is.na(algo2_id)[1], NA_integer_, as.integer(n() > 1))) %>%
-      ungroup()
-
-    # Separate resolved and still-duplicated
-    resolved <- best_both %>%
-      filter(
-        !(algo1_dup == 1 & !is.na(algo2_id)) &
-        !(algo2_dup == 1 & !is.na(algo1_id))
-      )
-
+    resolved <- best_both[!is_dup_row(best_both), , drop = FALSE]
     keep_list[[round]] <- resolved
 
-    # Remaining duplicates for next round
-    current_df <- best_both %>%
-      filter(
-        (algo1_dup == 1 & !is.na(algo2_id)) |
-        (algo2_dup == 1 & !is.na(algo1_id))
-      )
+    current_df <- best_both[is_dup_row(best_both), , drop = FALSE]
   }
 
-  # If any duplicates remain after 5 rounds, keep them anyway
+  # If any duplicates remain after 5 rounds, keep them anyway (N3C keeps them)
   if (nrow(current_df) > 0) {
     keep_list[[length(keep_list) + 1]] <- current_df
   }
 
-  # Combine all results
   all_resolved <- bind_rows(no_dup_df, bind_rows(keep_list)) %>%
+    select(-any_of(c("algo1_dup", "algo2_dup"))) %>%
     distinct() %>%
-    # Final duplicate flag recalculation
-    group_by(algo1_id) %>%
-    mutate(algo1_dup = if_else(is.na(algo1_id)[1], NA_integer_, as.integer(n() > 1))) %>%
-    ungroup() %>%
-    group_by(algo2_id) %>%
-    mutate(algo2_dup = if_else(is.na(algo2_id)[1], NA_integer_, as.integer(n() > 1))) %>%
-    ungroup()
+    # Rows blanked on both sides carry nothing
+    filter(!(is.na(algo1_id) & is.na(algo2_id)))
+
+  # A blanked single-side row is redundant when that episode also survives
+  # in a paired row (N3C: "remove any duplicated rows with null info")
+  paired_algo1 <- unique(all_resolved$algo1_id[!is.na(all_resolved$algo1_id) & !is.na(all_resolved$algo2_id)])
+  paired_algo2 <- unique(all_resolved$algo2_id[!is.na(all_resolved$algo1_id) & !is.na(all_resolved$algo2_id)])
+  all_resolved <- all_resolved %>%
+    filter(!(is.na(algo2_id) & algo1_id %in% paired_algo1),
+           !(is.na(algo1_id) & algo2_id %in% paired_algo2)) %>%
+    flag_dups()
 
   return(all_resolved)
 }
