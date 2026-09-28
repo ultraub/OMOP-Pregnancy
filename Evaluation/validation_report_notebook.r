@@ -37,9 +37,10 @@ if (length(missing) > 0) install.packages(missing)
 repo_path <- "/Workspace/Users/rbarre16@jh.edu/OMOP-Pregnancy"
 setwd(file.path(repo_path, "Evaluation"))
 
-# In a notebook, show tables as data frames instead of kableExtra HTML
-kable <- function(x, ...) x
-kable_styling <- function(x, ...) x
+# In a notebook only the last value of a cell is displayed, so the
+# report's tables are printed as data frames at the point they are built
+kable <- function(x, ...) { print(as.data.frame(x), row.names = FALSE); invisible(x) }
+kable_styling <- function(x, ...) invisible(x)
 
 # COMMAND ----------
 

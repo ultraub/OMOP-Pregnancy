@@ -31,9 +31,10 @@ qmd_to_notebook(
     sprintf('repo_path <- "%s"', repo_path),
     'setwd(file.path(repo_path, "Evaluation"))',
     "",
-    "# In a notebook, show tables as data frames instead of kableExtra HTML",
-    "kable <- function(x, ...) x",
-    "kable_styling <- function(x, ...) x"
+    "# In a notebook only the last value of a cell is displayed, so the",
+    "# report's tables are printed as data frames at the point they are built",
+    "kable <- function(x, ...) { print(as.data.frame(x), row.names = FALSE); invisible(x) }",
+    "kable_styling <- function(x, ...) invisible(x)"
   )
 )
 cat("Wrote Evaluation/validation_report_notebook.r\n")
